@@ -1,0 +1,977 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#08060c" />
+  <title>NEON//SCOPE — 实时音频可视化工作台</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <svg class="svg-sprite" aria-hidden="true">
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5.5v13l10-6.5z"/></symbol>
+    <symbol id="i-pause" viewBox="0 0 24 24"><path d="M7 5h3.6v14H7zM13.4 5H17v14h-3.6z"/></symbol>
+    <symbol id="i-stop" viewBox="0 0 24 24"><path d="M6 6h12v12H6z"/></symbol>
+    <symbol id="i-loop" viewBox="0 0 24 24"><path d="M17 4l3.2 3.2L17 10.4V8H7.5A3.5 3.5 0 0 0 4 11.5V13H2v-1.5A5.5 5.5 0 0 1 7.5 6H17zM7 20l-3.2-3.2L7 13.6V16h9.5a3.5 3.5 0 0 0 3.5-3.5V11h2v1.5a5.5 5.5 0 0 1-5.5 5.5H7z"/></symbol>
+    <symbol id="i-volume" viewBox="0 0 24 24"><path d="M4 9h4l5-4v14l-5-4H4zM16 8.2a5 5 0 0 1 0 7.6l-1.2-1.5a3 3 0 0 0 0-4.6z"/></symbol>
+    <symbol id="i-wave" viewBox="0 0 24 24"><path d="M2 12h2.2l1.7-6 3 12 3.1-15 3 18 2.8-11 1.8 5H22v2h-3.2l-1.2-3.4L15.2 21 12 4.1 9.1 18 6.2 7.1 5.3 14H2z"/></symbol>
+    <symbol id="i-midi" viewBox="0 0 24 24"><path d="M4 4h16v16H4zm2 2v9h2V6zm4 0v9h2V6zm4 0v9h2V6zm4 0v9h2V6z"/></symbol>
+    <symbol id="i-image" viewBox="0 0 24 24"><path d="M3 5h18v14H3zm2 2v8.6l4.2-4.2 3.2 3.2 3-3 3.6 3.6V7zm10.8 2a1.7 1.7 0 1 0 0 3.4 1.7 1.7 0 0 0 0-3.4"/></symbol>
+    <symbol id="i-export" viewBox="0 0 24 24"><path d="M4 14v5h16v-5h2v7H2v-7zm7-3.2V2h2v8.8l3-3 1.5 1.5L12 15 6.5 9.3 8 7.8z"/></symbol>
+    <symbol id="i-magnet" viewBox="0 0 24 24"><path d="M5 3h5v8a2 2 0 0 0 4 0V3h5v8a7 7 0 0 1-14 0zm1 11a6 6 0 0 0 12 0h-3a3 3 0 0 1-6 0z" opacity=".95"/></symbol>
+    <symbol id="i-edit" viewBox="0 0 24 24"><path d="M4 17.2V21h3.8L19 9.8 14.2 5zm17.7-12.5a1.5 1.5 0 0 0 0-2.1L19.4.3a1.5 1.5 0 0 0-2.1 0L15.6 2l4.8 4.8z"/></symbol>
+    <symbol id="i-eye" viewBox="0 0 24 24"><path d="M12 5c5.5 0 9.5 5.2 10.5 7-1 1.8-5 7-10.5 7S2.5 13.8 1.5 12C2.5 10.2 6.5 5 12 5m0 2.2A4.8 4.8 0 1 0 12 17a4.8 4.8 0 0 0 0-9.8m0 2.2a2.6 2.6 0 1 1 0 5.2 2.6 2.6 0 0 1 0-5.2"/></symbol>
+    <symbol id="i-eye-off" viewBox="0 0 24 24"><path d="M3.3 2 2 3.3l3.2 3.2C3.2 8 1.9 10.5 1.5 12c1 1.8 5 7 10.5 7 2 0 3.8-.7 5.3-1.7L21 21l1.3-1.3zM12 7.2c3.4 0 6.2 2.2 8 4.8a13 13 0 0 1-2.3 2.8l-2.3-2.3A4.8 4.8 0 0 0 8.7 5.7L7 4a11 11 0 0 1 5-1c5.5 0 9.5 5.2 10.5 7-.5.9-1.7 2.9-3.5 4.5l-1.5-1.5c1.5-1.4 2.5-3 2.5-3-1.8-2.6-4.6-4.8-8-4.8z"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6z"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="M6.3 4.9 12 10.6l5.7-5.7 1.4 1.4-5.7 5.7 5.7 5.7-1.4 1.4-5.7-5.7-5.7 5.7-1.4-1.4 5.7-5.7-5.7-5.7z"/></symbol>
+    <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m8 5 8 7-8 7z"/></symbol>
+    <symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 1.5 14.8 9l7.7 3-7.7 3-2.8 7.5L9.2 15 1.5 12l7.7-3z"/></symbol>
+    <symbol id="i-layers" viewBox="0 0 24 24"><path d="m12 2 10 5.5L12 13 2 7.5zm0 13.2 7.8-4.3 2.2 1.2L12 18l-10-5.6 2.2-1.2z"/></symbol>
+    <symbol id="i-shuffle" viewBox="0 0 24 24"><path d="M16 3h5v5h-2V6.4l-4.1 4.1-1.4-1.4L17.6 5H16zm3 11h2v7h-5v-2h1.6l-4.1-4.1 1.4-1.4L19 17.6zM3 5h4l12 14h2v2h-4L5 7H3zm0 12h4l3.2-3.7 1.4 1.6L8 19H3z"/></symbol>
+    <symbol id="i-settings" viewBox="0 0 24 24"><path d="m9.7 2-.6 2.1a8 8 0 0 0-1.6.9L5.4 4.4 3.3 8l1.5 1.4a8 8 0 0 0 0 1.9L3.3 12.7l2.1 3.6 2.1-.6c.5.4 1 .7 1.6.9l.6 2.1h4.6l.6-2.1c.6-.2 1.1-.5 1.6-.9l2.1.6 2.1-3.6-1.5-1.4a8 8 0 0 0 0-1.9l1.5-1.4L18.6 4.4l-2.1.6a8 8 0 0 0-1.6-.9L14.3 2zM12 8a4 4 0 1 1 0 8 4 4 0 0 1 0-8m0 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4"/></symbol>
+    <symbol id="i-keyboard" viewBox="0 0 24 24"><path d="M3 5h18a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2m0 2v10h18V7zM5 9h2v2H5zm4 0h2v2H9zm4 0h2v2h-2zm4 0h2v2h-2zM5 13h2v2H5zm4 0h6v2H9zm8 0h2v2h-2z"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><path d="M10 3a7 7 0 1 1-4.4 12.4L2 19l1.4 1.4 3.6-3.5A7 7 0 0 1 10 3m0 2a5 5 0 1 0 0 10 5 5 0 0 0 0-10"/></symbol>
+    <symbol id="i-window" viewBox="0 0 24 24"><path d="M3 4h18a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1m1 3v11h16V7zm2 1h5v2H6zm12 0h1v2h-1z"/></symbol>
+    <symbol id="i-dock" viewBox="0 0 24 24"><path d="M3 4h18a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1m1 3v11h7V7zm9 0v11h6V7z"/></symbol>
+    <symbol id="i-panels" viewBox="0 0 24 24"><path d="M3 3h8v8H3zm10 0h8v8h-8zM3 13h8v8H3zm10 0h8v8h-8z"/></symbol>
+  </svg>
+
+  <div id="app">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark">
+          <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M3 17h3.2l2.1-8 4 17 3.4-21 4.1 23 2.6-14 2 3H29" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
+        </div>
+        <div class="brand-copy">
+          <div class="brand-name">NEON<span>//</span>SCOPE</div>
+          <div class="brand-sub">REALTIME AUDIO VISUALIZER <b>v1.4</b></div>
+        </div>
+      </div>
+
+      <div class="transport" id="transport">
+        <button class="icon-btn play-btn" id="playBtn" title="播放 / 暂停（空格）" aria-label="播放">
+          <svg class="icon"><use href="#i-play"/></svg>
+        </button>
+        <button class="icon-btn small" id="stopBtn" title="停止" aria-label="停止">
+          <svg class="icon"><use href="#i-stop"/></svg>
+        </button>
+        <div class="timecode" aria-live="off">
+          <span id="curTime">00:00.000</span><span class="time-sep">/</span><span id="durTime" class="muted">00:00.000</span>
+        </div>
+        <div class="seek-wrap">
+          <input id="seek" class="seek" type="range" min="0" max="1000" value="0" step="1" aria-label="播放进度" />
+          <canvas id="seekWave" class="seek-wave" height="30"></canvas>
+        </div>
+        <button class="icon-btn small" id="loopBtn" title="循环播放（L）" aria-label="循环播放">
+          <svg class="icon"><use href="#i-loop"/></svg>
+        </button>
+        <div class="volume-wrap">
+          <svg class="icon tiny"><use href="#i-volume"/></svg>
+          <input id="volume" class="volume" type="range" min="0" max="100" value="78" aria-label="音量" />
+        </div>
+      </div>
+
+      <div class="top-actions">
+        <button class="toggle-btn active" id="snapBtn" title="自动对齐 / 吸附（G）">
+          <svg class="icon"><use href="#i-magnet"/></svg><span>吸附对齐</span><kbd>G</kbd>
+        </button>
+        <button class="toggle-btn active" id="editBtn" title="编辑布局（E）">
+          <svg class="icon"><use href="#i-edit"/></svg><span>编辑</span><kbd>E</kbd>
+        </button>
+        <button class="btn primary" id="exportBtn">
+          <svg class="icon"><use href="#i-export"/></svg><span>导出视频</span>
+        </button>
+        <button class="icon-btn small help-btn" id="panelMenuBtn" title="面板管理" aria-label="面板管理">
+          <svg class="icon"><use href="#i-panels"/></svg>
+        </button>
+        <button class="icon-btn small help-btn" id="shortcutsBtn" title="快捷键映射（F1）" aria-label="快捷键映射">
+          <svg class="icon"><use href="#i-keyboard"/></svg>
+        </button>
+        <button class="icon-btn small help-btn" id="helpBtn" title="快捷键和说明" aria-label="帮助">?</button>
+      </div>
+    </header>
+
+    <div class="workspace">
+      <aside class="sidebar left-sidebar">
+        <div class="sidebar-headline" data-panel-drag="left">
+          <span>模块与素材</span>
+          <em>WORKSPACE</em>
+          <div class="panel-tools">
+            <button data-panel-float="left" title="浮动面板"><svg class="icon"><use href="#i-window"/></svg></button>
+            <button data-panel-close="left" title="关闭面板"><svg class="icon"><use href="#i-close"/></svg></button>
+          </div>
+        </div>
+
+        <div class="side-scroll" id="panelModules">
+          <section class="panel-section">
+            <div class="section-head"><span>信号源</span><em>SOURCE</em></div>
+            <div class="track-card" id="trackCard">
+              <div class="track-art"><span class="track-art-bars"><i></i><i></i><i></i><i></i><i></i></span></div>
+              <div class="track-info">
+                <strong id="trackName">尚未加载音频</strong>
+                <span id="trackMeta">导入 WAV / MP3 / FLAC / OGG 或 MIDI</span>
+              </div>
+              <span class="track-badge" id="trackBadge">IDLE</span>
+            </div>
+            <div class="two-buttons">
+              <button class="btn ghost" id="importAudioBtn"><svg class="icon"><use href="#i-wave"/></svg>导入音频</button>
+              <button class="btn ghost" id="importMidiBtn"><svg class="icon"><use href="#i-midi"/></svg>导入 MIDI</button>
+            </div>
+            <button class="text-btn" id="demoBtn"><svg class="icon tiny"><use href="#i-spark"/></svg>载入内置 DEMO 音轨 <span>SYNTHWAVE / 36s</span></button>
+            <div class="dropzone" id="dropzone">
+              <svg class="icon"><use href="#i-wave"/></svg>
+              <span>拖放音频或 MIDI 到窗口任意位置</span>
+            </div>
+            <input type="file" id="audioFile" accept="audio/*,.wav,.mp3,.flac,.ogg,.m4a,.aac" hidden />
+            <input type="file" id="midiFile" accept=".mid,.midi,audio/midi,audio/x-midi" hidden />
+            <input type="file" id="bgFile" accept="image/*" hidden />
+          </section>
+
+          <section class="panel-section">
+            <div class="section-head"><span>模块库</span><em>MODULES <b id="moduleCount">0</b></em></div>
+            <p class="section-help">点击添加模块；眼睛图标控制该类型显隐。</p>
+            <div class="module-library" id="moduleLibrary"></div>
+          </section>
+
+          <section class="panel-section extra-panel subpanel-hidden" id="infoPanel">
+            <div class="section-head"><span>信息编辑</span><em>INFORMATION</em></div>
+            <p class="section-help">编辑歌曲信息与封面，可叠加到舞台并写入导出视频。</p>
+            <div class="meta-grid">
+              <label>歌曲名<input id="infoTitle" type="text" placeholder="Untitled signal" maxlength="80" /></label>
+              <label>艺术家<input id="infoArtist" type="text" placeholder="Unknown source" maxlength="80" /></label>
+              <label>专辑<input id="infoAlbum" type="text" placeholder="Album" maxlength="80" /></label>
+              <label>流派<input id="infoGenre" type="text" placeholder="Genre" maxlength="40" /></label>
+              <label>BPM<input id="infoBpm" type="number" min="0" max="300" step="0.1" placeholder="BPM" /></label>
+            </div>
+            <div class="meta-cover-row">
+              <div class="meta-cover-preview" id="infoCoverPreview"><span>COVER</span></div>
+              <div>
+                <button class="mini-action" id="infoCoverBtn">选择封面</button>
+                <input type="file" id="infoCoverFile" accept="image/*" hidden />
+                <p class="section-help">PNG / JPG / WebP</p>
+              </div>
+            </div>
+            <label class="check-row"><input type="checkbox" id="infoOverlay" /><span>在画面叠加信息卡</span></label>
+          </section>
+
+          <section class="panel-section extra-panel subpanel-hidden" id="animationPanel">
+            <div class="section-head"><span>动画设计</span><em>ANIMATION</em></div>
+            <p class="section-help">按时间码插入颜色、文字、闪白和淡出动作，预览与导出同步生效。</p>
+            <div class="anim-form">
+              <label><span>类型</span>
+                <select id="animType">
+                  <option value="flash">闪白</option>
+                  <option value="text">文字</option>
+                  <option value="subtitle">字幕</option>
+                  <option value="tint">颜色染色</option>
+                  <option value="fade">淡出</option>
+                </select>
+              </label>
+              <label><span>时间 s</span><input id="animTime" type="number" min="0" step="0.1" placeholder="0.0" /></label>
+              <label><span>时长 s</span><input id="animDuration" type="number" min="0.1" step="0.1" value="1" placeholder="1.0" /></label>
+              <label class="anim-value-field"><span>内容 / 颜色</span><input id="animValue" type="text" maxlength="80" placeholder="文字或 #RRGGBB" /></label>
+              <button class="mini-action anim-add-btn" id="animAddBtn">添加动作</button>
+            </div>
+            <div class="anim-cue-list" id="animCueList"></div>
+            <button class="text-btn" id="animClearBtn">清空动作列表</button>
+            <div class="anim-script-head"><span>动画脚本</span><em>ANIMATION SCRIPT</em></div>
+            <textarea class="anim-script" id="animScript" spellcheck="false" placeholder="00:00.000 text text=&quot;Text overlay&quot; duration=3 x=0.5 y=0.5 size=86 align=center"></textarea>
+            <div class="anim-script-actions">
+              <button class="mini-action" id="animScriptApply">应用脚本</button>
+              <button class="mini-action" id="animScriptImport">导入 .txt</button>
+              <button class="mini-action" id="animScriptExport">导出 .txt</button>
+              <input type="file" id="animScriptFile" accept=".txt,.js,text/plain" hidden />
+            </div>
+          </section>
+
+        </div>
+
+        <div class="sidebar-foot">
+          <span class="status-dot" id="engineDot"></span>
+          <span id="engineStatus">音频引擎待启动</span>
+          <span class="spacer"></span>
+          <span class="fps-read" id="fpsRead">-- FPS</span>
+        </div>
+      </aside>
+
+      <main class="stage-column">
+        <div class="stage-toolbar">
+          <div class="stage-title" data-panel-drag="stage">
+            <span class="live-pip"></span>
+            <strong>PROGRAM</strong>
+            <span class="stage-dim" id="stageDims">1920 × 1080</span>
+          </div>
+          <div class="stage-meta">
+            <span id="stageMode">EDIT MODE</span>
+            <span class="dot-sep">·</span>
+            <span id="snapMeta">SNAP ON</span>
+            <span class="dot-sep">·</span>
+            <span id="moduleMeta">0 MODULES</span>
+          </div>
+          <div class="stage-tools">
+            <button class="mini-action" id="fitBtn" title="适配窗口">FIT</button>
+            <button class="mini-action" id="timelineToggle" title="显示 / 收起动画时间轴">TIME</button>
+            <button class="mini-action" id="theaterBtn" title="专注预览（F）">FOCUS</button>
+          </div>
+          <div class="panel-tools stage-panel-tools">
+            <button data-panel-float="stage" title="浮动舞台"><svg class="icon"><use href="#i-window"/></svg></button>
+            <button data-panel-close="stage" title="关闭舞台"><svg class="icon"><use href="#i-close"/></svg></button>
+          </div>
+        </div>
+
+        <div class="stage-viewport" id="stageViewport">
+          <div class="stage" id="stage">
+            <canvas id="stageCanvas" width="1280" height="720"></canvas>
+            <div class="stage-overlay" id="stageOverlay"></div>
+            <div class="snap-guide v" id="guideV"></div>
+            <div class="snap-guide h" id="guideH"></div>
+            <div class="stage-chip" id="stageChip">
+              <span class="chip-dot"></span><span id="chipText">EDIT / SNAP</span>
+            </div>
+            <div class="stage-watermark" id="stageWatermark">
+              <span>NEON//SCOPE</span><b id="watermarkTime">00:00:00:00</b>
+            </div>
+            <div class="start-overlay" id="startOverlay">
+              <div class="start-kicker">REALTIME SIGNAL // READY</div>
+              <button class="start-play" id="startPlayBtn"><svg class="icon"><use href="#i-play"/></svg></button>
+              <div class="start-title">启动演示音轨</div>
+              <div class="start-desc">或从左侧导入你的音频 / MIDI。所有视觉将跟随声音实时生成。</div>
+              <div class="start-hint">SPACE 播放 &nbsp;·&nbsp; G 吸附 &nbsp;·&nbsp; E 编辑</div>
+            </div>
+            <div class="export-veil hidden" id="exportVeil">
+              <div class="rec-dot"></div><span>REC</span><b id="exportVeilTime">00:00</b>
+            </div>
+          </div>
+        </div>
+
+        <section class="timeline-panel" id="timelinePanel">
+          <div class="timeline-head">
+            <span class="timeline-title">动画时间轴 <em>ANIMATION TIMELINE</em></span>
+            <div class="timeline-actions">
+              <span class="timeline-time" id="timelineTime">00:00.000</span>
+              <button class="mini-action" id="timelineZoomOut" title="缩小">−</button>
+              <span class="timeline-zoom" id="timelineZoomLabel">100%</span>
+              <button class="mini-action" id="timelineZoomIn" title="放大">+</button>
+              <button class="mini-action accent" id="timelineAddCue">+ 动作</button>
+            </div>
+          </div>
+          <div class="timeline-body">
+            <div class="timeline-label-col" id="timelineLabels"></div>
+            <div class="timeline-scroll" id="timelineScroll">
+              <div class="timeline-content" id="timelineContent">
+                <div class="timeline-ruler" id="timelineRuler"></div>
+                <div class="timeline-lanes" id="timelineLanes"></div>
+                <div class="timeline-playhead" id="timelinePlayhead"></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <div class="stage-footer">
+          <div class="footer-block">
+            <span class="footer-label">COLOR</span>
+            <span class="accent-dot" id="footerAccentDot"></span>
+            <span id="footerAccentHex">#FF4F8B</span>
+          </div>
+          <div class="footer-block">
+            <span class="footer-label">ENGINE</span>
+            <span id="footerEngine">WEBGL + CANVAS2D</span>
+          </div>
+          <div class="footer-block grow">
+            <span class="footer-label">TRACK</span>
+            <span id="footerTrack" class="ellipsis">NO SIGNAL</span>
+          </div>
+          <div class="footer-block">
+            <span class="footer-label">SAMPLE RATE</span>
+            <span id="footerRate">—</span>
+          </div>
+          <div class="footer-block">
+            <span class="footer-label">FFMPEG</span>
+            <span id="footerFfmpeg">CHECKING</span>
+          </div>
+        </div>
+      </main>
+
+      <div class="stage-dock-placeholder hidden" id="stageDockPlaceholder">
+        <span class="eyebrow">PROGRAM MONITOR</span>
+        <strong>舞台窗口已分离</strong>
+        <p>舞台正在浮动显示，或已从主工作区关闭。</p>
+        <button class="btn ghost" id="restoreStageBtn">恢复舞台</button>
+      </div>
+
+      <aside class="sidebar right-sidebar">
+        <div class="inspector-head" data-panel-drag="right">
+          <div>
+            <span class="eyebrow">INSPECTOR</span>
+            <strong>属性检查器</strong>
+          </div>
+          <span class="selection-badge" id="selectionBadge">NO SELECTION</span>
+          <div class="panel-tools">
+            <button data-panel-float="right" title="浮动面板"><svg class="icon"><use href="#i-window"/></svg></button>
+            <button data-panel-close="right" title="关闭面板"><svg class="icon"><use href="#i-close"/></svg></button>
+          </div>
+        </div>
+
+        <div class="side-scroll">
+          <div id="inspectorEmpty" class="empty-inspector">
+            <div class="empty-ring"><svg class="icon"><use href="#i-layers"/></svg></div>
+            <strong>选择一个模块</strong>
+            <p>在画布中点击任意模块，以调整位置、尺寸、颜色与图层。拖动模块可直接重新排版。</p>
+            <div class="shortcut-list">
+              <div><span>拖动</span><kbd>MOVE</kbd></div>
+              <div><span>右下角拖动</span><kbd>RESIZE</kbd></div>
+              <div><span>方向键</span><kbd>NUDGE</kbd></div>
+              <div><span>Shift + 方向键</span><kbd>×10</kbd></div>
+            </div>
+          </div>
+
+          <div id="inspectorModule" class="hidden">
+            <div class="selected-card">
+              <div class="selected-swatch" id="selectedSwatch"></div>
+              <div class="selected-copy">
+                <strong id="selectedName">OSCILLOSCOPE</strong>
+                <span id="selectedType">scope · 420 × 260</span>
+              </div>
+              <button class="icon-btn small danger-hover" id="deleteModuleBtn" title="删除模块"><svg class="icon"><use href="#i-close"/></svg></button>
+            </div>
+
+            <div class="inspector-section">
+              <div class="section-head"><span>位置与尺寸</span><em>GEOMETRY</em></div>
+              <div class="xywh-grid">
+                <label>X<input type="number" id="propX" step="1" /></label>
+                <label>Y<input type="number" id="propY" step="1" /></label>
+                <label>W<input type="number" id="propW" step="1" min="160" /></label>
+                <label>H<input type="number" id="propH" step="1" min="110" /></label>
+              </div>
+              <div class="nudge-row">
+                <button class="mini-action" id="centerHBtn">水平居中</button>
+                <button class="mini-action" id="centerVBtn">垂直居中</button>
+                <button class="mini-action" id="matchBtn">贴左边缘</button>
+              </div>
+            </div>
+
+            <div class="inspector-section">
+              <div class="section-head"><span>模块外观</span><em>STYLE</em></div>
+              <label class="check-row"><input type="checkbox" id="useGlobalColor" checked /><span>跟随全局主色</span></label>
+              <button class="color-well module-color-well" id="moduleColorPickBtn" type="button">
+                <span class="color-well-swatch" id="moduleColorSwatch"></span>
+                <span class="color-well-copy">
+                  <strong>模块颜色</strong>
+                  <small id="moduleColorValue">#FF4F8B · 100%</small>
+                </span>
+                <span class="color-well-action">色盘</span>
+              </button>
+              <div class="field-row">
+                <label class="field-label">不透明度 <output id="opacityOut">100%</output></label>
+                <input id="opacity" type="range" min="20" max="100" value="100" />
+              </div>
+              <label class="check-row"><input type="checkbox" id="moduleVisible" checked /><span>在画面中显示此模块</span></label>
+            </div>
+
+            <div class="inspector-section module-options-section">
+              <div class="section-head">
+                <span>模块专属</span><em id="moduleOptionsType">PARAMETERS</em>
+                <button class="mini-action" id="resetModuleOptionsBtn" title="恢复该模块的专属参数">重置</button>
+              </div>
+              <p class="section-help" id="moduleOptionsHelp">每种可视化模块都有独立参数。</p>
+              <div class="module-options" id="moduleOptions"></div>
+            </div>
+
+            <div class="inspector-section">
+              <div class="section-head"><span>图层</span><em>LAYER</em></div>
+              <div class="layer-buttons">
+                <button class="mini-action" id="layerUpBtn">上移一层</button>
+                <button class="mini-action" id="layerDownBtn">下移一层</button>
+                <button class="mini-action" id="duplicateBtn"><svg class="icon tiny"><use href="#i-plus"/></svg>复制</button>
+              </div>
+            </div>
+
+            <div class="inspector-section">
+              <div class="section-head"><span>模块信息</span><em>ABOUT</em></div>
+              <p class="module-about" id="moduleAbout"></p>
+            </div>
+          </div>
+
+          <div class="inspector-section canvas-inspector">
+            <div class="section-head"><span>画布与输出</span><em>OUTPUT</em></div>
+            <div class="spec-list">
+              <div><span>逻辑画布</span><b>1920 × 1080 / 16:9</b></div>
+              <div><span>预览画质</span><b id="previewQuality">AUTO</b></div>
+              <div><span>导出预设</span><b id="exportPresetLabel">1080P · 60FPS</b></div>
+              <div><span>分析 FFT</span><b>8192 SAMPLES</b></div>
+            </div>
+            <button class="btn ghost full" id="openExportBtn"><svg class="icon"><use href="#i-export"/></svg>打开发布设置</button>
+          </div>
+
+          <div class="inspector-section">
+            <div class="section-head"><span>快速提示</span><em>WORKFLOW</em></div>
+            <ol class="tips-list">
+              <li>开启吸附后拖动模块，会像 DAW 一样吸附到网格、边缘与中心线。</li>
+              <li>导出会实时渲染完整曲目并录制，音画时间轴严格同步。</li>
+              <li>MP4 优先由浏览器直接硬件编码；不支持时再交给 FFmpeg 转码。</li>
+            </ol>
+          </div>
+        </div>
+
+    <button class="settings-fab" id="settingsFab" title="设置（Ctrl+,）">
+          <svg class="icon"><use href="#i-settings"/></svg>
+          <span>设置</span>
+        </button>
+      </aside>
+    </div>
+
+    <div class="subpanel-layer" id="subpanelLayer"></div>
+  </div>
+
+  <div class="modal-layer hidden" id="exportModal" role="dialog" aria-modal="true" aria-labelledby="exportTitle">
+    <div class="modal-backdrop" data-close="export"></div>
+    <div class="modal-card export-card">
+      <div class="modal-head">
+        <div>
+          <span class="eyebrow">RENDER &amp; SHIP</span>
+          <h2 id="exportTitle">导出视频</h2>
+        </div>
+        <button class="icon-btn small" data-close="export" aria-label="关闭"><svg class="icon"><use href="#i-close"/></svg></button>
+      </div>
+      <div class="modal-body" id="exportSetup">
+        <div class="export-note"><span class="rec-dot"></span>实时离线录制：完整导出耗时约等于曲目长度，音画同步。</div>
+
+        <div class="export-section">
+          <label class="export-label">分辨率 <em>RESOLUTION</em></label>
+          <div class="quality-grid" id="qualityGrid">
+            <button class="quality-card" data-quality="720"><b>720P</b><span>1280 × 720</span><i>轻量分享</i></button>
+            <button class="quality-card active" data-quality="1080"><b>1080P</b><span>1920 × 1080</span><i>推荐</i></button>
+            <button class="quality-card" data-quality="1440"><b>2K</b><span>2560 × 1440</span><i>高清</i></button>
+            <button class="quality-card" data-quality="2160"><b>4K</b><span>3840 × 2160</span><i>母版</i></button>
+          </div>
+        </div>
+
+        <div class="export-columns">
+          <div class="export-section">
+            <label class="export-label">帧率 <em>FRAME RATE</em></label>
+            <div class="segmented compact" id="fpsSeg">
+              <button data-fps="30">30 FPS</button>
+              <button class="active" data-fps="60">60 FPS</button>
+            </div>
+          </div>
+          <div class="export-section">
+            <label class="export-label">视频码率 <em>BITRATE</em></label>
+            <select id="bitrateSelect" class="select">
+              <option value="8">8 Mbps · 精简</option>
+              <option value="16">16 Mbps · 标准</option>
+              <option value="24" selected>24 Mbps · 高画质</option>
+              <option value="40">40 Mbps · 母版</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="export-columns">
+          <div class="export-section">
+            <label class="export-label">封装格式 <em>FORMAT</em></label>
+            <div class="segmented compact" id="formatSeg">
+              <button data-format="webm">WebM</button>
+              <button data-format="mp4" class="active">MP4 / H.264</button>
+            </div>
+          </div>
+          <div class="export-section">
+            <label class="export-label">导出范围 <em>RANGE</em></label>
+            <select id="rangeSelect" class="select">
+              <option value="full">完整曲目</option>
+              <option value="10">前 10 秒</option>
+              <option value="30">前 30 秒</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="export-summary">
+          <div><span>输出</span><b id="exportSummaryQuality">1920 × 1080 · 60 FPS</b></div>
+          <div><span>时长</span><b id="exportSummaryDuration">00:00</b></div>
+          <div><span>估计大小</span><b id="exportSummarySize">—</b></div>
+          <div><span>编码器</span><b id="exportSummaryEncoder">VP9 / OPUS</b></div>
+        </div>
+        <div class="export-warning hidden" id="exportWarning"></div>
+      </div>
+
+      <div class="modal-body hidden" id="exportProgress">
+        <div class="render-orb"><span></span><i></i></div>
+        <div class="progress-heading">
+          <span class="eyebrow">RENDERING FRAMES</span>
+          <h3 id="progressTitle">正在录制画布与音频…</h3>
+        </div>
+        <div class="progress-track"><div class="progress-fill" id="progressFill"></div></div>
+        <div class="progress-meta"><span id="progressTime">00:00 / 00:00</span><span id="progressPercent">0%</span></div>
+        <p class="progress-hint" id="progressHint">请保持此标签页处于前台，实时渲染中。导出完成前请勿切换页面。</p>
+        <button class="btn ghost full" id="cancelExportBtn">取消导出</button>
+      </div>
+
+      <div class="modal-foot">
+        <button class="btn ghost" data-close="export">取消</button>
+        <button class="btn primary" id="startExportBtn"><svg class="icon"><use href="#i-export"/></svg>开始导出</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-layer hidden" id="helpModal" role="dialog" aria-modal="true" aria-labelledby="helpTitle">
+    <div class="modal-backdrop" data-close="help"></div>
+    <div class="modal-card help-card">
+      <div class="modal-head">
+        <div><span class="eyebrow">FIELD MANUAL</span><h2 id="helpTitle">工作台指南</h2></div>
+        <button class="icon-btn small" data-close="help" aria-label="关闭"><svg class="icon"><use href="#i-close"/></svg></button>
+      </div>
+      <div class="modal-body help-body">
+        <div class="help-grid">
+          <div class="help-block">
+            <h3>01 / 快速开始</h3>
+            <p>导入音频，或使用内置 DEMO。按空格播放，所有仪表会实时响应。MIDI 会先由内置合成器渲染为音频，再进入分析链路。</p>
+          </div>
+          <div class="help-block">
+            <h3>02 / 布局编辑</h3>
+            <p>顶部「编辑」开启后，可直接拖动模块，拖动右下角改变尺寸。开启「吸附对齐」后会吸附到网格、画布边缘、中心线和其他模块边缘。</p>
+          </div>
+          <div class="help-block">
+            <h3>03 / 视频导出</h3>
+            <p>导出为实时录制，输出画布分辨率与预览一致。MP4 会优先使用浏览器原生 H.264 编码；不支持时再调用本机 FFmpeg 转码。</p>
+          </div>
+          <div class="help-block">
+            <h3>04 / 计算架构</h3>
+            <p>音频 FFT、节拍与电平分析在音频线程 / CPU 完成；背景等离子支持 WebGL GPU 着色器。示波器、频谱、声场等以 Canvas2D 合成。</p>
+          </div>
+        </div>
+        <div class="shortcut-board">
+          <div><kbd>SPACE</kbd><span>播放 / 暂停</span></div>
+          <div><kbd>G</kbd><span>吸附开关</span></div>
+          <div><kbd>E</kbd><span>编辑模式</span></div>
+          <div><kbd>F</kbd><span>专注预览</span></div>
+          <div><kbd>L</kbd><span>循环</span></div>
+          <div><kbd>DEL</kbd><span>删除所选模块</span></div>
+          <div><kbd>← ↑ ↓ →</kbd><span>微调位置</span></div>
+          <div><kbd>SHIFT + 方向</kbd><span>10px 步进</span></div>
+        </div>
+        <p class="help-foot">NEON//SCOPE 1.4 · 纯前端实时可视化 · 所有素材仅在本机处理，不会上传。</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-layer hidden" id="settingsModal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+    <div class="modal-backdrop" data-close="settings"></div>
+    <div class="window-card settings-window" id="settingsWindow">
+      <div class="window-head" data-window-drag>
+        <div class="window-title">
+          <span class="eyebrow">PREFERENCES / NEON//SCOPE</span>
+          <h2 id="settingsTitle">设置</h2>
+        </div>
+        <div class="window-head-actions">
+          <span class="window-shortcut">CTRL + ,</span>
+          <button class="icon-btn small" data-close="settings" aria-label="关闭"><svg class="icon"><use href="#i-close"/></svg></button>
+        </div>
+      </div>
+      <div class="settings-layout">
+        <nav class="settings-nav">
+          <button class="settings-nav-btn active" data-settings-tab="appearance"><span>01</span>外观</button>
+          <button class="settings-nav-btn" data-settings-tab="background"><span>02</span>背景</button>
+          <button class="settings-nav-btn" data-settings-tab="interface"><span>03</span>界面</button>
+          <button class="settings-nav-btn" data-settings-tab="motion"><span>04</span>动效</button>
+          <button class="settings-nav-btn" data-settings-tab="engine"><span>05</span>分析引擎</button>
+          <button class="settings-nav-btn" data-settings-tab="files"><span>06</span>文件</button>
+          <div class="settings-nav-spacer"></div>
+          <button class="settings-nav-btn accent" id="openShortcutsBtn"><span>⌘</span>快捷键</button>
+        </nav>
+        <div class="settings-content">
+          <section class="settings-panel" data-settings-panel="appearance">
+            <div class="settings-panel-head">
+              <span class="eyebrow">APPEARANCE</span>
+              <h3>主色与光晕</h3>
+              <p>使用 RGB + 透明度色盘定义界面、模块、光晕与背景的统一主色。</p>
+            </div>
+            <button class="color-well theme-color-well" id="accentPickBtn" type="button">
+              <span class="color-well-swatch" id="accentSwatch"></span>
+              <span class="color-well-copy">
+                <strong>主题色 / ACCENT</strong>
+                <small id="accentValue">#FF4F8B · 100%</small>
+                <em>点击打开 RGB / ALPHA 色盘</em>
+              </span>
+              <span class="color-well-action">编辑颜色</span>
+            </button>
+            <div class="theme-presets" aria-label="主题预设">
+              <button data-theme-color="#FF4F8B" title="NEON MAGENTA"><i style="background:#FF4F8B"></i>MAGENTA</button>
+              <button data-theme-color="#37D8FF" title="SIGNAL CYAN"><i style="background:#37D8FF"></i>CYAN</button>
+              <button data-theme-color="#FFB454" title="AMBER"><i style="background:#FFB454"></i>AMBER</button>
+              <button data-theme-color="#A67CFF" title="ULTRA VIOLET"><i style="background:#A67CFF"></i>VIOLET</button>
+            </div>
+            <div class="field-row">
+              <label class="field-label">光晕强度 <output id="glowOut">45%</output></label>
+              <input id="glow" type="range" min="0" max="100" value="45" />
+            </div>
+            <label class="check-row"><input type="checkbox" id="moduleTint" checked /><span>模块标题栏使用主色</span></label>
+            <div class="settings-note"><span>提示</span>主题色透明度会同时作用于界面强调色和可视化模块（以叠加暗底的方式保持可读性）。</div>
+          </section>
+
+          <section class="settings-panel hidden" data-settings-panel="background">
+            <div class="settings-panel-head">
+              <span class="eyebrow">BACKGROUND</span>
+              <h3>背景视觉</h3>
+              <p>动态 GPU 等离子、图片背景，或自定义纯色。</p>
+            </div>
+            <div class="segmented" id="bgMode">
+              <button class="active" data-mode="plasma">动态等离子</button>
+              <button data-mode="image">图片</button>
+              <button data-mode="color">纯色</button>
+            </div>
+            <div class="bg-preview" id="bgPreview">
+              <canvas id="bgPreviewCanvas"></canvas>
+              <span class="bg-preview-label" id="bgPreviewLabel">GPU SHADER · PLASMA</span>
+              <button class="bg-upload" id="bgUploadBtn"><svg class="icon tiny"><use href="#i-image"/></svg>选择图片</button>
+            </div>
+            <div id="bgImageControls" class="hidden">
+              <div class="field-row">
+                <label class="field-label">背景暗化 <output id="dimOut">35%</output></label>
+                <input id="bgDim" type="range" min="0" max="90" value="35" />
+              </div>
+              <div class="field-row">
+                <label class="field-label">背景模糊 <output id="blurOut">6px</output></label>
+                <input id="bgBlur" type="range" min="0" max="30" value="6" />
+              </div>
+              <label class="check-row"><input type="checkbox" id="bgContain" /><span>完整显示（不裁切填满）</span></label>
+              <button class="text-btn danger" id="removeBgBtn"><svg class="icon tiny"><use href="#i-close"/></svg>移除背景图片</button>
+            </div>
+            <div id="bgColorControls" class="bg-color-controls hidden">
+              <div class="settings-subhead"><span>纯色填充</span><em>SOLID FILL</em></div>
+              <button class="color-well" id="bgColorPickBtn" type="button">
+                <span class="color-well-swatch" id="bgColorSwatch"></span>
+                <span class="color-well-copy">
+                  <strong>背景颜色</strong>
+                  <small id="bgColorValue">#FF4F8B · 100%</small>
+                </span>
+                <span class="color-well-action">色盘</span>
+              </button>
+              <p class="section-help">透明度会让暗色底衬透出。纯色模式适合搭配极简仪表盘。</p>
+            </div>
+            <div class="field-row">
+              <label class="field-label">背景动效强度 <output id="bgEnergyOut">70%</output></label>
+              <input id="bgEnergy" type="range" min="0" max="150" value="70" />
+            </div>
+          </section>
+
+          <section class="settings-panel hidden" data-settings-panel="interface">
+            <div class="settings-panel-head">
+              <span class="eyebrow">INTERFACE</span>
+              <h3>界面与布局</h3>
+              <p>根据显示器尺寸调整整个工作台的可读性。</p>
+            </div>
+            <div class="setting-block">
+              <div class="setting-block-head"><span>界面风格</span><em>UI THEME</em></div>
+              <div class="theme-cards">
+                <button class="theme-card active" data-ui-theme="neon">
+                  <span class="theme-swatch theme-swatch-neon"><i></i><i></i><i></i></span>
+                  <b>NEON GRID</b><em>霓虹仪表盘</em>
+                </button>
+                <button class="theme-card" data-ui-theme="vidi">
+                  <span class="theme-swatch theme-swatch-studio"><i></i><i></i><i></i></span>
+                  <b>VIDI STUDIO</b><em>深色霓虹 / 青色光晕</em>
+                </button>
+                <button class="theme-card" data-ui-theme="catbot">
+                  <span class="theme-swatch theme-swatch-aura"><i></i><i></i><i></i></span>
+                  <b>CATBOT PAPER</b><em>浅色直角 / 几何编辑</em>
+                </button>
+              </div>
+              <p class="section-help">三套界面元素方案；主题色与透明度继续独立生效。</p>
+              <div class="setting-block-head" style="margin-top:16px"><span>明暗模式</span><em>APPEARANCE</em></div>
+              <div class="mode-switch" id="uiModeSwitch">
+                <button class="mode-btn" data-ui-mode-btn="auto"><b>跟随主题</b><span>AUTO</span></button>
+                <button class="mode-btn" data-ui-mode-btn="dark"><b>深色模式</b><span>DARK</span></button>
+                <button class="mode-btn" data-ui-mode-btn="light"><b>浅色模式</b><span>LIGHT</span></button>
+              </div>
+              <p class="section-help">浅色 / 深色会覆盖主题的明暗底色，但保留主题的几何结构和强调色。</p>
+            </div>
+            <div class="setting-block">
+              <div class="setting-block-head"><span>界面缩放</span><em>UI SCALE</em></div>
+              <div class="field-row">
+                <label class="field-label">缩放比例 <output id="uiScaleOut">100%</output></label>
+                <input id="uiScale" type="range" min="70" max="150" step="5" value="100" />
+              </div>
+              <div class="scale-presets">
+                <button class="mini-action" data-ui-scale="80">80%</button>
+                <button class="mini-action" data-ui-scale="90">90%</button>
+                <button class="mini-action" data-ui-scale="100">100%</button>
+                <button class="mini-action" data-ui-scale="115">115%</button>
+                <button class="mini-action" data-ui-scale="130">130%</button>
+              </div>
+              <p class="section-help">设置窗口会同步应用这个缩放。若设置窗口显示过大，调低比例即可。</p>
+            </div>
+            <div class="setting-block">
+              <div class="setting-block-head"><span>布局预设</span><em>LAYOUT</em></div>
+              <div class="preset-row">
+                <button class="preset-btn active" data-preset="studio"><i class="preset-dot"></i>STUDIO</button>
+                <button class="preset-btn" data-preset="scope"><i class="preset-dot"></i>SCOPE</button>
+                <button class="preset-btn" data-preset="minimal"><i class="preset-dot"></i>MINIMAL</button>
+              </div>
+              <button class="mini-action wide-action" id="resetLayoutBtn">恢复默认布局</button>
+            </div>
+            <div class="setting-block">
+              <div class="setting-block-head"><span>界面显示</span><em>DISPLAY</em></div>
+              <label class="check-row"><input type="checkbox" id="watermarkToggle" checked /><span>显示舞台水印 / 时间码</span></label>
+              <label class="check-row"><input type="checkbox" id="scanlineToggle" checked /><span>叠加扫描线与暗角</span></label>
+              <label class="check-row"><input type="checkbox" id="autoSave" checked /><span>自动保存布局与设置</span></label>
+            </div>
+            <button class="settings-link-btn" id="openShortcutsBtn2">
+              <span><svg class="icon"><use href="#i-keyboard"/></svg>打开快捷键映射表</span>
+              <em>F1</em>
+            </button>
+          </section>
+
+          <section class="settings-panel hidden" data-settings-panel="motion">
+            <div class="settings-panel-head">
+              <span class="eyebrow">MOTION</span>
+              <h3>背景与导出动效</h3>
+              <p>为图片背景加入电影感动效，并控制导出视频的渐入、渐出和节拍闪光。</p>
+            </div>
+            <div class="setting-block">
+              <div class="setting-block-head"><span>背景图片动效</span><em>IMAGE MOTION</em></div>
+              <label class="module-option-field"><span>动效类型</span>
+                <select id="bgMotion">
+                  <option value="static">STATIC · 静止</option>
+                  <option value="kenburns" selected>KEN BURNS · 缓慢推拉</option>
+                  <option value="drift">DRIFT · 水平漂移</option>
+                  <option value="breathe">BREATHE · 节拍呼吸</option>
+                  <option value="sway">SWAY · 轻摇</option>
+                  <option value="beat">BEAT PULSE · 强节拍</option>
+                </select>
+              </label>
+              <div class="field-row">
+                <label class="field-label">动效强度 <output id="bgMotionAmountOut">35%</output></label>
+                <input id="bgMotionAmount" type="range" min="0" max="100" step="5" value="35" />
+              </div>
+              <div class="field-row">
+                <label class="field-label">动效速度 <output id="bgMotionSpeedOut">100%</output></label>
+                <input id="bgMotionSpeed" type="range" min="0" max="200" step="10" value="100" />
+              </div>
+              <label class="module-option-field"><span>漂移方向</span>
+                <select id="bgMotionDirection">
+                  <option value="auto">AUTO · 自动</option>
+                  <option value="left">LEFT · 向左</option>
+                  <option value="right">RIGHT · 向右</option>
+                  <option value="up">UP · 向上</option>
+                  <option value="down">DOWN · 向下</option>
+                </select>
+              </label>
+              <p class="section-help">图片动效实时作用于预览和导出；没有图片时不会影响等离子背景。</p>
+            </div>
+            <div class="setting-block">
+              <div class="setting-block-head"><span>导出动效</span><em>EXPORT FX</em></div>
+              <div class="field-row">
+                <label class="field-label">片头渐入 <output id="exportFadeInOut">0.0s</output></label>
+                <input id="exportFadeIn" type="range" min="0" max="3" step="0.1" value="0" />
+              </div>
+              <div class="field-row">
+                <label class="field-label">片尾渐出 <output id="exportFadeOutOut">0.0s</output></label>
+                <input id="exportFadeOut" type="range" min="0" max="3" step="0.1" value="0" />
+              </div>
+              <div class="field-row">
+                <label class="field-label">节拍闪光 <output id="exportPulseOut">0%</output></label>
+                <input id="exportPulse" type="range" min="0" max="100" step="5" value="0" />
+              </div>
+              <p class="section-help">这些效果会直接绘制进导出画面，不需要额外后期。</p>
+            </div>
+          </section>
+
+          <section class="settings-panel hidden" data-settings-panel="engine">
+            <div class="settings-panel-head">
+              <span class="eyebrow">ANALYSIS</span>
+              <h3>分析引擎</h3>
+              <p>GPU 背景着色器与音频响应参数。</p>
+            </div>
+            <div class="segmented" id="rendererMode">
+              <button class="active" data-renderer="gpu">GPU 加速</button>
+              <button data-renderer="cpu">CPU 兼容</button>
+            </div>
+            <p class="section-help">GPU 模式使用 WebGL 着色器绘制背景等离子；示波器与频谱仍由高精度 Canvas2D 叠加。</p>
+            <div class="field-row">
+              <label class="field-label">响应灵敏度 <output id="sensitivityOut">100%</output></label>
+              <input id="sensitivity" type="range" min="40" max="200" value="100" />
+            </div>
+            <div class="field-row">
+              <label class="field-label">频谱平滑 <output id="smoothingOut">78%</output></label>
+              <input id="smoothing" type="range" min="0" max="96" value="78" />
+            </div>
+          </section>
+          <section class="settings-panel hidden" data-settings-panel="files">
+            <div class="settings-panel-head">
+              <span class="eyebrow">FILES / ARCHIVE</span>
+              <h3>存档与路径</h3>
+              <p>把整个工程保存为单个 .neon 文件；不包含音频或视频素材。</p>
+            </div>
+            <div class="setting-block">
+              <div class="setting-block-head"><span>工程存档</span><em>PROJECT</em></div>
+              <div class="archive-actions">
+                <button class="btn primary" id="archiveSaveBtn">保存存档</button>
+                <button class="btn ghost" id="archiveExportBtn">另存为…</button>
+                <button class="btn ghost" id="archiveImportBtn">导入存档</button>
+              </div>
+              <input type="file" id="archiveFile" accept=".neon,.json,application/json" hidden />
+              <div class="archive-actions">
+                <button class="mini-action" id="fileAnimExportBtn">导出动画 .txt</button>
+                <button class="mini-action" id="fileAnimImportBtn">导入动画 .txt</button>
+              </div>
+              <p class="section-help">快捷键 Ctrl+S 保存。存档包含布局、主题、动效、信息、动画动作和封面；不包含音轨与视频。关闭软件后可从存档恢复全部改动。</p>
+            </div>
+            <div class="setting-block">
+              <div class="setting-block-head"><span>默认存档路径</span><em>SAVE PATH</em></div>
+              <div class="path-row">
+                <input id="savePathInput" type="text" placeholder="默认：本机 NEONScope / Saves" spellcheck="false" />
+                <button class="mini-action" id="savePathBrowse">浏览…</button>
+              </div>
+              <div class="field-row">
+                <label class="field-label">默认导出路径</label>
+                <div class="path-row">
+                  <input id="exportPathInput" type="text" placeholder="默认：下载 / Downloads" spellcheck="false" />
+                  <button class="mini-action" id="exportPathBrowse">浏览…</button>
+                </div>
+              </div>
+              <p class="section-help">留空则使用系统默认位置。EXE 中浏览按钮会打开原生文件夹选择器；视频导出会保存到导出路径。</p>
+            </div>
+            <div class="setting-block">
+              <div class="setting-block-head"><span>恢复</span><em>RECOVERY</em></div>
+              <p class="section-help">编辑会自动写入本机恢复缓存；即使意外关闭，重新打开也会恢复最近一次自动保存。需要长期保存或迁移时，请使用上方“保存存档”。</p>
+            </div>
+          </section>
+        </div>
+      </div>
+      <div class="window-foot">
+        <span class="window-foot-note">更改会自动保存</span>
+        <button class="btn primary" data-close="settings">完成</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-layer hidden" id="shortcutsModal" role="dialog" aria-modal="true" aria-labelledby="shortcutsTitle">
+    <div class="modal-backdrop" data-close="shortcuts"></div>
+    <div class="window-card shortcuts-window">
+      <div class="window-head" data-window-drag>
+        <div class="window-title">
+          <span class="eyebrow">KEY BINDINGS / CONTROL MAP</span>
+          <h2 id="shortcutsTitle">快捷键映射</h2>
+        </div>
+        <div class="window-head-actions">
+          <span class="window-hint">TAB / ESC / 鼠标按键不可绑定</span>
+          <button class="icon-btn small" data-close="shortcuts" aria-label="关闭"><svg class="icon"><use href="#i-close"/></svg></button>
+        </div>
+      </div>
+      <div class="shortcut-search-row">
+        <label class="shortcut-search">
+          <svg class="icon"><use href="#i-search"/></svg>
+          <input id="shortcutSearch" type="search" placeholder="搜索功能名称、分组或当前键位…" autocomplete="off" spellcheck="false" />
+        </label>
+        <span class="shortcut-count" id="shortcutCount">0 / 0</span>
+      </div>
+      <div class="shortcut-table">
+        <div class="shortcut-table-head"><span>功能</span><span>按键映射</span></div>
+        <div class="shortcut-list" id="shortcutList"></div>
+      </div>
+      <div class="window-foot">
+        <button class="btn ghost" id="resetShortcutsBtn">恢复默认</button>
+        <button class="btn primary" data-close="shortcuts">完成</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-layer hidden" id="colorModal" role="dialog" aria-modal="true" aria-labelledby="colorTitle">
+    <div class="modal-backdrop" data-close="color"></div>
+    <div class="window-card color-window">
+      <div class="window-head" data-window-drag>
+        <div class="window-title">
+          <span class="eyebrow">COLOR / RGBA</span>
+          <h2 id="colorTitle">选择颜色</h2>
+        </div>
+        <div class="window-head-actions">
+          <button class="icon-btn small" data-close="color" aria-label="关闭"><svg class="icon"><use href="#i-close"/></svg></button>
+        </div>
+      </div>
+      <div class="color-picker-body">
+        <div class="color-field-wrap" id="colorFieldWrap">
+          <canvas id="colorField" width="320" height="200"></canvas>
+          <div class="color-field-cursor" id="colorFieldCursor"></div>
+        </div>
+        <div class="color-picker-side">
+          <div class="color-preview-row">
+            <span class="color-preview" id="colorPreview"></span>
+            <div class="color-preview-copy">
+              <strong id="colorHexLabel">#FF4F8B</strong>
+              <small id="colorRgbaLabel">rgba(255, 79, 139, 1)</small>
+            </div>
+          </div>
+          <div class="color-slider-block">
+            <label class="field-label">色相 <output id="hueOut">340°</output></label>
+            <input id="hueSlider" class="hue-slider" type="range" min="0" max="360" value="340" />
+          </div>
+          <div class="color-slider-block">
+            <label class="field-label">透明度 <output id="alphaOut">100%</output></label>
+            <input id="alphaSlider" class="alpha-slider" type="range" min="0" max="100" value="100" />
+          </div>
+          <div class="color-rgba-grid">
+            <label>R<input id="colorR" type="number" min="0" max="255" value="255" /></label>
+            <label>G<input id="colorG" type="number" min="0" max="255" value="79" /></label>
+            <label>B<input id="colorB" type="number" min="0" max="255" value="139" /></label>
+            <label>A<input id="colorA" type="number" min="0" max="100" value="100" /></label>
+          </div>
+        </div>
+      </div>
+      <div class="window-foot">
+        <button class="btn ghost" data-close="color">取消</button>
+        <button class="btn primary" id="colorApplyBtn">应用颜色</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel-menu hidden" id="panelMenu">
+    <div class="panel-menu-head"><span>面板</span><em>PANELS</em></div>
+    <div id="panelMenuList"></div>
+    <div class="panel-menu-subhead"><span>独立板块</span><em>CARDS</em></div>
+    <div id="subpanelMenuList" class="subpanel-menu-list"></div>
+    <div class="panel-menu-foot">
+      <button id="panelMenuSettingsBtn">打开设置</button>
+      <button id="resetPanelsBtn">恢复默认布局</button>
+    </div>
+  </div>
+
+  <div class="module-menu hidden" id="moduleMenu" role="menu">
+    <button data-menu-action="duplicate">复制模块<kbd data-menu-key="duplicate_module">CTRL + D</kbd></button>
+    <button data-menu-action="hide">隐藏此模块</button>
+    <button data-menu-action="solo">仅显示此模块</button>
+    <button data-menu-action="show_all">显示全部模块</button>
+    <div class="module-menu-sep"></div>
+    <button data-menu-action="center_h">水平居中</button>
+    <button data-menu-action="center_v">垂直居中</button>
+    <button data-menu-action="reset_size">重置尺寸</button>
+    <div class="module-menu-sep"></div>
+    <button data-menu-action="layer_up">置于顶层</button>
+    <button data-menu-action="layer_down">置于底层</button>
+    <button data-menu-action="delete" class="danger">删除模块<kbd data-menu-key="delete_module">DEL</kbd></button>
+  </div>
+
+  <div class="alpha-layer" id="alphaNotice" role="dialog" aria-modal="true" aria-labelledby="alphaNoticeTitle">
+    <div class="alpha-backdrop"></div>
+    <div class="alpha-card">
+      <div class="alpha-mark" aria-hidden="true">!</div>
+      <div class="alpha-body">
+        <div class="alpha-kicker">ALPHA BUILD / V0.1.0_1104_alpha</div>
+        <h2 id="alphaNoticeTitle">注意！这是 NEON//SCOPE 的 Alpha 测试版本。</h2>
+        <p>Alpha 测试版本不代表最终产品的最终质量。感谢您的理解和支持，祝你好运！</p>
+        <div class="alpha-foot">
+          <span>NEON//SCOPE · AUDIO VISUALIZATION · BUILT WITH DEEPSEEK HARNESS</span>
+          <button class="alpha-btn" id="alphaNoticeBtn">我已知晓，继续</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast-stack" id="toastStack" aria-live="polite"></div>
+  <div class="drag-veil hidden" id="dragVeil">
+    <div class="drag-card"><svg class="icon"><use href="#i-wave"/></svg><strong>松开以载入</strong><span>支持音频与 MIDI 文件</span></div>
+  </div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
+
+

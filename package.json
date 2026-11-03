@@ -1,0 +1,11 @@
+{
+  "name": "neon-scope",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "NEON//SCOPE — realtime audio / MIDI visualizer with video export",
+  "scripts": {
+    "start": "node server.mjs",
+    "serve": "node server.mjs --no-open"
+  }
+}

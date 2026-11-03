@@ -1,0 +1,17 @@
+.neon-scope-tmp/
+.build-cache/
+_dotnet/
+_nuget/
+_nuget-http/
+_tmp/
+native/bin/
+native/obj/
+dist/
+NEON-SCOPE-win64.zip
+_test*/
+_edge-test*/
+native/**/NEONScopeData/
+*.log
+node_modules/
+.DS_Store
+Thumbs.db
