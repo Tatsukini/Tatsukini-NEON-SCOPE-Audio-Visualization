@@ -1,4 +1,4 @@
-import { STAGE_W, STAGE_H, clamp, formatTC, formatShortTime, mixHex, automationValueAt } from './core.js';
+import { STAGE_W, STAGE_H, clamp, formatTC, formatShortTime, mixHex, automationValueAt, resolveThemeColors } from './core.js';
 import { BackgroundRenderer } from './background.js';
 import { drawVisualModule } from './modules.js';
 
@@ -460,14 +460,7 @@ export class Visualizer {
   }
 
   _basePalette() {
-    const s = this.state.settings;
-    const bg = s.themeBg || '#07050a';
-    const windowColor = s.themeWindow || '#171020';
-    const text = s.themeText || '#f7eef3';
-    const baseChart = s.themeChart || s.accent || '#ff4f8b';
-    const follow = s.themeChartFollow || 'custom';
-    const chart = follow === 'bg' ? bg : follow === 'primary' ? windowColor : follow === 'accent' ? text : baseChart;
-    return { bg, window: windowColor, text, chart };
+    return resolveThemeColors(this.state.settings);
   }
 
   _stagePalette(time) {
@@ -477,22 +470,23 @@ export class Visualizer {
       if (cue.duration > 0 && time > cue.time + cue.duration) continue;
       const p = cue.params || {};
       const relative = time - cue.time;
-      const fadeIn = Math.max(0, Number(p.fadeIn) || 0);
-      const fadeOut = Math.max(0, Number(p.fadeOut) || 0);
+      const auto = (prop, fallback, kind = 'number') => automationValueAt(cue.keys?.[prop], relative, fallback, kind);
+      const fadeIn = Math.max(0, Number(auto('fadeIn', p.fadeIn ?? 0.35)) || 0);
+      const fadeOut = Math.max(0, Number(auto('fadeOut', p.fadeOut ?? 0.35)) || 0);
       let weight = 1;
       if (fadeIn > 0) weight = Math.min(weight, relative / fadeIn);
       if (cue.duration > 0 && fadeOut > 0) weight = Math.min(weight, (cue.duration - relative) / fadeOut);
       weight = clamp(weight, 0, 1);
       const colors = {
-        bg: p.bg || palette.bg,
-        window: p.primary || palette.window,
-        text: p.accent || palette.text,
+        bg: auto('bg', p.bg || palette.bg, 'color'),
+        window: auto('primary', p.primary || palette.window, 'color'),
+        text: auto('accent', p.accent || palette.text, 'color'),
       };
       const follow = p.chartFollow || 'custom';
       colors.chart = follow === 'bg' ? colors.bg
         : follow === 'primary' ? colors.window
           : follow === 'accent' ? colors.text
-            : (p.ink || palette.chart);
+            : auto('ink', p.ink || palette.chart, 'color');
       palette = {
         bg: mixHex(palette.bg, colors.bg, weight),
         window: mixHex(palette.window, colors.window, weight),
@@ -599,154 +593,6 @@ export class Visualizer {
     ctx.restore();
   }
 
-  _drawIntroOverlay(ctx, w, h, cue, progress, alpha) {
-    const info = this.state.info || {};
-    const accent = this.state.settings.accent || '#ff4f8b';
-    const engine = this.engine || {};
-    const title = info.title || engine.track?.name || 'Untitled signal';
-    const composer = info.composer || info.artist || engine.track?.artist || 'Unknown source';
-    const album = info.album || 'Album';
-    const genre = info.genre || engine.track?.genre || 'Genre';
-    const bpm = info.bpm || engine.track?.bpm || '—';
-    const trackNo = info.trackNo || '—';
-    const sampleRate = engine.sampleRate ? `${(engine.sampleRate / 1000).toFixed(1)} kHz` : '—';
-    const duration = engine.duration ? formatShortTime(engine.duration) : '—';
-    if (alpha <= 0.005) return;
-    const ease = Math.min(1, progress * 6) * Math.min(1, (1 - progress) * 6);
-    const scale = 0.985 + ease * 0.015;
-    ctx.save();
-    ctx.globalAlpha = alpha;
-    ctx.translate(w / 2, h / 2);
-    ctx.scale(scale, scale);
-    ctx.translate(-w / 2, -h / 2);
-    ctx.fillStyle = '#ece9f2';
-    ctx.fillRect(0, 0, w, h);
-
-    // Editorial grid.
-    ctx.strokeStyle = 'rgba(25,28,60,.055)';
-    ctx.lineWidth = 1;
-    for (let gx = w * 0.04; gx < w; gx += w / 18) {
-      ctx.beginPath(); ctx.moveTo(gx, 0); ctx.lineTo(gx, h); ctx.stroke();
-    }
-    for (let gy = h * 0.08; gy < h; gy += h / 7) {
-      ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(w, gy); ctx.stroke();
-    }
-
-    const pad = w * 0.045;
-    const cover = Math.min(h - pad * 2.3, w * 0.27);
-    const coverX = pad;
-    const coverY = (h - cover) / 2;
-    ctx.fillStyle = '#e1dce9';
-    ctx.fillRect(coverX, coverY, cover, cover);
-    const coverSrc = info.cover || '';
-    if (coverSrc && this._introCoverSrc !== coverSrc) {
-      this._introCoverSrc = coverSrc;
-      const img = new Image();
-      img.onload = () => { this._introCoverImage = img; };
-      img.src = coverSrc;
-    }
-    if (this._introCoverImage) {
-      const img = this._introCoverImage;
-      const sc = Math.max(cover / img.width, cover / img.height);
-      const dw = img.width * sc;
-      const dh = img.height * sc;
-      ctx.save();
-      ctx.beginPath(); ctx.rect(coverX, coverY, cover, cover); ctx.clip();
-      ctx.drawImage(img, coverX + (cover - dw) / 2, coverY + (cover - dh) / 2, dw, dh);
-      ctx.restore();
-    } else {
-      ctx.strokeStyle = 'rgba(25,28,60,.22)';
-      ctx.setLineDash([6, 7]);
-      ctx.strokeRect(coverX + 12, coverY + 12, cover - 24, cover - 24);
-      ctx.setLineDash([]);
-      ctx.fillStyle = 'rgba(25,28,60,.36)';
-      ctx.font = `600 ${Math.max(10, cover * 0.065)}px "Cascadia Code", monospace`;
-      ctx.textAlign = 'center';
-      ctx.fillText('COVER ART', coverX + cover / 2, coverY + cover / 2);
-      ctx.textAlign = 'left';
-    }
-    ctx.strokeStyle = 'rgba(25,28,60,.4)';
-    ctx.lineWidth = 1;
-    ctx.strokeRect(coverX + 0.5, coverY + 0.5, cover - 1, cover - 1);
-    ctx.strokeStyle = accent;
-    ctx.lineWidth = 3;
-    const corner = Math.min(28, cover * 0.12);
-    for (const [cx, cy, sx, sy] of [
-      [coverX, coverY, 1, 1], [coverX + cover, coverY, -1, 1],
-      [coverX, coverY + cover, 1, -1], [coverX + cover, coverY + cover, -1, -1],
-    ]) {
-      ctx.beginPath();
-      ctx.moveTo(cx + sx * corner, cy);
-      ctx.lineTo(cx, cy);
-      ctx.lineTo(cx, cy + sy * corner);
-      ctx.stroke();
-    }
-
-    const tx = coverX + cover + w * 0.045;
-    const tw = w - tx - pad;
-    const tiny = Math.max(8, w * 0.0074);
-    const label = Math.max(8, w * 0.008);
-    ctx.fillStyle = accent;
-    ctx.font = `600 ${tiny}px "Cascadia Code", monospace`;
-    ctx.fillText(`FROM: ${composer}`, tx, h * 0.1);
-    ctx.fillStyle = 'rgba(25,28,60,.58)';
-    ctx.textAlign = 'right';
-    ctx.fillText('AUDIO VISUALIZATION INTERFACE', w - pad, h * 0.1);
-    ctx.textAlign = 'left';
-
-    const titleSize = Math.min(w * 0.075, h * 0.16);
-    ctx.fillStyle = '#111a3b';
-    ctx.font = `700 ${titleSize}px "Bahnschrift", "Microsoft YaHei UI", sans-serif`;
-    ctx.fillText(`{${title}}`, tx, h * 0.34, tw);
-    ctx.fillStyle = accent;
-    ctx.fillRect(tx, h * 0.37, Math.min(tw * 0.5, w * 0.25), 3);
-
-    const rowY = h * 0.53;
-    const colW = tw / 3;
-    const labels = ['ARTIST', 'ALBUM', 'TRACK'];
-    const values = [composer, album, trackNo];
-    for (let i = 0; i < 3; i += 1) {
-      const x = tx + i * colW;
-      ctx.fillStyle = 'rgba(25,28,60,.5)';
-      ctx.font = `500 ${label}px "Cascadia Code", monospace`;
-      ctx.fillText(labels[i], x, rowY);
-      ctx.fillStyle = '#111a3b';
-      ctx.font = `600 ${Math.max(10, w * 0.012)}px "Bahnschrift", "Microsoft YaHei UI", sans-serif`;
-      ctx.fillText(String(values[i]), x, rowY + h * 0.055, colW - 20);
-    }
-    ctx.fillStyle = 'rgba(25,28,60,.55)';
-    ctx.font = `500 ${tiny}px "Cascadia Code", monospace`;
-    ctx.fillText(`GENRE ${genre}    BPM ${bpm}    SAMPLE ${sampleRate}    DURATION ${duration}`, tx, h * 0.78, tw);
-
-    // Waveform preview across the bottom right.
-    const waveY = h * 0.86;
-    const waveW = tw;
-    ctx.strokeStyle = 'rgba(25,28,60,.34)';
-    ctx.lineWidth = 0.8;
-    ctx.beginPath();
-    const cols = Math.max(40, Math.min(260, Math.floor(waveW / 3)));
-    for (let i = 0; i < cols; i += 1) {
-      let lo = 0;
-      let hi = 0;
-      if (engine.overviewMin?.length && engine.overviewMax?.length) {
-        const idx = Math.floor(i / cols * engine.overviewMin.length);
-        lo = engine.overviewMin[idx] || 0;
-        hi = engine.overviewMax[idx] || 0;
-      } else {
-        lo = Math.sin(i * 0.33) * 0.35;
-        hi = Math.cos(i * 0.19) * 0.35;
-      }
-      const x = tx + i * (waveW / cols);
-      ctx.moveTo(x, waveY - hi * 12);
-      ctx.lineTo(x, waveY - lo * 12);
-    }
-    ctx.stroke();
-    ctx.fillStyle = accent;
-    ctx.font = `500 ${tiny}px "Cascadia Code", monospace`;
-    ctx.fillText('WAVEFORM PREVIEW', tx, waveY - 18);
-    ctx.restore();
-  }
-
   _drawIntroBand(ctx, w, h, cue, progress, alpha) {
     if (alpha <= 0.005) return;
     const info = this.state.info || {};
@@ -762,6 +608,10 @@ export class Visualizer {
     const album = info.album || 'Album';
     const trackNo = info.trackNo || '—';
 
+    const relative = Number(cue.duration) > 0 ? progress * Number(cue.duration) : 0;
+    const blurAmount = clamp(Number(automationValueAt(cue.keys?.blur, relative, cue.params?.blur ?? 35)) || 0, 0, 100);
+    const blurPx = 6 + blurAmount * 0.45;
+
     // Keep only the central information band; the world outside it is a
     // defocused copy of the live scene.
     try {
@@ -775,7 +625,7 @@ export class Visualizer {
       blurCtx.drawImage(ctx.canvas, 0, 0, w, h);
       ctx.save();
       ctx.globalAlpha = alpha;
-      ctx.filter = 'blur(22px)';
+      ctx.filter = `blur(${blurPx.toFixed(1)}px)`;
       ctx.drawImage(this._introBlurCanvas, -24, -24, w + 48, h + 48);
       ctx.restore();
       ctx.save();
@@ -976,10 +826,10 @@ export class Visualizer {
         ctx.globalAlpha = alpha;
         const bw = Math.min(w * 0.62, 760);
         const bh = Math.min(h * 0.42, 300);
-        const ox = Number(p.x ?? 0);
-        const oy = Number(p.y ?? 0);
-        const sx = clamp((Number(p.scaleX) || 100) / 100, 0.2, 4);
-        const sy = clamp((Number(p.scaleY) || 100) / 100, 0.2, 4);
+        const ox = Number(auto('x', p.x ?? 0));
+        const oy = Number(auto('y', p.y ?? 0));
+        const sx = clamp((Number(auto('scaleX', p.scaleX ?? 100)) || 100) / 100, 0.2, 4);
+        const sy = clamp((Number(auto('scaleY', p.scaleY ?? 100)) || 100) / 100, 0.2, 4);
         ctx.translate(w / 2 + ox, h / 2 + oy);
         ctx.scale(sx, sy);
         const x = -bw / 2;
@@ -1007,8 +857,8 @@ export class Visualizer {
         const size = clamp(Number(auto('size', p.size ?? 26)) || 26, 8, 200) * (h / 1080);
         const x = w / 2 + Number(auto('x', p.x ?? 0));
         const y = h / 2 + Number(auto('y', p.y ?? 0));
-        const fadeIn = Math.max(0, Number(p.fadeIn) || 0);
-        const fadeOut = Math.max(0, Number(p.fadeOut) || 0);
+        const fadeIn = Math.max(0, Number(auto('fadeIn', p.fadeIn ?? 0.35)) || 0);
+        const fadeOut = Math.max(0, Number(auto('fadeOut', p.fadeOut ?? 0.35)) || 0);
         let textFade = 1;
         if (!persistent) {
           if (fadeIn > 0) textFade = Math.min(textFade, clamp(relative / fadeIn, 0, 1));
@@ -1035,20 +885,20 @@ export class Visualizer {
       const relative = Math.max(0, time - cue.time);
       const auto = (prop, fallback, kind = 'number') => automationValueAt(cue.keys?.[prop], relative, fallback, kind);
       const size = clamp(Number(auto('size', p.size ?? 26)) || 26, 8, 200) * (h / 1080);
-      const lineGap = Math.max(0, Number(p.lineGap) || 0) * (h / 1080);
+      const lineGap = Math.max(0, Number(auto('lineGap', p.lineGap ?? 8)) || 0) * (h / 1080);
       const lineH = size * 1.24 + lineGap;
       const x = w / 2 + Number(auto('x', p.x ?? 0));
       const y = h / 2 + Number(auto('y', p.y ?? 360));
-      const fadeIn = Math.max(0, Number(p.fadeIn) || 0);
-      const fadeOut = Math.max(0, Number(p.fadeOut) || 0);
+      const fadeIn = Math.max(0, Number(auto('fadeIn', p.fadeIn ?? 0.35)) || 0);
+      const fadeOut = Math.max(0, Number(auto('fadeOut', p.fadeOut ?? 0.35)) || 0);
       let fade = 1;
       if (!persistent) {
         if (fadeIn > 0) fade = Math.min(fade, clamp(relative / fadeIn, 0, 1));
         if (fadeOut > 0) fade = Math.min(fade, clamp((cue.duration - relative) / fadeOut, 0, 1));
       }
       const alpha = clamp(auto('opacity', 1), 0, 1) * fade;
-      const scaleX = clamp((Number(p.scaleX) || 100) / 100, 0.2, 4);
-      const scaleY = clamp((Number(p.scaleY) || 100) / 100, 0.2, 4);
+      const scaleX = clamp((Number(auto('scaleX', p.scaleX ?? 100)) || 100) / 100, 0.2, 4);
+      const scaleY = clamp((Number(auto('scaleY', p.scaleY ?? 100)) || 100) / 100, 0.2, 4);
       ctx.font = `500 ${size}px "Bahnschrift", "Microsoft YaHei UI", sans-serif`;
       const maxWidth = w * 0.82;
       const text = String(p.text || cue.value || '').replace(/\r\n?/g, '\n');

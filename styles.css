@@ -955,7 +955,7 @@ body.exporting .stage-watermark { display: none !important; }
 
 /* Module context menu */
 .module-menu {
-  position: fixed; z-index: 320;
+  position: fixed; z-index: 90;
   width: 228px; padding: 5px;
   background: linear-gradient(160deg, rgba(21,13,27,.98), rgba(9,6,13,.985));
   border: 1px solid rgba(var(--accent-rgb), .3);
@@ -1065,7 +1065,7 @@ body.exporting .stage-watermark { display: none !important; }
 
 
 .panel-menu {
-  position: fixed; z-index: 330;
+  position: fixed; z-index: 90;
   width: 244px; padding: 6px;
   background: linear-gradient(160deg, rgba(22,14,28,.98), rgba(9,6,13,.985));
   border: 1px solid rgba(var(--accent-rgb), .3);
@@ -1335,7 +1335,12 @@ body[data-ui-mode="dark"][data-ui-theme="catbot"] .action-builder-fields textare
 .theme-four { display: flex; flex-direction: column; gap: 5px; margin: 8px 0 10px; }
 .theme-color-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; height: 28px; }
 .theme-color-row > span { font: 8px var(--mono); color: var(--muted); letter-spacing: .06em; }
-.theme-color-row input[type="color"] { width: 92px; height: 25px; padding: 2px; border: 1px solid rgba(255,255,255,.12); border-radius: 3px; background: #100b16; }
+.theme-color-row input[type="color"] {
+  width: 92px; height: 25px; padding: 2px;
+  border: 1px solid rgba(255,255,255,.12); border-radius: 3px; background: #100b16; color-scheme: dark;
+}
+.theme-color-row input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
+.theme-color-row input[type="color"]::-webkit-color-swatch { border: 0; border-radius: 2px; }
 .theme-follow-row select { width: 150px; height: 27px; border: 1px solid rgba(255,255,255,.12); border-radius: 3px; background: #100b16; color: var(--text); font: 8px var(--mono); padding: 0 6px; }
 body[data-ui-mode="light"] .theme-color-row input[type="color"], body[data-ui-theme="catbot"] .theme-color-row input[type="color"],
 body[data-ui-mode="light"] .theme-follow-row select, body[data-ui-theme="catbot"] .theme-follow-row select
@@ -1503,11 +1508,12 @@ body[data-ui-mode="light"] .kf-time, body[data-ui-theme="catbot"] .kf-time { col
 
 /* ── Timeline context menu ─────────────────────────────── */
 .timeline-menu {
-  position: fixed; z-index: 320; min-width: 218px; padding: 5px;
+  position: fixed; z-index: 90; min-width: 218px; padding: 5px;
   background: #100b16; border: 1px solid rgba(255,255,255,.13); border-radius: 5px;
   box-shadow: 0 18px 48px rgba(0,0,0,.55);
 }
 .timeline-menu.hidden { display: none; }
+.keyframe-menu { z-index: 150; }
 .timeline-menu button {
   width: 100%; height: 27px; display: flex; align-items: center; justify-content: space-between;
   padding: 0 7px; color: #a9939f; font: 8px var(--mono); text-align: left;

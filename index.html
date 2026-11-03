@@ -597,8 +597,8 @@
           <section class="settings-panel" data-settings-panel="appearance">
             <div class="settings-panel-head">
               <span class="eyebrow">APPEARANCE</span>
-              <h3>主色与光晕</h3>
-              <p>使用 RGB + 透明度色盘定义界面、模块、光晕与背景的统一主色。</p>
+              <h3>四色主题与光晕</h3>
+              <p>分别定义背景、窗口、字符和图表颜色；图表颜色可以跟随前三项。</p>
             </div>
             <button class="color-well theme-color-well" id="accentPickBtn" type="button" style="display:none">
               <span class="color-well-swatch" id="accentSwatch"></span>
@@ -633,7 +633,6 @@
               <label class="field-label">光晕强度 <output id="glowOut">45%</output></label>
               <input id="glow" type="range" min="0" max="100" value="45" />
             </div>
-            <label class="check-row"><input type="checkbox" id="moduleTint" checked /><span>模块标题栏使用主色</span></label>
             <div class="settings-subhead"><span>默认字体</span><em>UI FONT</em></div>
             <div class="ui-font-row">
               <select id="uiFont">
@@ -650,7 +649,7 @@
               <button class="mini-action" id="uiFontReset">恢复默认字体</button>
             </div>
             <p class="section-help">只影响应用界面文字；画布模块和动画中的字体仍由模块专属设置控制。</p>
-            <div class="settings-note"><span>提示</span>主题色透明度会同时作用于界面强调色和可视化模块（以叠加暗底的方式保持可读性）。</div>
+            <div class="settings-note"><span>提示</span>四色主题只影响界面与舞台组件；color 动画在播放时覆盖舞台组件配色，但不会改写这里的设置。</div>
           </section>
 
           <section class="settings-panel hidden" data-settings-panel="background">

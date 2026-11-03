@@ -53,6 +53,7 @@ NEON//SCOPE  v1.4.1  (Windows x64)
 常用快捷键：
   Space 播放/暂停 · F1 快捷键映射 · Ctrl+, 设置
   G 吸附 · E 编辑 · F 专注模式 · Ctrl+D 复制模块 · Delete 删除
+  T 时间轴 · K 关键帧总线 · A 添加动作 · F3 独立舞台 · Ctrl+Shift+R 恢复布局
   所有键位均可在 F1 映射表中重新设置（Tab / Esc / 鼠标不可绑定）
 
 设置窗口：

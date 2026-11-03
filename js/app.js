@@ -1,7 +1,7 @@
 import {
   STAGE_W, STAGE_H, MODULE_DEFS, MODULE_ORDER, DEFAULT_SETTINGS,
   EXPORT_QUALITIES, LAYOUT_PRESETS, makeStudioLayout, makeScopeLayout, makeMinimalLayout,
-  createModule, uid, hexToRgb, rgbToHex, mixHex, luminance, normalizeHexInput, clamp, formatTime, formatTC,
+  createModule, uid, hexToRgb, rgbToHex, mixHex, resolveThemeColors, luminance, normalizeHexInput, clamp, formatTime, formatTC,
   AUTOMATION_PROPERTIES, automationValueAt,
   formatShortTime, humanBytes, safeRead, safeStore, safeParse, debounce,
 } from './core.js';
@@ -39,6 +39,11 @@ const SHORTCUT_ACTIONS = [
   { id: 'open_settings', label: '打开设置', code: 'SETTINGS', group: '窗口', default: 'Ctrl+Comma' },
   { id: 'open_shortcuts', label: '快捷键映射表', code: 'KEY MAP', group: '窗口', default: 'F1' },
   { id: 'open_help', label: '工作台指南', code: 'HELP', group: '窗口', default: 'F2' },
+  { id: 'toggle_timeline', label: '显示 / 收起时间轴', code: 'TIMELINE', group: '窗口', default: 'KeyT' },
+  { id: 'toggle_keyframes', label: '显示关键帧管理总线', code: 'KEYFRAMES', group: '窗口', default: 'KeyK' },
+  { id: 'add_action', label: '添加动画动作', code: 'ADD ACTION', group: '动画', default: 'KeyA' },
+  { id: 'open_stage_window', label: '打开独立舞台窗口', code: 'STAGE', group: '窗口', default: 'F3' },
+  { id: 'reset_panels', label: '恢复默认面板布局', code: 'RESET LAYOUT', group: '窗口', default: 'Ctrl+Shift+KeyR' },
 ];
 const DEFAULT_KEYBINDS = Object.fromEntries(SHORTCUT_ACTIONS.map((action) => [action.id, action.default]));
 
@@ -590,7 +595,7 @@ class NeonScopeApp {
       themeBg: $('#themeBg'), themeWindow: $('#themeWindow'), themeText: $('#themeText'), themeChart: $('#themeChart'),
       themeChartFollow: $('#themeChartFollow'),
       glow: $('#glow'), glowOut: $('#glowOut'),
-      moduleTint: $('#moduleTint'), bgMode: $('#bgMode'), bgPreviewCanvas: $('#bgPreviewCanvas'),
+      bgMode: $('#bgMode'), bgPreviewCanvas: $('#bgPreviewCanvas'),
       bgPreviewLabel: $('#bgPreviewLabel'), bgUploadBtn: $('#bgUploadBtn'), bgImageControls: $('#bgImageControls'),
       bgColorControls: $('#bgColorControls'), bgColorPickBtn: $('#bgColorPickBtn'), bgColorSwatch: $('#bgColorSwatch'),
       bgColorValue: $('#bgColorValue'),
@@ -1004,10 +1009,7 @@ class NeonScopeApp {
       d.glowOut.textContent = `${d.glow.value}%`;
       this._persist();
     });
-    d.moduleTint.addEventListener('change', () => {
-      this.state.settings.moduleTint = d.moduleTint.checked;
-      this._persist();
-    });
+
 
     // Background.
     d.bgMode.addEventListener('click', (e) => {
@@ -1934,8 +1936,10 @@ class NeonScopeApp {
 
   _timelineLabel(cue) {
     const p = cue.params || {};
-    if (cue.type === 'text' || cue.type === 'subtitle') return p.text || cue.value || cue.type;
-    if (cue.type === 'mash') return p.title || cue.value || 'mash';
+    if (cue.type === 'text' || cue.type === 'subtitle') {
+      return String(p.text || cue.value || cue.type).replace(/\s+/g, ' ').slice(0, 80);
+    }
+    if (cue.type === 'mash') return String(p.title || cue.value || 'mash').replace(/\s+/g, ' ').slice(0, 80);
     if (cue.type === 'color') return p.ink || p.accent || 'color';
     if (cue.type === 'effect') return p.effect || 'effect';
     if (cue.type === 'bpm') return `${p.bpm ?? cue.value ?? ''} BPM`;
@@ -2229,7 +2233,10 @@ class NeonScopeApp {
       const data = JSON.parse(text);
       const archive = data?.format === 'neon-scope-project' ? data : { project: data };
       if (!archive.project || typeof archive.project !== 'object') throw new Error('不是有效的 NEON//SCOPE 存档');
-      if (!window.confirm('导入存档会覆盖当前工程，继续吗？')) return;
+      const confirmed = await this._showConfirm('导入存档会覆盖当前工程，继续吗？', {
+        title: '导入工程', confirmText: '导入', cancelText: '取消',
+      });
+      if (!confirmed) return;
       if (this._standaloneSettings && this._isNative) {
         window.chrome.webview.postMessage({ action: 'archive-import', archive });
         this._toast('已发送到主窗口，正在恢复存档…', 'success', 3000);
@@ -2455,7 +2462,12 @@ class NeonScopeApp {
     if (prop === 'opacity') return 1;
     if (prop === 'x') return p.x ?? 0;
     if (prop === 'y') return p.y ?? (cue.type === 'subtitle' ? 360 : 0);
-    if (prop === 'size') return p.size ?? (cue.type === 'subtitle' ? 15 : 26);
+    if (prop === 'size') return p.size ?? (cue.type === 'subtitle' ? 26 : 86);
+    if (prop === 'fadeIn') return p.fadeIn ?? 0.35;
+    if (prop === 'fadeOut') return p.fadeOut ?? 0.35;
+    if (prop === 'lineGap') return p.lineGap ?? 8;
+    if (prop === 'scaleX') return p.scaleX ?? 100;
+    if (prop === 'scaleY') return p.scaleY ?? 100;
     if (prop === 'amount') return p.amount ?? 35;
     if (prop === 'blur') return p.blur ?? 35;
     if (prop === 'bpm') return p.bpm ?? (Number(cue.value) || 120);
@@ -2502,7 +2514,8 @@ class NeonScopeApp {
     const spec = this._automationSpec(cue, this._kfProp);
     if (!keys || !spec) return;
     const span = this._automationSpan(cue);
-    this.dom.keyframeEditorTitle.textContent = `关键帧编辑器 · ${this._timelineLabel(cue)}`;
+    const cueLabel = this._timelineLabel(cue).replace(/\s+/g, ' ').slice(0, 54);
+    this.dom.keyframeEditorTitle.textContent = `关键帧编辑器 · ${cueLabel}`;
     this.dom.keyframeEditorCue.textContent = `${cue.type.toUpperCase()} · ${formatCueTime(cue.time)}`;
     this.dom.keyframeEditorRange.textContent = `${spec.label} · 0–${formatCueTime(span).slice(0, 6)}`;
     this.dom.keyframeEditorHint.textContent = spec.kind === 'color'
@@ -2808,6 +2821,15 @@ class NeonScopeApp {
     </label>`;
   }
 
+  _actionPager() {
+    return `<div class="action-builder-pager">
+      <button type="button" data-action-page-btn="prev" title="上一页">&lt;</button>
+      <button type="button" data-action-page-btn="1" class="active">1</button>
+      <button type="button" data-action-page-btn="2">2</button>
+      <button type="button" data-action-page-btn="next" title="下一页">&gt;</button>
+    </div>`;
+  }
+
   _actionTextarea(name, label, value, { rows = 3, wide = true } = {}) {
     const text = String(value ?? '').replace(/[&<>]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[ch]));
     return `<label class="action-builder-field ${wide ? 'action-builder-wide' : ''}"><span>${label}</span>
@@ -2937,12 +2959,7 @@ class NeonScopeApp {
       body = `
         <div class="action-builder-page" data-action-page-index="1">${page1}</div>
         <div class="action-builder-page hidden" data-action-page-index="2">${page2}</div>
-        <div class="action-builder-pager">
-          <button type="button" data-action-page-btn="prev" title="上一页">&lt;</button>
-          <button type="button" data-action-page-btn="1" class="active">1</button>
-          <button type="button" data-action-page-btn="2">2</button>
-          <button type="button" data-action-page-btn="next" title="下一页">&gt;</button>
-        </div>`;
+        ${this._actionPager()}`;
     } else if (type === 'mash') {
       const page1 = [
         this._actionField('title', '标题', { value: 'Title', wide: true }),
@@ -2960,12 +2977,7 @@ class NeonScopeApp {
       body = `
         <div class="action-builder-page" data-action-page-index="1">${page1}</div>
         <div class="action-builder-page hidden" data-action-page-index="2">${page2}</div>
-        <div class="action-builder-pager">
-          <button type="button" data-action-page-btn="prev" title="上一页">&lt;</button>
-          <button type="button" data-action-page-btn="1" class="active">1</button>
-          <button type="button" data-action-page-btn="2">2</button>
-          <button type="button" data-action-page-btn="next" title="下一页">&gt;</button>
-        </div>`;
+        ${this._actionPager()}`;
     } else if (type === 'batch') {
       body = [
         this._actionField('batch', '动作组名称', { value: 'batch-name', wide: true }),
@@ -3860,6 +3872,11 @@ class NeonScopeApp {
       case 'open_settings': this._openSettings(); break;
       case 'open_shortcuts': this._openShortcuts(); break;
       case 'open_help': this._openModal('help'); break;
+      case 'toggle_timeline': this._applyTimelineOpen(!(this.state.settings.timelineOpen !== false)); break;
+      case 'toggle_keyframes': this._showKeyframeRack(); break;
+      case 'add_action': this._openActionBuilder('effect'); break;
+      case 'open_stage_window': this._openStageWindow(); break;
+      case 'reset_panels': this._resetPanels(); break;
       default: break;
     }
   }
@@ -4710,13 +4727,7 @@ class NeonScopeApp {
   }
 
   _resolveThemeColors(settings = this.state.settings) {
-    const bg = /^#[0-9a-fA-F]{6}$/.test(settings.themeBg || '') ? settings.themeBg : '#07050a';
-    const windowColor = /^#[0-9a-fA-F]{6}$/.test(settings.themeWindow || '') ? settings.themeWindow : '#171020';
-    const text = /^#[0-9a-fA-F]{6}$/.test(settings.themeText || '') ? settings.themeText : '#f7eef3';
-    const chartBase = /^#[0-9a-fA-F]{6}$/.test(settings.themeChart || '') ? settings.themeChart : '#ff4f8b';
-    const follow = settings.themeChartFollow || 'custom';
-    const chart = follow === 'bg' ? bg : follow === 'primary' ? windowColor : follow === 'accent' ? text : chartBase;
-    return { bg, window: windowColor, text, chart };
+    return resolveThemeColors(settings);
   }
 
   _applyThemePalette({ silent = false, noPersist = false } = {}) {
@@ -4735,7 +4746,8 @@ class NeonScopeApp {
     set('--text', colors.text);
     set('--muted', mixHex(colors.text, colors.bg, 0.46));
     set('--dim', mixHex(colors.text, colors.bg, 0.68));
-    set('--line', `rgba(${hexToRgb(colors.text).r}, ${hexToRgb(colors.text).g}, ${hexToRgb(colors.text).b}, 0.12)`);
+    const textRgb = hexToRgb(colors.text);
+    set('--line', `rgba(${textRgb.r}, ${textRgb.g}, ${textRgb.b}, 0.12)`);
     if (this.dom.themeBg) this.dom.themeBg.value = colors.bg;
     if (this.dom.themeWindow) this.dom.themeWindow.value = colors.window;
     if (this.dom.themeText) this.dom.themeText.value = colors.text;
@@ -5090,7 +5102,7 @@ class NeonScopeApp {
     d.volume.value = s.volume;
     d.glow.value = s.glow;
     d.glowOut.textContent = `${s.glow}%`;
-    d.moduleTint.checked = s.moduleTint;
+
     d.bgDim.value = s.bgDim;
     d.dimOut.textContent = `${s.bgDim}%`;
     d.bgBlur.value = s.bgBlur;
@@ -5422,6 +5434,10 @@ class NeonScopeApp {
   _openModal(name) {
     const modal = this._modalElement(name);
     if (!modal) return;
+    this._closeTimelineMenu?.();
+    this._closeModuleMenu?.();
+    this._closeKeyframeMenu?.();
+    this._closePanelMenu?.();
     if (!this._modalStack.includes(name)) this._modalStack.push(name);
     this._activeModal = name;
     modal.classList.remove('hidden');

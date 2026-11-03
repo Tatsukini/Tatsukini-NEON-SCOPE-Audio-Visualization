@@ -167,18 +167,35 @@ export function mixHex(a, b, t) {
   return rgbToHex(lerp(A.r, B.r, t), lerp(A.g, B.g, t), lerp(A.b, B.b, t));
 }
 
+export function resolveThemeColors(settings = {}) {
+  const bg = /^#[0-9a-fA-F]{6}$/.test(settings.themeBg || '') ? settings.themeBg : '#07050a';
+  const windowColor = /^#[0-9a-fA-F]{6}$/.test(settings.themeWindow || '') ? settings.themeWindow : '#171020';
+  const text = /^#[0-9a-fA-F]{6}$/.test(settings.themeText || '') ? settings.themeText : '#f7eef3';
+  const chartBase = /^#[0-9a-fA-F]{6}$/.test(settings.themeChart || '') ? settings.themeChart : '#ff4f8b';
+  const follow = settings.themeChartFollow || 'custom';
+  const chart = follow === 'bg' ? bg : follow === 'primary' ? windowColor : follow === 'accent' ? text : chartBase;
+  return { bg, window: windowColor, text, chart };
+}
+
 export const AUTOMATION_PROPERTIES = {
   text: {
     x: { label: 'X 偏移', min: -960, max: 960, step: 1, kind: 'number' },
     y: { label: 'Y 偏移', min: -540, max: 540, step: 1, kind: 'number' },
     size: { label: '字号', min: 8, max: 200, step: 1, kind: 'number' },
     opacity: { label: '不透明度', min: 0, max: 1, step: 0.01, kind: 'number' },
+    fadeIn: { label: '淡入', min: 0, max: 10, step: 0.05, kind: 'number' },
+    fadeOut: { label: '淡出', min: 0, max: 10, step: 0.05, kind: 'number' },
   },
   subtitle: {
     x: { label: 'X 偏移', min: -960, max: 960, step: 1, kind: 'number' },
     y: { label: 'Y 偏移', min: -540, max: 540, step: 1, kind: 'number' },
-    size: { label: '字号', min: 8, max: 80, step: 1, kind: 'number' },
+    size: { label: '字号', min: 8, max: 200, step: 1, kind: 'number' },
     opacity: { label: '不透明度', min: 0, max: 1, step: 0.01, kind: 'number' },
+    fadeIn: { label: '淡入', min: 0, max: 10, step: 0.05, kind: 'number' },
+    fadeOut: { label: '淡出', min: 0, max: 10, step: 0.05, kind: 'number' },
+    lineGap: { label: '行间距', min: 0, max: 80, step: 1, kind: 'number' },
+    scaleX: { label: '横向延展', min: 20, max: 400, step: 1, kind: 'number' },
+    scaleY: { label: '纵向延展', min: 20, max: 400, step: 1, kind: 'number' },
   },
   effect: {
     amount: { label: '强度', min: 0, max: 100, step: 1, kind: 'number' },
@@ -193,11 +210,30 @@ export const AUTOMATION_PROPERTIES = {
     primary: { label: '窗口颜色', min: 0, max: 1, kind: 'color' },
     accent: { label: '字符颜色', min: 0, max: 1, kind: 'color' },
     ink: { label: '图表颜色', min: 0, max: 1, kind: 'color' },
+    fadeIn: { label: '颜色淡入', min: 0, max: 10, step: 0.05, kind: 'number' },
+    fadeOut: { label: '颜色淡出', min: 0, max: 10, step: 0.05, kind: 'number' },
   },
   bpm: {
     bpm: { label: 'BPM', min: 1, max: 300, step: 0.01, kind: 'number' },
+    opacity: { label: '不透明度', min: 0, max: 1, step: 0.01, kind: 'number' },
+  },
+  genre: {
+    opacity: { label: '不透明度', min: 0, max: 1, step: 0.01, kind: 'number' },
   },
   mash: {
+    x: { label: 'X 偏移', min: -960, max: 960, step: 1, kind: 'number' },
+    y: { label: 'Y 偏移', min: -540, max: 540, step: 1, kind: 'number' },
+    scaleX: { label: '横向延展', min: 20, max: 400, step: 1, kind: 'number' },
+    scaleY: { label: '纵向延展', min: 20, max: 400, step: 1, kind: 'number' },
+    opacity: { label: '不透明度', min: 0, max: 1, step: 0.01, kind: 'number' },
+  },
+  flash: {
+    opacity: { label: '不透明度', min: 0, max: 1, step: 0.01, kind: 'number' },
+  },
+  tint: {
+    opacity: { label: '不透明度', min: 0, max: 1, step: 0.01, kind: 'number' },
+  },
+  fade: {
     opacity: { label: '不透明度', min: 0, max: 1, step: 0.01, kind: 'number' },
   },
   batch: {
@@ -408,7 +444,6 @@ export const DEFAULT_SETTINGS = {
   accent: '#ff4f8b',
   accentAlpha: 1,
   glow: 45,
-  moduleTint: true,
   bgMode: 'plasma',
   bgColor: '#1a0b22',
   bgColorAlpha: 1,
