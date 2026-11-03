@@ -7,7 +7,7 @@ import {
 } from './core.js';
 import { AudioEngine } from './audio.js';
 import { createDemoTrack } from './demo.js';
-import { parseMidi, renderMidiToBuffer, describeMidi } from './midi.js';
+import { parseMidi } from './midi.js';
 import { Visualizer } from './visualizer.js';
 import { VideoExporter, downloadBlob, checkFfmpeg, sanitizeFilename } from './exporter.js';
 
@@ -106,8 +106,20 @@ const MODULE_OPTIONS = {
   ],
   pianoRoll: [
     { key: 'window', label: '时间窗口', type: 'select', default: '10', options: [['4', '4 秒'], ['6', '6 秒'], ['10', '10 秒'], ['16', '16 秒'], ['20', '20 秒']] },
+    { key: 'speed', label: '滚动速度', type: 'range', min: 50, max: 250, step: 5, default: 100, unit: '%' },
+    { key: 'noteStyle', label: '音符样式', type: 'select', default: 'rect', options: [['rect', '长方形'], ['rounded', '圆角长方形']] },
+    { key: 'trackDepth', label: '单轨道深度', type: 'range', min: 0, max: 100, step: 5, default: 55, unit: '%' },
     { key: 'grid', label: '节拍网格', type: 'toggle', default: true },
     { key: 'labels', label: '音名标签', type: 'toggle', default: true },
+    { key: 'showTitle', label: '显示标题', type: 'toggle', default: true },
+    { key: 'title', label: '标题文字', type: 'text', default: '' },
+    { key: 'titlePosition', label: '标题位置', type: 'select', default: 'topLeft', options: [['topLeft', '左上'], ['topCenter', '顶部居中'], ['topRight', '右上']] },
+    { key: 'titleColor', label: '标题颜色', type: 'color', default: '#C7F8FF' },
+    { key: 'titleSize', label: '标题字号', type: 'range', min: 12, max: 64, step: 1, default: 40, unit: 'px' },
+    { key: 'titleFont', label: '标题字体', type: 'select', default: 'Bahnschrift', options: [['Bahnschrift', 'Bahnschrift'], ['Segoe UI', 'Segoe UI'], ['Microsoft YaHei UI', '微软雅黑'], ['Georgia', 'Georgia'], ['Cascadia Code', 'Cascadia Code']] },
+    { key: 'titleAnimation', label: '标题动画', type: 'select', default: 'slide', options: [['none', '无'], ['slide', '滑入'], ['fade', '淡入']] },
+    { key: 'showChords', label: '显示和弦', type: 'toggle', default: true },
+    { key: 'chordColor', label: '和弦颜色', type: 'color', default: '#9DDBFF' },
   ],
   peakSlope: [
     { key: 'historyLength', label: '历史长度', type: 'range', min: 100, max: 340, step: 20, default: 340, unit: ' 帧' },
@@ -736,6 +748,9 @@ class NeonScopeApp {
     if (data.exportSettings && typeof data.exportSettings === 'object') {
       Object.assign(this.exportSettings, data.exportSettings);
     }
+    if (data.midi && Array.isArray(data.midi.notes) && data.midi.notes.length) {
+      this.state.midi = data.midi;
+    }
     if (data.info && typeof data.info === 'object') {
       const info = data.info;
       this.state.info = {
@@ -861,9 +876,21 @@ class NeonScopeApp {
           if (Number.isFinite(num)) options[option.key] = clamp(num, option.min, option.max);
         } else if (option.type === 'color') {
           if (/^#[0-9a-fA-F]{6}$/.test(String(v))) options[option.key] = String(v);
+        } else if (option.type === 'text') {
+          options[option.key] = String(v).slice(0, 80);
         } else if (option.options?.some(([value]) => String(value) === String(v))) {
           options[option.key] = String(v);
         }
+      }
+      if (raw.type === 'pianoRoll' && raw.options && typeof raw.options === 'object') {
+        if (Array.isArray(raw.options.trackColors)) {
+          options.trackColors = raw.options.trackColors.slice(0, 16).map((v) => /^#[0-9a-fA-F]{6}$/.test(String(v)) ? String(v) : null);
+        }
+        if (Array.isArray(raw.options.trackDepths)) {
+          options.trackDepths = raw.options.trackDepths.slice(0, 16).map((v) => clamp(Number(v) || 0, 0, 100));
+        }
+        if (Array.isArray(raw.options.trackMutes)) options.trackMutes = raw.options.trackMutes.slice(0, 16).map(Boolean);
+        if (Array.isArray(raw.options.trackSolos)) options.trackSolos = raw.options.trackSolos.slice(0, 16).map(Boolean);
       }
       out.push({
         id, type: raw.type, x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h),
@@ -1149,10 +1176,30 @@ class NeonScopeApp {
     });
     d.moduleColorPickBtn.addEventListener('click', () => this._openColorPicker('module'));
     d.moduleOptions.addEventListener('input', (e) => {
-      const control = e.target.closest('[data-opt-key]');
-      if (!control) return;
       const mod = this._selected();
       if (!mod) return;
+      const midiColor = e.target.closest('[data-midi-color]');
+      if (midiColor) {
+        const index = Number(midiColor.dataset.midiColor);
+        const colors = Array.isArray(mod.options?.trackColors) ? mod.options.trackColors.slice() : [];
+        colors[index] = midiColor.value;
+        mod.options = { ...(mod.options || {}), trackColors: colors };
+        this._persist();
+        return;
+      }
+      const midiDepth = e.target.closest('[data-midi-depth]');
+      if (midiDepth) {
+        const index = Number(midiDepth.dataset.midiDepth);
+        const depths = Array.isArray(mod.options?.trackDepths) ? mod.options.trackDepths.slice() : [];
+        depths[index] = Number(midiDepth.value);
+        mod.options = { ...(mod.options || {}), trackDepths: depths };
+        const output = d.moduleOptions.querySelector(`[data-midi-depth-out="${index}"]`);
+        if (output) output.textContent = `${Math.round(depths[index])}%`;
+        this._persist();
+        return;
+      }
+      const control = e.target.closest('[data-opt-key]');
+      if (!control) return;
       const key = control.dataset.optKey;
       const schema = (MODULE_OPTIONS[mod.type] || []).find((option) => option.key === key);
       if (!schema) return;
@@ -1166,6 +1213,31 @@ class NeonScopeApp {
         if (output) output.textContent = `${Math.round(value)}${schema.unit || ''}`;
       }
       this._persist();
+    });
+    d.moduleOptions.addEventListener('click', (e) => {
+      const mod = this._selected();
+      if (!mod) return;
+      const mute = e.target.closest('[data-midi-mute]');
+      if (mute) {
+        const index = Number(mute.dataset.midiMute);
+        const mutes = Array.isArray(mod.options?.trackMutes) ? mod.options.trackMutes.slice() : [];
+        mutes[index] = !mutes[index];
+        mod.options = { ...(mod.options || {}), trackMutes: mutes };
+        mute.classList.toggle('active', mutes[index]);
+        mute.classList.toggle('mute', mutes[index]);
+        this._persist();
+        return;
+      }
+      const solo = e.target.closest('[data-midi-solo]');
+      if (solo) {
+        const index = Number(solo.dataset.midiSolo);
+        const solos = Array.isArray(mod.options?.trackSolos) ? mod.options.trackSolos.slice() : [];
+        solos[index] = !solos[index];
+        mod.options = { ...(mod.options || {}), trackSolos: solos };
+        solo.classList.toggle('active', solos[index]);
+        solo.classList.toggle('solo', solos[index]);
+        this._persist();
+      }
     });
     d.resetModuleOptionsBtn.addEventListener('click', () => {
       const mod = this._selected();
@@ -2190,6 +2262,7 @@ class NeonScopeApp {
         subpanelState: this.subpanelState,
         timelineState: this.timelineState,
         info: this.state.info,
+        midi: this.state.midi,
         animationCues: this.state.animationCues,
         exportSettings: this.exportSettings,
       },
@@ -4261,7 +4334,6 @@ class NeonScopeApp {
       }
       if (token !== this.loadToken) return;
       this.audio.setBuffer(this.demoBuffer, { ...DEMO_META });
-      this.state.midi = null;
       this.state.preset = this.state.preset || 'studio';
       this._refreshTrackUI();
       this._updateStartOverlay('ready');
@@ -4294,7 +4366,6 @@ class NeonScopeApp {
       if (token !== this.loadToken) return;
       const name = file.name.replace(/\.[^.]+$/, '');
       this.audio.setBuffer(buffer, { name, kind: 'audio', file: file.name });
-      this.state.midi = null;
       this._refreshTrackUI();
       this._updateStartOverlay('custom');
       this._setEngineStatus('音频就绪', 'ready');
@@ -4313,49 +4384,50 @@ class NeonScopeApp {
 
   async _loadMidiFile(file) {
     if (!file) return;
-    const token = ++this.loadToken;
+    const token = (this._midiLoadToken = (this._midiLoadToken || 0) + 1);
     this._setEngineStatus('解析 MIDI…', 'busy');
-    this._setBusyTrack(file.name);
-    this._toast('正在解析 MIDI 并离线合成音频…', '', 2200);
+    this._toast('正在解析 MIDI 可视化数据…', '', 1800);
     try {
       const buf = await file.arrayBuffer();
-      if (token !== this.loadToken) return;
+      if (token !== this._midiLoadToken) return;
       const midi = parseMidi(buf);
-      this._setEngineStatus(`合成 MIDI · ${midi.noteCount} 音符…`, 'busy');
-      const rendered = await renderMidiToBuffer(midi, 44100);
-      if (token !== this.loadToken) return;
+      midi.title = file.name.replace(/\.[^.]+$/, '');
       this.state.midi = midi;
-      const name = file.name.replace(/\.[^.]+$/, '');
-      this.audio.setBuffer(rendered, {
-        name, kind: 'midi', bpm: midi.bpm, midiNotes: midi.noteCount,
-        tracks: midi.trackCount, midiDescription: describeMidi(midi),
-      });
-      this._ensurePianoRoll();
-      this._refreshTrackUI();
-      this._updateStartOverlay('custom');
-      this._setEngineStatus('MIDI 合成完成', 'ready');
+      const mod = this._ensurePianoRoll();
+      if (mod) this._syncSelectionUI(mod.id);
       this.visualizer.states.clear();
-      await this.audio.play(0);
-      this.dom.startOverlay.classList.add('dismissed');
-      this._toast(`MIDI 已合成 · ${midi.noteCount} 音符 / ${midi.trackCount} 轨`, 'success', 4200);
+      this._persist();
+      this._setEngineStatus('MIDI 可视化已载入', 'ready');
+      if (!this.audio.hasAudio) {
+        this._toast(`MIDI 已载入 · ${midi.noteCount} 音符；请导入音频或播放 DEMO 作为时间轴`, 'info', 5200);
+      } else {
+        this._toast(`MIDI 可视化已载入 · ${midi.noteCount} 音符 / ${midi.trackCount} 轨`, 'success', 3800);
+      }
     } catch (err) {
       console.error(err);
-      if (token !== this.loadToken) return;
-      this._setEngineStatus('MIDI 处理失败', 'error');
-      this._updateStartOverlay('empty');
+      if (token !== this._midiLoadToken) return;
+      this._setEngineStatus('MIDI 解析失败', 'error');
       this._toast(err.message || 'MIDI 解析失败', 'error', 5200);
     }
   }
 
   _ensurePianoRoll() {
-    if (this.state.modules.some((m) => m.type === 'pianoRoll')) return;
+    let mod = this.state.modules.find((m) => m.type === 'pianoRoll');
+    if (mod) {
+      if (mod.hidden) {
+        mod.hidden = false;
+        this.visualizer.syncOverlay();
+      }
+      return mod;
+    }
     const placement = this._findPlacement(MODULE_DEFS.pianoRoll.w, MODULE_DEFS.pianoRoll.h);
-    const mod = createModule('pianoRoll', placement);
+    mod = createModule('pianoRoll', placement);
     this.state.modules.push(mod);
     this.visualizer.syncOverlay();
     this._renderLibrary();
     this._syncCanvasMeta();
     this._persist();
+    return mod;
   }
 
   _handleLibraryClick(e) {
@@ -4557,9 +4629,45 @@ class NeonScopeApp {
       if (option.type === 'color') {
         return `<label class="module-option-field module-option-color"><span>${option.label}</span><input type="color" data-opt-key="${option.key}" value="${/^#[0-9a-fA-F]{6}$/.test(String(value)) ? value : option.default}" /></label>`;
       }
+      if (option.type === 'text') {
+        return `<label class="module-option-field"><span>${option.label}</span><input type="text" data-opt-key="${option.key}" value="${String(value).replace(/"/g, '&quot;')}" maxlength="80" /></label>`;
+      }
       const output = `${Math.round(Number(value))}${option.unit || ''}`;
       return `<div class="field-row module-option-range"><label class="field-label">${option.label} <output data-opt-output="${option.key}">${output}</output></label><input type="range" data-opt-key="${option.key}" min="${option.min}" max="${option.max}" step="${option.step}" value="${value}" /></div>`;
-    }).join('');
+    }).join('') + (mod.type === 'pianoRoll' ? this._midiTrackOptions(mod) : '');
+  }
+
+  _midiTrackOptions(mod) {
+    const midi = this.state.midi;
+    const trackNames = Array.isArray(midi?.trackNames) ? midi.trackNames : [];
+    const trackCount = Math.max(0, Number(midi?.trackCount) || trackNames.length);
+    const tracks = Array.from({ length: trackCount }, (_, index) => ({
+      name: trackNames[index] || `Track ${index + 1}`,
+    }));
+    if (!tracks.length) {
+      return '<div class="midi-track-empty">导入 MIDI 后，可在这里设置每条轨道的颜色、深度和 M / S。</div>';
+    }
+    const fallback = [this.state.settings.accent || '#ff4f8b', '#68e8ff', '#a98bff', '#ffc46b', '#b9ff8a', '#ff8a6b'];
+    const colors = Array.isArray(mod.options?.trackColors) ? mod.options.trackColors : [];
+    const depths = Array.isArray(mod.options?.trackDepths) ? mod.options.trackDepths : [];
+    const mutes = Array.isArray(mod.options?.trackMutes) ? mod.options.trackMutes : [];
+    const solos = Array.isArray(mod.options?.trackSolos) ? mod.options.trackSolos : [];
+    const defaultDepth = Number(this._moduleOptionValue(mod, { key: 'trackDepth', default: 55 })) || 55;
+    return `<div class="midi-track-options"><div class="midi-track-head"><span>轨道 / TRACKS</span><em>颜色 · 深度 · M/S</em></div>
+      <div class="midi-track-list">${tracks.slice(0, 16).map((track, index) => {
+        const color = /^#[0-9a-fA-F]{6}$/.test(colors[index] || '') ? colors[index] : fallback[index % fallback.length];
+        const depth = clamp(Number(depths[index] ?? defaultDepth) || 0, 0, 100);
+        const name = String(track.name || `Track ${index + 1}`).replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
+        return `<div class="midi-track-row" data-midi-track="${index}">
+          <span class="midi-track-no">${String(index + 1).padStart(2, '0')}</span>
+          <span class="midi-track-name" title="${name}">${name}</span>
+          <button type="button" class="midi-track-ms ${mutes[index] ? 'active mute' : ''}" data-midi-mute="${index}" title="静音">M</button>
+          <button type="button" class="midi-track-ms ${solos[index] ? 'active solo' : ''}" data-midi-solo="${index}" title="独奏">S</button>
+          <input type="color" data-midi-color="${index}" value="${color}" title="轨道颜色" />
+          <input type="range" data-midi-depth="${index}" min="0" max="100" step="5" value="${depth}" title="视觉深度" />
+          <output data-midi-depth-out="${index}">${Math.round(depth)}%</output>
+        </div>`;
+      }).join('')}</div></div>`;
   }
 
   _deleteSelected() {
@@ -5528,6 +5636,7 @@ class NeonScopeApp {
       subpanelState: this.subpanelState,
       timelineState: this.timelineState,
       info: this.state.info,
+      midi: this.state.midi,
       animationCues: this.state.animationCues,
       exportSettings: this.exportSettings,
     };

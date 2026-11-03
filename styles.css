@@ -1467,6 +1467,22 @@ body[data-ui-mode="light"] .alpha-layer .alpha-card, body[data-ui-theme="catbot"
   .alpha-btn { width: 100%; }
 }
 
+.midi-track-options { grid-column: 1 / -1; margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,.075); }
+.midi-track-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 5px; font: 7px var(--mono); color: var(--muted); letter-spacing: .06em; }
+.midi-track-head em { font-style: normal; color: var(--dim); font-size: 6px; }
+.midi-track-list { display: flex; flex-direction: column; gap: 3px; }
+.midi-track-row { display: grid; grid-template-columns: 16px minmax(0,1fr) 19px 19px 30px minmax(46px,1fr) 28px; align-items: center; gap: 4px; min-height: 24px; }
+.midi-track-no { font: 6px var(--mono); color: var(--dim); }
+.midi-track-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 7px var(--mono); color: #bda8b3; }
+.midi-track-ms { width: 19px; height: 19px; padding: 0; border: 1px solid rgba(255,255,255,.1); border-radius: 2px; color: #665562; font: 7px var(--mono); background: transparent; }
+.midi-track-ms.active { color: #120b14; background: var(--accent); border-color: var(--accent); }
+.midi-track-ms.active.solo { background: #9be7ff; border-color: #9be7ff; }
+.midi-track-row input[type="color"] { width: 30px; height: 19px; padding: 1px; border: 1px solid rgba(255,255,255,.12); border-radius: 2px; background: #100b16; }
+.midi-track-row input[type="range"] { width: 100%; height: 3px; min-width: 30px; accent-color: var(--accent); }
+.midi-track-row output { font: 6px var(--mono); color: var(--dim); text-align: right; }
+.midi-track-empty { grid-column: 1 / -1; margin-top: 7px; padding-top: 7px; border-top: 1px solid rgba(255,255,255,.075); font: 7px/1.6 var(--mono); color: var(--dim); }
+body[data-ui-mode="light"] .midi-track-name, body[data-ui-theme="catbot"] .midi-track-name { color: #4d435d; }
+body[data-ui-mode="light"] .midi-track-row input[type="color"], body[data-ui-theme="catbot"] .midi-track-row input[type="color"] { background: var(--paper-card); border-color: var(--paper-line); }
 .module-option-field.module-option-color { flex-direction: row; align-items: center; justify-content: space-between; }
 .module-option-field.module-option-color input[type="color"] {
   width: 92px; height: 27px; padding: 2px; border: 1px solid rgba(255,255,255,.12);

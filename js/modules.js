@@ -1681,6 +1681,21 @@ function drawWaveform(ctx, mod, body, frame, st, env) {
   ctx.fillText(formatShortTime(frame.time), x + w - 3, y + 8);
 }
 
+function midiChordAt(midi, time) {
+  const active = midi.notes.filter((note) => note.start <= time && note.end >= time);
+  if (!active.length) return '';
+  const root = active.reduce((low, note) => (note.pitch < low.pitch ? note : low), active[0]).pitch;
+  const rootPc = root % 12;
+  const intervals = new Set(active.map((note) => (note.pitch - root + 120) % 12));
+  const names = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+  let suffix = '';
+  if (intervals.has(3)) suffix += 'm';
+  else if (intervals.has(4)) suffix += '';
+  if (intervals.has(11)) suffix += 'maj7';
+  else if (intervals.has(10)) suffix += '7';
+  return `${names[rootPc]}${suffix}`;
+}
+
 function drawPianoRoll(ctx, mod, body, frame, st, env) {
   const accent = body.accent;
   const p = 8;
@@ -1718,12 +1733,20 @@ function drawPianoRoll(ctx, mod, body, frame, st, env) {
   const minPitch = st.minPitch, maxPitch = st.maxPitch;
   const pitchSpan = Math.max(12, maxPitch - minPitch + 1);
   const rowH = h / pitchSpan;
-  const windowSec = modNum(mod, 'window', 10, 4, 20);
+  const speed = clamp(modNum(mod, 'speed', 100, 50, 250) / 100, 0.5, 2.5);
+  const windowSec = modNum(mod, 'window', 10, 4, 20) / speed;
   const startT = Math.max(0, frame.time - 1.2);
   const endT = startT + windowSec;
   const palette = [accent, '#68e8ff', '#a98bff', '#ffc46b', '#b9ff8a', '#ff8a6b'];
   const showGrid = modOpt(mod, 'grid', true);
   const showLabels = modOpt(mod, 'labels', true);
+  const noteStyle = modOpt(mod, 'noteStyle', 'rect');
+  const defaultDepth = modNum(mod, 'trackDepth', 55, 0, 100) / 100;
+  const trackColors = Array.isArray(mod.options?.trackColors) ? mod.options.trackColors : [];
+  const trackDepths = Array.isArray(mod.options?.trackDepths) ? mod.options.trackDepths : [];
+  const trackMutes = Array.isArray(mod.options?.trackMutes) ? mod.options.trackMutes : [];
+  const trackSolos = Array.isArray(mod.options?.trackSolos) ? mod.options.trackSolos : [];
+  const soloActive = trackSolos.some(Boolean);
 
   // Pitch rows and keyboard.
   for (let pitch = minPitch; pitch <= maxPitch; pitch++) {
@@ -1775,24 +1798,81 @@ function drawPianoRoll(ctx, mod, body, frame, st, env) {
   let count = 0;
   for (const note of midi.notes) {
     if (note.end < startT || note.start > endT) continue;
+    const trackIndex = Number(note.track) || 0;
+    if (trackMutes[trackIndex]) continue;
+    if (soloActive && !trackSolos[trackIndex]) continue;
     if (count++ > 5000) break;
     const nx = x + ((note.start - startT) / windowSec) * w;
     const nw = Math.max(1.5, ((note.end - note.start) / windowSec) * w);
     const ny = y + h - ((note.pitch - minPitch + 1) / pitchSpan) * h;
-    const color = palette[note.track % palette.length];
+    const depth = clamp(Number(trackDepths[trackIndex] ?? defaultDepth * 100) || 0, 0, 100) / 100;
+    const color = /^#[0-9a-fA-F]{6}$/.test(trackColors[trackIndex] || '') ? trackColors[trackIndex] : palette[trackIndex % palette.length];
     const active = frame.time >= note.start && frame.time <= note.end;
-    ctx.globalAlpha = (mod.opacity ?? 1) * (active ? 1 : (0.32 + (note.velocity / 127) * 0.5));
+    const depthAlpha = 0.38 + depth * 0.62;
+    ctx.globalAlpha = (mod.opacity ?? 1) * depthAlpha * (active ? 1 : (0.32 + (note.velocity / 127) * 0.5));
     ctx.fillStyle = color;
     if (active) {
       ctx.shadowColor = color;
-      ctx.shadowBlur = 7;
+      ctx.shadowBlur = 4 + depth * 7;
     }
-    const nh = Math.max(1.1, rowH - 0.7);
-    ctx.fillRect(nx, ny + 0.35, nw, nh);
+    const nh = Math.max(1.1, rowH * (0.58 + depth * 0.38) - 0.7);
+    const noteY = ny + 0.35 + (0.5 - depth) * rowH * 0.12;
+    if (noteStyle === 'rounded') {
+      roundRect(ctx, nx, noteY, nw, nh, Math.min(nh / 2, 4));
+      ctx.fill();
+    } else {
+      ctx.fillRect(nx, noteY, nw, nh);
+    }
     ctx.shadowBlur = 0;
   }
   ctx.globalAlpha = mod.opacity ?? 1;
   ctx.restore();
+
+  // MIDI overlay text: title and current chord.
+  const showTitle = modOpt(mod, 'showTitle', true);
+  const showChords = modOpt(mod, 'showChords', true);
+  const titlePosition = modOpt(mod, 'titlePosition', 'topLeft');
+  const titleColor = /^#[0-9a-fA-F]{6}$/.test(modOpt(mod, 'titleColor', '#C7F8FF')) ? modOpt(mod, 'titleColor', '#C7F8FF') : '#C7F8FF';
+  const chordColor = /^#[0-9a-fA-F]{6}$/.test(modOpt(mod, 'chordColor', '#9DDBFF')) ? modOpt(mod, 'chordColor', '#9DDBFF') : '#9DDBFF';
+  const titleText = String(modOpt(mod, 'title', '') || midi.title || 'MIDI').slice(0, 80);
+  const titleSize = modNum(mod, 'titleSize', 40, 12, 64);
+  const titleFontName = modOpt(mod, 'titleFont', 'Bahnschrift');
+  const titleAnimation = modOpt(mod, 'titleAnimation', 'slide');
+  const intro = titleAnimation === 'none' ? 1 : clamp(frame.time / 1.2, 0, 1);
+  const titleAlpha = titleAnimation === 'fade' ? intro : 1;
+  const titleOffset = titleAnimation === 'slide' ? (1 - intro) * -18 : 0;
+  const titleFont = `600 ${titleSize}px "${titleFontName}", "Microsoft YaHei UI", sans-serif`;
+  if (showTitle) {
+    ctx.save();
+    ctx.globalAlpha = (mod.opacity ?? 1) * titleAlpha;
+    ctx.font = titleFont;
+    ctx.fillStyle = titleColor;
+    ctx.shadowColor = 'rgba(0,0,0,.65)';
+    ctx.shadowBlur = 7;
+    if (titlePosition === 'topCenter') {
+      ctx.textAlign = 'center';
+      ctx.fillText(titleText, x + w / 2 + titleOffset, y + titleSize + 10);
+    } else if (titlePosition === 'topRight') {
+      ctx.textAlign = 'right';
+      ctx.fillText(titleText, x + w - 8 + titleOffset, y + titleSize + 10);
+    } else {
+      ctx.textAlign = 'left';
+      ctx.fillText(titleText, x + 8 + titleOffset, y + titleSize + 10);
+    }
+    ctx.restore();
+  }
+  if (showChords) {
+    const chord = midiChordAt(midi, frame.time);
+    if (chord) {
+      ctx.save();
+      ctx.globalAlpha = mod.opacity ?? 1;
+      ctx.textAlign = titlePosition === 'topRight' ? 'left' : 'right';
+      ctx.font = `600 ${Math.max(14, titleSize * 0.52)}px "Cascadia Code", monospace`;
+      ctx.fillStyle = chordColor;
+      ctx.fillText(chord, titlePosition === 'topRight' ? x + 8 : x + w - 8, y + titleSize + 10);
+      ctx.restore();
+    }
+  }
 
   // Playhead.
   const playX = x + (1.2 / windowSec) * w;

@@ -63,9 +63,10 @@ node server.mjs
 ## 功能
 
 - **导入音频**：WAV / MP3 / FLAC / OGG / M4A / AAC。
-- **导入 MIDI**：内置 Standard MIDI File（Format 0/1）解析器和离线合成器，自动生成音频并同步钢琴卷帘。
+- **导入 MIDI**：内置 Standard MIDI File（Format 0/1）解析器；MIDI 只驱动钢琴卷帘可视化，不合成音频、不替换当前音轨，播放时间轴仍来自当前音频或 DEMO。
+- **MIDI 钢琴卷帘**：模块专属设置包含每轨 M/S、轨道颜色、单轨视觉深度、音符样式（长方形 / 圆角）、滚动速度，以及标题 / 和弦叠加的文字、位置、颜色、字号、字体和滑入 / 淡入动画。
 - **内置 DEMO**：首次打开自动生成 36 秒原创 Synthwave 演示音轨。
-- **18 个可视化模块**：VU 电平、响度、模拟 VU 表、示波器、X-Y 李萨如、频谱、相位相关、节奏、动态、声谱图、立体声场、全局波形、MIDI 钢琴卷帘、峰值倾斜、声场分布等。
+- **16 个可视化模块**：VU 电平、响度、模拟 VU 表、示波器、X-Y 李萨如、频谱、相位相关、节奏、动态、声谱图、立体声场、全局波形、MIDI 钢琴卷帘、峰值倾斜、声场分布、基础信息。
 - **自由布局**：拖动移动、四角缩放、属性面板精确输入、图层顺序、复制/删除。
 - **窗口化工作区**：左侧「模块与素材」、中央舞台、右侧「属性检查器」都有窗口化 / 关闭按钮；每张内部卡片（信号源、模块库、位置尺寸、模块外观、专属参数、图层、画布输出、快速提示）也都可以独立浮动、关闭、拖动和缩放，像 OBS 面板一样排列。顶部九宫格按钮可恢复。
 - **DAW 式吸附对齐**：顶部磁铁开关或 `G`。吸附画布边缘、中心线、其他模块边缘/中心线，并显示参考线。
@@ -153,7 +154,7 @@ Web Audio AudioBuffer ──► ChannelSplitter ──► AnalyserNode L/R
 
 - **桌面外壳**：C# WinForms + WebView2，内嵌 ASP.NET Core Kestrel 本地服务（仅监听 `127.0.0.1`），使用固定端口段保证 localStorage 持久化。Web 前端嵌入 EXE。
 - **分析**：Web Audio `AnalyserNode`（8192 point FFT）获取时域与频域数据，并计算 RMS、峰值、相关度、低/中/高频能量、节拍包络和 BPM。响度显示为近似 K-weighted 值，非母带级认证仪表。
-- **MIDI**：自写 SMF 解析器处理 tempo map、velocity、program、CC10 pan、CC7 volume 与鼓通道；离线合成后走完全相同的分析和可视化链路。
+- **MIDI**：自写 SMF 解析器处理 tempo map、velocity、program、CC10 pan、CC7 volume 与鼓通道；解析结果只供钢琴卷帘模块滚动显示，不进入音频合成或分析链路。
 - **渲染**：默认 GPU 模式使用 WebGL fragment shader 渲染等离子 / 电弧 / 霓虹环背景；CPU 模式提供 Canvas2D 回退。示波器、频谱、声谱图、声场等模块由高分辨率 Canvas2D 合成。
 - **导出**：`CaptureStream` 录制画布，同时混合 Web Audio 音轨。Windows WebView2 支持直接 MP4/H.264 硬件录制；不支持时由本地 FFmpeg 转码。下载由 WebView2 原生下载管理器保存到“下载”文件夹。
 
@@ -188,6 +189,6 @@ powershell -ExecutionPolicy Bypass -File .\build-native.ps1
 
 - 画布固定 16:9（逻辑分辨率 1920×1080），所有导出分辨率均为 16:9。
 - 视频导出为实时录制，不支持后台静默渲染；4K/60FPS 对性能要求较高，建议先用 1080P。
-- MIDI 合成使用轻量内置音源，不是完整 General MIDI SoundFont；最长支持约 10 分钟。
+- MIDI 只作为钢琴卷帘可视化数据，不参与音频分析或合成；请使用导入音频或 DEMO 作为播放时间轴。
 - EXE 未做代码签名，SmartScreen 可能提示；这不影响功能。
 - 如果系统没有 WebView2 Runtime，需要先安装（Windows 10/11 通常已经自带）。
