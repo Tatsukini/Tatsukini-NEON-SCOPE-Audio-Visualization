@@ -1,10 +1,22 @@
 # NEON//SCOPE
 
-[![Release](https://img.shields.io/badge/release-V0.1.0__1104__alpha-orange)](https://github.com/Tatsukini/Tatsukini-NEON-SCOPE-Audio-Visualization/releases/tag/V0.1.0_1104_alpha)
+[![Release](https://img.shields.io/badge/release-V0.1.1__1104__alpha__Num.2-orange)](https://github.com/Tatsukini/Tatsukini-NEON-SCOPE-Audio-Visualization/releases/tag/V0.1.1_1104_alpha_Num.2)
 
-> 当前为 **Alpha 测试版本 V0.1.0_1104_alpha**。启动时会显示 Alpha 提示，确认后进入工作台。
+> 当前为 **Alpha 测试版本 V0.1.1_1104_alpha_Num.2**。启动时会显示 Alpha 提示，确认后进入工作台。
 
 实时音频 / MIDI 可视化工作台。导入音频或 MIDI，在仪表盘上自由编排模块，实时渲染并导出带音频的视频。
+
+## V0.1.1_1104_alpha_Num.2 更新摘要
+
+- 动画时间轴：关键帧管理总线、右键菜单、FL 风格关键帧曲线、按属性关键帧与自动插值。
+- 新增「基础信息」模块：曲绘、歌曲名、作曲、风格、BPM、曲序、采样率、时长；内部元素随模块缩放。
+- Intro 开场卡：中央信息带、带外背景模糊，支持模块专属主/次字体颜色与背景色。
+- Intro / text / subtitle / mash 使用绝对坐标；text 支持淡入淡出；subtitle 支持多行、行间距、字号、双轴延展、自动向上堆叠、参数分页和内置确认恢复；mash 支持绝对坐标、双轴延展、参数分页和恢复。
+- 设置 → 外观新增四色主题（背景/窗口/字符/图表）与图表跟随颜色；color 动画只影响舞台组件，支持颜色淡入淡出。
+- 舞台工具栏新增独立桌面舞台窗口；舞台与时间轴之间支持拖动分隔条。
+- 设置 → 外观新增默认字体与恢复默认字体；设置 → 关于新增开发者资料、许可与版权声明、仓库地址。
+- 内置确认弹窗：恢复动作参数时不再使用浏览器原生确认框。
+- EXE 版本更新至 `1.4.1`。
 
 ![NEON//SCOPE 工作台](preview.png)
 

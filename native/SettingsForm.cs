@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Runtime.InteropServices;
@@ -144,6 +145,17 @@ internal sealed class SettingsForm : Form
                         kind,
                         path = dialog.SelectedPath,
                     }));
+                }
+                return;
+            }
+            if (action == "open-external")
+            {
+                var url = doc.RootElement.TryGetProperty("url", out var urlElement) ? urlElement.GetString() : null;
+                if (!string.IsNullOrWhiteSpace(url) && Uri.TryCreate(url, UriKind.Absolute, out var uri) &&
+                    (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps))
+                {
+                    try { Process.Start(new ProcessStartInfo(uri.AbsoluteUri) { UseShellExecute = true }); }
+                    catch { /* external browser is optional */ }
                 }
                 return;
             }

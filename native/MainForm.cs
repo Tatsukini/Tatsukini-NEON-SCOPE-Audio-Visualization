@@ -20,6 +20,7 @@ internal sealed class MainForm : Form
     private Label? _splash;
     private CoreWebView2Environment? _environment;
     private SettingsForm? _settingsForm;
+    private StageForm? _stageForm;
     private string _saveFolder = string.Empty;
     private string _exportFolder = string.Empty;
     private bool _closing;
@@ -226,6 +227,13 @@ internal sealed class MainForm : Form
                 case "open-settings":
                     OpenSettingsWindow();
                     break;
+                case "open-stage-window":
+                    OpenStageWindow();
+                    break;
+                case "open-external":
+                    if (doc.RootElement.TryGetProperty("url", out var urlElement))
+                        OpenExternal(urlElement.GetString());
+                    break;
                 case "choose-folder":
                     ChooseFolder(doc.RootElement);
                     break;
@@ -245,6 +253,15 @@ internal sealed class MainForm : Form
         {
             AppPaths.Log("Native bridge message failed: " + ex.Message);
         }
+    }
+
+    private static void OpenExternal(string? url)
+    {
+        if (string.IsNullOrWhiteSpace(url)) return;
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)) return;
+        if (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps) return;
+        try { Process.Start(new ProcessStartInfo(uri.AbsoluteUri) { UseShellExecute = true }); }
+        catch (Exception ex) { AppPaths.Log("Open external failed: " + ex.Message); }
     }
 
     private void OpenSettingsWindow()
@@ -397,6 +414,30 @@ internal sealed class MainForm : Form
         }
     }
 
+    private void OpenStageWindow()
+    {
+        try
+        {
+            if (_environment == null) return;
+            if (_stageForm != null && !_stageForm.IsDisposed)
+            {
+                if (!_stageForm.Visible) _stageForm.Show();
+                _stageForm.Activate();
+                _stageForm.BringToFront();
+                return;
+            }
+            var form = new StageForm(_environment, _server.BaseUrl);
+            form.FormClosed += (_, _) => _stageForm = null;
+            _stageForm = form;
+            form.Show();
+            form.Activate();
+        }
+        catch (Exception ex)
+        {
+            AppPaths.Log("Open stage window failed: " + ex);
+        }
+    }
+
     private void OnSettingsChanged(object? sender, string json)
     {
         try
@@ -492,6 +533,11 @@ internal sealed class MainForm : Form
             {
                 _settingsForm.Close();
                 _settingsForm = null;
+            }
+            if (_stageForm != null && !_stageForm.IsDisposed)
+            {
+                _stageForm.Close();
+                _stageForm = null;
             }
             if (_webView != null)
             {

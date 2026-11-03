@@ -1,4 +1,4 @@
-import { STAGE_W, STAGE_H, clamp, formatTC, mixHex } from './core.js';
+import { STAGE_W, STAGE_H, clamp, formatTC, formatShortTime, mixHex, automationValueAt } from './core.js';
 import { BackgroundRenderer } from './background.js';
 import { drawVisualModule } from './modules.js';
 
@@ -459,10 +459,55 @@ export class Visualizer {
     this._raf = requestAnimationFrame(this._boundLoop);
   }
 
+  _basePalette() {
+    const s = this.state.settings;
+    const bg = s.themeBg || '#07050a';
+    const windowColor = s.themeWindow || '#171020';
+    const text = s.themeText || '#f7eef3';
+    const baseChart = s.themeChart || s.accent || '#ff4f8b';
+    const follow = s.themeChartFollow || 'custom';
+    const chart = follow === 'bg' ? bg : follow === 'primary' ? windowColor : follow === 'accent' ? text : baseChart;
+    return { bg, window: windowColor, text, chart };
+  }
+
+  _stagePalette(time) {
+    let palette = this._basePalette();
+    for (const cue of this.state.animationCues || []) {
+      if (cue.type !== 'color' || time < cue.time) continue;
+      if (cue.duration > 0 && time > cue.time + cue.duration) continue;
+      const p = cue.params || {};
+      const relative = time - cue.time;
+      const fadeIn = Math.max(0, Number(p.fadeIn) || 0);
+      const fadeOut = Math.max(0, Number(p.fadeOut) || 0);
+      let weight = 1;
+      if (fadeIn > 0) weight = Math.min(weight, relative / fadeIn);
+      if (cue.duration > 0 && fadeOut > 0) weight = Math.min(weight, (cue.duration - relative) / fadeOut);
+      weight = clamp(weight, 0, 1);
+      const colors = {
+        bg: p.bg || palette.bg,
+        window: p.primary || palette.window,
+        text: p.accent || palette.text,
+      };
+      const follow = p.chartFollow || 'custom';
+      colors.chart = follow === 'bg' ? colors.bg
+        : follow === 'primary' ? colors.window
+          : follow === 'accent' ? colors.text
+            : (p.ink || palette.chart);
+      palette = {
+        bg: mixHex(palette.bg, colors.bg, weight),
+        window: mixHex(palette.window, colors.window, weight),
+        text: mixHex(palette.text, colors.text, weight),
+        chart: mixHex(palette.chart, colors.chart, weight),
+      };
+    }
+    return palette;
+  }
+
   _draw(frame, dt) {
     const ctx = this.ctx;
     const w = STAGE_W, h = STAGE_H;
     const s = this.state.settings;
+    const palette = this._stagePalette(frame.time);
     ctx.setTransform(this.canvas.width / w, 0, 0, this.canvas.height / h, 0, 0);
     ctx.clearRect(0, 0, w, h);
     ctx.fillStyle = '#060309';
@@ -482,7 +527,7 @@ export class Visualizer {
     this._drawAtmosphere(ctx, w, h, frame, s);
     const sorted = this.state.modules.filter((m) => !m.hidden);
     for (const mod of sorted) {
-      this._drawModuleSafe(ctx, mod, this._moduleAccent(mod), frame);
+      this._drawModuleSafe(ctx, mod, this._moduleAccent(mod), frame, palette);
     }
     this._drawOverlayEffects(ctx, w, h, frame, s);
     this._drawInfoCard(ctx, w, h);
@@ -554,16 +599,293 @@ export class Visualizer {
     ctx.restore();
   }
 
+  _drawIntroOverlay(ctx, w, h, cue, progress, alpha) {
+    const info = this.state.info || {};
+    const accent = this.state.settings.accent || '#ff4f8b';
+    const engine = this.engine || {};
+    const title = info.title || engine.track?.name || 'Untitled signal';
+    const composer = info.composer || info.artist || engine.track?.artist || 'Unknown source';
+    const album = info.album || 'Album';
+    const genre = info.genre || engine.track?.genre || 'Genre';
+    const bpm = info.bpm || engine.track?.bpm || '—';
+    const trackNo = info.trackNo || '—';
+    const sampleRate = engine.sampleRate ? `${(engine.sampleRate / 1000).toFixed(1)} kHz` : '—';
+    const duration = engine.duration ? formatShortTime(engine.duration) : '—';
+    if (alpha <= 0.005) return;
+    const ease = Math.min(1, progress * 6) * Math.min(1, (1 - progress) * 6);
+    const scale = 0.985 + ease * 0.015;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.translate(w / 2, h / 2);
+    ctx.scale(scale, scale);
+    ctx.translate(-w / 2, -h / 2);
+    ctx.fillStyle = '#ece9f2';
+    ctx.fillRect(0, 0, w, h);
+
+    // Editorial grid.
+    ctx.strokeStyle = 'rgba(25,28,60,.055)';
+    ctx.lineWidth = 1;
+    for (let gx = w * 0.04; gx < w; gx += w / 18) {
+      ctx.beginPath(); ctx.moveTo(gx, 0); ctx.lineTo(gx, h); ctx.stroke();
+    }
+    for (let gy = h * 0.08; gy < h; gy += h / 7) {
+      ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(w, gy); ctx.stroke();
+    }
+
+    const pad = w * 0.045;
+    const cover = Math.min(h - pad * 2.3, w * 0.27);
+    const coverX = pad;
+    const coverY = (h - cover) / 2;
+    ctx.fillStyle = '#e1dce9';
+    ctx.fillRect(coverX, coverY, cover, cover);
+    const coverSrc = info.cover || '';
+    if (coverSrc && this._introCoverSrc !== coverSrc) {
+      this._introCoverSrc = coverSrc;
+      const img = new Image();
+      img.onload = () => { this._introCoverImage = img; };
+      img.src = coverSrc;
+    }
+    if (this._introCoverImage) {
+      const img = this._introCoverImage;
+      const sc = Math.max(cover / img.width, cover / img.height);
+      const dw = img.width * sc;
+      const dh = img.height * sc;
+      ctx.save();
+      ctx.beginPath(); ctx.rect(coverX, coverY, cover, cover); ctx.clip();
+      ctx.drawImage(img, coverX + (cover - dw) / 2, coverY + (cover - dh) / 2, dw, dh);
+      ctx.restore();
+    } else {
+      ctx.strokeStyle = 'rgba(25,28,60,.22)';
+      ctx.setLineDash([6, 7]);
+      ctx.strokeRect(coverX + 12, coverY + 12, cover - 24, cover - 24);
+      ctx.setLineDash([]);
+      ctx.fillStyle = 'rgba(25,28,60,.36)';
+      ctx.font = `600 ${Math.max(10, cover * 0.065)}px "Cascadia Code", monospace`;
+      ctx.textAlign = 'center';
+      ctx.fillText('COVER ART', coverX + cover / 2, coverY + cover / 2);
+      ctx.textAlign = 'left';
+    }
+    ctx.strokeStyle = 'rgba(25,28,60,.4)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(coverX + 0.5, coverY + 0.5, cover - 1, cover - 1);
+    ctx.strokeStyle = accent;
+    ctx.lineWidth = 3;
+    const corner = Math.min(28, cover * 0.12);
+    for (const [cx, cy, sx, sy] of [
+      [coverX, coverY, 1, 1], [coverX + cover, coverY, -1, 1],
+      [coverX, coverY + cover, 1, -1], [coverX + cover, coverY + cover, -1, -1],
+    ]) {
+      ctx.beginPath();
+      ctx.moveTo(cx + sx * corner, cy);
+      ctx.lineTo(cx, cy);
+      ctx.lineTo(cx, cy + sy * corner);
+      ctx.stroke();
+    }
+
+    const tx = coverX + cover + w * 0.045;
+    const tw = w - tx - pad;
+    const tiny = Math.max(8, w * 0.0074);
+    const label = Math.max(8, w * 0.008);
+    ctx.fillStyle = accent;
+    ctx.font = `600 ${tiny}px "Cascadia Code", monospace`;
+    ctx.fillText(`FROM: ${composer}`, tx, h * 0.1);
+    ctx.fillStyle = 'rgba(25,28,60,.58)';
+    ctx.textAlign = 'right';
+    ctx.fillText('AUDIO VISUALIZATION INTERFACE', w - pad, h * 0.1);
+    ctx.textAlign = 'left';
+
+    const titleSize = Math.min(w * 0.075, h * 0.16);
+    ctx.fillStyle = '#111a3b';
+    ctx.font = `700 ${titleSize}px "Bahnschrift", "Microsoft YaHei UI", sans-serif`;
+    ctx.fillText(`{${title}}`, tx, h * 0.34, tw);
+    ctx.fillStyle = accent;
+    ctx.fillRect(tx, h * 0.37, Math.min(tw * 0.5, w * 0.25), 3);
+
+    const rowY = h * 0.53;
+    const colW = tw / 3;
+    const labels = ['ARTIST', 'ALBUM', 'TRACK'];
+    const values = [composer, album, trackNo];
+    for (let i = 0; i < 3; i += 1) {
+      const x = tx + i * colW;
+      ctx.fillStyle = 'rgba(25,28,60,.5)';
+      ctx.font = `500 ${label}px "Cascadia Code", monospace`;
+      ctx.fillText(labels[i], x, rowY);
+      ctx.fillStyle = '#111a3b';
+      ctx.font = `600 ${Math.max(10, w * 0.012)}px "Bahnschrift", "Microsoft YaHei UI", sans-serif`;
+      ctx.fillText(String(values[i]), x, rowY + h * 0.055, colW - 20);
+    }
+    ctx.fillStyle = 'rgba(25,28,60,.55)';
+    ctx.font = `500 ${tiny}px "Cascadia Code", monospace`;
+    ctx.fillText(`GENRE ${genre}    BPM ${bpm}    SAMPLE ${sampleRate}    DURATION ${duration}`, tx, h * 0.78, tw);
+
+    // Waveform preview across the bottom right.
+    const waveY = h * 0.86;
+    const waveW = tw;
+    ctx.strokeStyle = 'rgba(25,28,60,.34)';
+    ctx.lineWidth = 0.8;
+    ctx.beginPath();
+    const cols = Math.max(40, Math.min(260, Math.floor(waveW / 3)));
+    for (let i = 0; i < cols; i += 1) {
+      let lo = 0;
+      let hi = 0;
+      if (engine.overviewMin?.length && engine.overviewMax?.length) {
+        const idx = Math.floor(i / cols * engine.overviewMin.length);
+        lo = engine.overviewMin[idx] || 0;
+        hi = engine.overviewMax[idx] || 0;
+      } else {
+        lo = Math.sin(i * 0.33) * 0.35;
+        hi = Math.cos(i * 0.19) * 0.35;
+      }
+      const x = tx + i * (waveW / cols);
+      ctx.moveTo(x, waveY - hi * 12);
+      ctx.lineTo(x, waveY - lo * 12);
+    }
+    ctx.stroke();
+    ctx.fillStyle = accent;
+    ctx.font = `500 ${tiny}px "Cascadia Code", monospace`;
+    ctx.fillText('WAVEFORM PREVIEW', tx, waveY - 18);
+    ctx.restore();
+  }
+
+  _drawIntroBand(ctx, w, h, cue, progress, alpha) {
+    if (alpha <= 0.005) return;
+    const info = this.state.info || {};
+    const engine = this.engine || {};
+    const basic = (this.state.modules || []).find((mod) => mod.type === 'basicInfo');
+    const opt = basic?.options || {};
+    const primaryColor = /^#[0-9a-fA-F]{6}$/.test(opt.primaryColor || '') ? opt.primaryColor : '#111a3b';
+    const secondaryColor = /^#[0-9a-fA-F]{6}$/.test(opt.secondaryColor || '') ? opt.secondaryColor : 'rgba(25,28,60,.5)';
+    const cardBg = /^#[0-9a-fA-F]{6}$/.test(opt.cardBg || '') ? opt.cardBg : '#eeebf4';
+    const accent = this.state.settings.accent || '#ff4f8b';
+    const title = info.title || engine.track?.name || 'Untitled signal';
+    const composer = info.composer || info.artist || engine.track?.artist || 'Unknown source';
+    const album = info.album || 'Album';
+    const trackNo = info.trackNo || '—';
+
+    // Keep only the central information band; the world outside it is a
+    // defocused copy of the live scene.
+    try {
+      if (!this._introBlurCanvas) this._introBlurCanvas = document.createElement('canvas');
+      if (this._introBlurCanvas.width !== w || this._introBlurCanvas.height !== h) {
+        this._introBlurCanvas.width = w;
+        this._introBlurCanvas.height = h;
+      }
+      const blurCtx = this._introBlurCanvas.getContext('2d');
+      blurCtx.clearRect(0, 0, w, h);
+      blurCtx.drawImage(ctx.canvas, 0, 0, w, h);
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      ctx.filter = 'blur(22px)';
+      ctx.drawImage(this._introBlurCanvas, -24, -24, w + 48, h + 48);
+      ctx.restore();
+      ctx.save();
+      ctx.globalAlpha = alpha * 0.28;
+      ctx.fillStyle = '#09050d';
+      ctx.fillRect(0, 0, w, h);
+      ctx.restore();
+    } catch { /* optional */ }
+
+    const ease = Math.min(1, progress * 6) * Math.min(1, (1 - progress) * 6);
+    const scale = 0.985 + ease * 0.015;
+    const bandTop = h * 0.18;
+    const bandH = h * 0.64;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.translate(w / 2, h / 2);
+    ctx.scale(scale, scale);
+    ctx.translate(-w / 2, -h / 2);
+    ctx.fillStyle = cardBg;
+    ctx.fillRect(0, bandTop, w, bandH);
+    ctx.fillStyle = 'rgba(25,28,60,.035)';
+    for (let x = 0; x < w; x += Math.max(34, w / 22)) ctx.fillRect(x, bandTop, 1, bandH);
+    for (let y = bandTop; y < bandTop + bandH; y += Math.max(30, bandH / 5)) ctx.fillRect(0, y, w, 1);
+    ctx.fillStyle = accent;
+    ctx.fillRect(0, bandTop, w, 2);
+    ctx.fillRect(0, bandTop + bandH - 2, w, 2);
+
+    const pad = w * 0.045;
+    const cover = Math.min(bandH - pad * 1.2, w * 0.235);
+    const coverX = pad;
+    const coverY = bandTop + (bandH - cover) / 2;
+    ctx.fillStyle = 'rgba(25,28,60,.06)';
+    ctx.fillRect(coverX, coverY, cover, cover);
+    const coverSrc = info.cover || '';
+    if (coverSrc && this._introCoverSrc !== coverSrc) {
+      this._introCoverSrc = coverSrc;
+      const img = new Image();
+      img.onload = () => { this._introCoverImage = img; };
+      img.src = coverSrc;
+    }
+    if (this._introCoverImage) {
+      const img = this._introCoverImage;
+      const sc = Math.max(cover / img.width, cover / img.height);
+      const dw = img.width * sc;
+      const dh = img.height * sc;
+      ctx.save();
+      ctx.beginPath(); ctx.rect(coverX, coverY, cover, cover); ctx.clip();
+      ctx.drawImage(img, coverX + (cover - dw) / 2, coverY + (cover - dh) / 2, dw, dh);
+      ctx.restore();
+    } else {
+      ctx.strokeStyle = 'rgba(25,28,60,.2)';
+      ctx.setLineDash([5, 6]);
+      ctx.strokeRect(coverX + 10, coverY + 10, cover - 20, cover - 20);
+      ctx.setLineDash([]);
+      ctx.fillStyle = 'rgba(25,28,60,.35)';
+      ctx.font = `600 ${Math.max(8, cover * 0.06)}px "Cascadia Code", monospace`;
+      ctx.textAlign = 'center';
+      ctx.fillText('COVER ART', coverX + cover / 2, coverY + cover / 2);
+      ctx.textAlign = 'left';
+    }
+    ctx.strokeStyle = 'rgba(25,28,60,.34)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(coverX + 0.5, coverY + 0.5, cover - 1, cover - 1);
+
+    const tx = coverX + cover + w * 0.045;
+    const tw = w - tx - pad;
+    const tiny = w * 0.0072;
+    const titleSize = Math.min(w * 0.068, bandH * 0.24);
+    ctx.fillStyle = primaryColor;
+    ctx.font = `700 ${titleSize}px "Bahnschrift", "Microsoft YaHei UI", sans-serif`;
+    ctx.fillText(`{${title}}`, tx, bandTop + bandH * 0.34, tw);
+    ctx.fillStyle = accent;
+    ctx.fillRect(tx, bandTop + bandH * 0.4, Math.min(tw * 0.45, w * 0.22), 2);
+
+    const rowY = bandTop + bandH * 0.62;
+    const colW = tw / 3;
+    const labels = ['ARTIST', 'ALBUM', 'TRACK'];
+    const values = [composer, album, trackNo];
+    for (let i = 0; i < 3; i += 1) {
+      const cx = tx + i * colW;
+      ctx.fillStyle = secondaryColor;
+      ctx.font = `500 ${tiny}px "Cascadia Code", monospace`;
+      ctx.fillText(labels[i], cx, rowY);
+      ctx.fillStyle = primaryColor;
+      ctx.font = `600 ${w * 0.011}px "Bahnschrift", "Microsoft YaHei UI", sans-serif`;
+      ctx.fillText(String(values[i]), cx, rowY + bandH * 0.115, colW - 14);
+    }
+    ctx.fillStyle = secondaryColor;
+    ctx.font = `500 ${tiny}px "Cascadia Code", monospace`;
+    ctx.fillText(`GENRE ${info.genre || 'Genre'}    BPM ${info.bpm || '—'}    SAMPLE ${engine.sampleRate ? (engine.sampleRate / 1000).toFixed(1) + ' kHz' : '—'}    DURATION ${engine.duration ? formatShortTime(engine.duration) : '—'}`, tx, bandTop + bandH * 0.86, tw);
+    ctx.restore();
+  }
+
   _drawAnimationCues(ctx, w, h, frame) {
     const cues = this.state.animationCues || [];
     if (!cues.length) return;
     const t = Number(frame?.time) || 0;
+    const activeSubtitles = [];
     for (const cue of cues) {
       const persistent = Number(cue.duration) <= 0;
       if (persistent ? t < cue.time : (t < cue.time || t > cue.time + cue.duration)) continue;
       const p = cue.params || {};
+      const relative = Math.max(0, t - cue.time);
+      const auto = (prop, fallback, kind = 'number') => automationValueAt(cue.keys?.[prop], relative, fallback, kind);
       const progress = persistent ? 0.5 : clamp((t - cue.time) / Math.max(0.1, cue.duration), 0, 1);
-      const alpha = persistent ? 0.62 : Math.sin(Math.min(1, progress) * Math.PI) * 0.8 + 0.2;
+      const alpha = (persistent ? 0.62 : Math.sin(Math.min(1, progress) * Math.PI) * 0.8 + 0.2) * clamp(auto('opacity', 1), 0, 1);
+      if (cue.type === 'subtitle') {
+        activeSubtitles.push(cue);
+        continue;
+      }
       if (cue.type === 'flash') {
         const rgb = hexToRgbSafe(/^#[0-9a-fA-F]{6}$/.test(cue.value) ? cue.value : '#ffffff');
         ctx.save();
@@ -571,22 +893,42 @@ export class Visualizer {
         ctx.fillStyle = `rgba(${rgb.r},${rgb.g},${rgb.b},${alpha * 0.38})`;
         ctx.fillRect(0, 0, w, h);
         ctx.restore();
-      } else if (cue.type === 'tint' || cue.type === 'color') {
-        const color = cue.type === 'color' ? (p.accent || cue.value || this.state.settings.accent) : (cue.value || this.state.settings.accent);
-        const rgb = hexToRgbSafe(/^#[0-9a-fA-F]{6}$/.test(color) ? color : this.state.settings.accent);
+      } else if (cue.type === 'color') {
+        // Palette is resolved before modules are drawn; a color cue must not
+        // tint the application UI or the stage background.
+      } else if (cue.type === 'tint') {
         ctx.save();
         ctx.globalCompositeOperation = 'screen';
-        ctx.fillStyle = `rgba(${rgb.r},${rgb.g},${rgb.b},${alpha * (cue.type === 'color' ? 0.24 : 0.20)})`;
+        const color = cue.value || this.state.settings.accent;
+        const rgb = hexToRgbSafe(/^#[0-9a-fA-F]{6}$/.test(color) ? color : this.state.settings.accent);
+        ctx.fillStyle = `rgba(${rgb.r},${rgb.g},${rgb.b},${alpha * 0.20})`;
         ctx.fillRect(0, 0, w, h);
         ctx.restore();
       } else if (cue.type === 'fade') {
         const a = Math.min(1, progress < 0.35 ? progress / 0.35 : (1 - progress) / 0.35);
         ctx.fillStyle = `rgba(0,0,0,${clamp(a, 0, 1) * 0.92})`;
         ctx.fillRect(0, 0, w, h);
+      } else if (cue.type === 'genre') {
+        const genre = p.name || cue.value || 'Genre';
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = 'rgba(5,3,9,.55)';
+        ctx.fillRect(36, h - 74, 260, 32);
+        ctx.strokeStyle = rgbaSafe(this.state.settings.accent, .45);
+        ctx.strokeRect(36.5, h - 73.5, 259, 31);
+        ctx.fillStyle = 'rgba(255,255,255,.78)';
+        ctx.font = '11px "Cascadia Code", monospace';
+        ctx.textAlign = 'left';
+        ctx.fillText(genre, 50, h - 53);
+        ctx.restore();
+      } else if (cue.type === 'intro') {
+        const fade = Math.min(1, progress * 5, (1 - progress) * 5);
+        this._drawIntroBand(ctx, w, h, cue, progress, Math.max(0, fade));
       } else if (cue.type === 'effect') {
-        if ((p.effect || 'blur') === 'blur') {
+        const effect = p.effect || 'blur';
+        if (effect === 'blur' || effect === 'motion-blur') {
           try {
-            const amount = clamp(Number(p.amount) || 35, 1, 100);
+            const amount = clamp(Number(auto('amount', p.amount ?? 35)) || 35, 1, 100);
             if (!this._fxCanvas) this._fxCanvas = document.createElement('canvas');
             if (this._fxCanvas.width !== w || this._fxCanvas.height !== h) {
               this._fxCanvas.width = w;
@@ -601,15 +943,22 @@ export class Visualizer {
             ctx.drawImage(this._fxCanvas, 0, 0, w, h);
             ctx.restore();
           } catch { /* optional */ }
-        } else {
+        } else if (effect === 'exposure') {
+          const exposure = clamp(Number(auto('amount', p.amount ?? 28)) || 28, 0, 100) / 100;
+          ctx.save();
+          ctx.fillStyle = `rgba(255,255,255,${alpha * exposure * 0.55})`;
+          ctx.fillRect(0, 0, w, h);
+          ctx.restore();
+        } else if (effect === 'glow') {
+          const rgb = hexToRgbSafe(this.state.settings.accent);
           ctx.save();
           ctx.globalCompositeOperation = 'screen';
-          ctx.fillStyle = `rgba(255,255,255,${alpha * 0.22})`;
+          ctx.fillStyle = `rgba(${rgb.r},${rgb.g},${rgb.b},${alpha * 0.28})`;
           ctx.fillRect(0, 0, w, h);
           ctx.restore();
         }
       } else if (cue.type === 'bpm') {
-        const label = `${p.bpm ?? cue.value ?? ''} BPM`;
+        const label = `${auto('bpm', p.bpm ?? cue.value ?? 120)} BPM`;
         ctx.save();
         ctx.globalAlpha = alpha;
         ctx.textAlign = 'right';
@@ -627,8 +976,14 @@ export class Visualizer {
         ctx.globalAlpha = alpha;
         const bw = Math.min(w * 0.62, 760);
         const bh = Math.min(h * 0.42, 300);
-        const x = (w - bw) / 2;
-        const y = (h - bh) / 2;
+        const ox = Number(p.x ?? 0);
+        const oy = Number(p.y ?? 0);
+        const sx = clamp((Number(p.scaleX) || 100) / 100, 0.2, 4);
+        const sy = clamp((Number(p.scaleY) || 100) / 100, 0.2, 4);
+        ctx.translate(w / 2 + ox, h / 2 + oy);
+        ctx.scale(sx, sy);
+        const x = -bw / 2;
+        const y = -bh / 2;
         ctx.fillStyle = 'rgba(5, 8, 20, .72)';
         ctx.fillRect(x, y, bw, bh);
         ctx.strokeStyle = rgbaSafe(p.accent || this.state.settings.accent, .65);
@@ -637,37 +992,120 @@ export class Visualizer {
         ctx.textAlign = 'center';
         ctx.fillStyle = '#ffffff';
         ctx.font = '700 38px "Bahnschrift", "Microsoft YaHei UI", sans-serif';
-        ctx.fillText(title, w / 2, y + 54, bw - 40);
+        ctx.fillText(title, 0, y + 54, bw - 40);
         ctx.fillStyle = rgbaSafe(p.accent || this.state.settings.accent, .92);
         ctx.font = '600 15px "Cascadia Code", monospace';
-        ctx.fillText(author, w / 2, y + 88, bw - 40);
+        ctx.fillText(author, 0, y + 88, bw - 40);
         ctx.fillStyle = 'rgba(255,255,255,.55)';
         ctx.font = '10px "Cascadia Code", monospace';
-        ctx.fillText(origin, w / 2, y + 112, bw - 40);
+        ctx.fillText(origin, 0, y + 112, bw - 40);
         ctx.restore();
+      } else if (cue.type === 'batch') {
+        // Action groups are expanded by the editor; the call marker itself is silent.
       } else {
         const text = p.text || cue.value || 'NEON//SCOPE';
-        const subtitle = cue.type === 'subtitle';
-        const size = clamp(Number(p.size) || (subtitle ? 15 : 26), 8, 160) * (h / 1080);
-        const x = clamp(Number(p.x) || 0.5, 0, 1) * w;
-        const y = clamp(Number(p.y) || (subtitle ? 0.88 : 0.34), 0, 1) * h;
-        ctx.save();
-        ctx.globalAlpha = alpha;
-        ctx.textAlign = p.align === 'left' ? 'left' : p.align === 'right' ? 'right' : 'center';
-        if (subtitle) {
-          ctx.fillStyle = 'rgba(5,3,9,.68)';
-          ctx.fillRect(w * 0.18, y - 28, w * 0.64, 42);
-          ctx.fillStyle = '#fff4f8';
-          ctx.font = `600 ${size}px "Bahnschrift", "Microsoft YaHei UI", sans-serif`;
-          ctx.fillText(text, x, y, w * 0.78);
-        } else {
-          ctx.fillStyle = 'rgba(255,255,255,.92)';
-          ctx.font = `600 ${size}px "Bahnschrift", "Microsoft YaHei UI", sans-serif`;
-          ctx.fillText(text, x, y, w * 0.84);
+        const size = clamp(Number(auto('size', p.size ?? 26)) || 26, 8, 200) * (h / 1080);
+        const x = w / 2 + Number(auto('x', p.x ?? 0));
+        const y = h / 2 + Number(auto('y', p.y ?? 0));
+        const fadeIn = Math.max(0, Number(p.fadeIn) || 0);
+        const fadeOut = Math.max(0, Number(p.fadeOut) || 0);
+        let textFade = 1;
+        if (!persistent) {
+          if (fadeIn > 0) textFade = Math.min(textFade, clamp(relative / fadeIn, 0, 1));
+          if (fadeOut > 0) textFade = Math.min(textFade, clamp((cue.duration - relative) / fadeOut, 0, 1));
         }
+        ctx.save();
+        ctx.globalAlpha = clamp(auto('opacity', 1), 0, 1) * textFade;
+        ctx.textAlign = 'center';
+        ctx.fillStyle = 'rgba(255,255,255,.92)';
+        ctx.font = `600 ${size}px "Bahnschrift", "Microsoft YaHei UI", sans-serif`;
+        ctx.fillText(text, x, y, w * 0.84);
         ctx.restore();
       }
     }
+    if (activeSubtitles.length) this._drawSubtitles(ctx, w, h, t, activeSubtitles);
+  }
+
+  _drawSubtitles(ctx, w, h, time, cues) {
+    const sorted = cues.slice().sort((a, b) => a.time - b.time);
+    const layouts = [];
+    for (const cue of sorted) {
+      const p = cue.params || {};
+      const persistent = Number(cue.duration) <= 0;
+      const relative = Math.max(0, time - cue.time);
+      const auto = (prop, fallback, kind = 'number') => automationValueAt(cue.keys?.[prop], relative, fallback, kind);
+      const size = clamp(Number(auto('size', p.size ?? 26)) || 26, 8, 200) * (h / 1080);
+      const lineGap = Math.max(0, Number(p.lineGap) || 0) * (h / 1080);
+      const lineH = size * 1.24 + lineGap;
+      const x = w / 2 + Number(auto('x', p.x ?? 0));
+      const y = h / 2 + Number(auto('y', p.y ?? 360));
+      const fadeIn = Math.max(0, Number(p.fadeIn) || 0);
+      const fadeOut = Math.max(0, Number(p.fadeOut) || 0);
+      let fade = 1;
+      if (!persistent) {
+        if (fadeIn > 0) fade = Math.min(fade, clamp(relative / fadeIn, 0, 1));
+        if (fadeOut > 0) fade = Math.min(fade, clamp((cue.duration - relative) / fadeOut, 0, 1));
+      }
+      const alpha = clamp(auto('opacity', 1), 0, 1) * fade;
+      const scaleX = clamp((Number(p.scaleX) || 100) / 100, 0.2, 4);
+      const scaleY = clamp((Number(p.scaleY) || 100) / 100, 0.2, 4);
+      ctx.font = `500 ${size}px "Bahnschrift", "Microsoft YaHei UI", sans-serif`;
+      const maxWidth = w * 0.82;
+      const text = String(p.text || cue.value || '').replace(/\r\n?/g, '\n');
+      const lines = [];
+      for (const paragraph of text.split('\n')) {
+        if (!paragraph) { lines.push(''); continue; }
+        let line = '';
+        for (const ch of Array.from(paragraph)) {
+          if (line && ctx.measureText(line + ch).width > maxWidth) {
+            lines.push(line);
+            line = ch;
+          } else {
+            line += ch;
+          }
+        }
+        if (line) lines.push(line);
+      }
+      if (!lines.length) lines.push('');
+      const maxLine = Math.max(...lines.map((line) => ctx.measureText(line).width));
+      layouts.push({ cue, p, x, y, size, lineH, lines, maxLine, alpha, scaleX, scaleY });
+    }
+    if (!layouts.length) return;
+    const baseBottom = Math.max(...layouts.map((item) => item.y));
+    let bottom = baseBottom;
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    for (const item of layouts) {
+      const boxW = Math.max(180, Math.min(w * 0.88, item.maxLine + 44));
+      const boxH = Math.max(item.lineH + 22, item.lines.length * item.lineH + 20);
+      const scaledH = boxH * item.scaleY;
+      const top = bottom - scaledH;
+      const centerY = top + scaledH / 2;
+      ctx.save();
+      ctx.translate(item.x, centerY);
+      ctx.scale(item.scaleX, item.scaleY);
+      ctx.globalAlpha = item.alpha;
+      ctx.shadowColor = 'rgba(20,15,35,.35)';
+      ctx.shadowBlur = 12;
+      ctx.shadowOffsetY = 3;
+      ctx.fillStyle = 'rgba(246,243,249,.94)';
+      ctx.fillRect(-boxW / 2, -boxH / 2, boxW, boxH);
+      ctx.shadowBlur = 0;
+      ctx.shadowOffsetY = 0;
+      ctx.strokeStyle = 'rgba(45,38,68,.55)';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(-boxW / 2 + 0.5, -boxH / 2 + 0.5, boxW - 1, boxH - 1);
+      ctx.fillStyle = 'rgba(255,79,139,.8)';
+      ctx.fillRect(-boxW / 2, -boxH / 2, 3, boxH);
+      ctx.fillStyle = '#29243a';
+      ctx.font = `500 ${item.size}px "Bahnschrift", "Microsoft YaHei UI", sans-serif`;
+      const startY = -((item.lines.length - 1) * item.lineH) / 2;
+      item.lines.forEach((line, i) => ctx.fillText(line, 0, startY + i * item.lineH));
+      ctx.restore();
+      bottom = top - 10;
+    }
+    ctx.restore();
   }
 
   _drawMotionOverlay(ctx, w, h, frame, s) {
@@ -699,7 +1137,7 @@ export class Visualizer {
     }
   }
 
-  _drawModuleSafe(ctx, mod, color, frame) {
+  _drawModuleSafe(ctx, mod, color, frame, palette) {
     try {
       drawVisualModule(ctx, mod, color, {
         frame,
@@ -707,6 +1145,8 @@ export class Visualizer {
         states: this.states,
         engine: this.engine,
         midi: this.state.midi,
+        info: this.state.info,
+        palette,
       });
     } catch (err) {
       console.error('[NEON//SCOPE] Module render failure:', mod.type, err);

@@ -107,12 +107,19 @@ export const MODULE_DEFS = {
     about: '宽屏声场散点与中央密度，适合铺在画面底部作为仪表。',
     w: 600, h: 179, category: 'STEREO',
   },
+  basicInfo: {
+    name: '基础信息',
+    code: 'BASIC INFORMATION',
+    glyph: '▣',
+    about: '曲绘、歌曲名、作曲、风格、BPM、曲序、采样率与时长的一体化信息卡。',
+    w: 900, h: 300, category: 'OVERVIEW',
+  },
 };
 
 export const MODULE_ORDER = [
   'levels', 'loudness', 'dial', 'scope', 'lissajous', 'spectrum',
   'phase', 'rhythm', 'dynamics', 'spectrogram', 'stereometer',
-  'waveform', 'pianoRoll', 'peakSlope', 'stereoField',
+  'waveform', 'pianoRoll', 'peakSlope', 'stereoField', 'basicInfo',
 ];
 
 let _id = 0;
@@ -158,6 +165,62 @@ export function rgba(hex, a = 1) {
 export function mixHex(a, b, t) {
   const A = hexToRgb(a), B = hexToRgb(b);
   return rgbToHex(lerp(A.r, B.r, t), lerp(A.g, B.g, t), lerp(A.b, B.b, t));
+}
+
+export const AUTOMATION_PROPERTIES = {
+  text: {
+    x: { label: 'X 偏移', min: -960, max: 960, step: 1, kind: 'number' },
+    y: { label: 'Y 偏移', min: -540, max: 540, step: 1, kind: 'number' },
+    size: { label: '字号', min: 8, max: 200, step: 1, kind: 'number' },
+    opacity: { label: '不透明度', min: 0, max: 1, step: 0.01, kind: 'number' },
+  },
+  subtitle: {
+    x: { label: 'X 偏移', min: -960, max: 960, step: 1, kind: 'number' },
+    y: { label: 'Y 偏移', min: -540, max: 540, step: 1, kind: 'number' },
+    size: { label: '字号', min: 8, max: 80, step: 1, kind: 'number' },
+    opacity: { label: '不透明度', min: 0, max: 1, step: 0.01, kind: 'number' },
+  },
+  effect: {
+    amount: { label: '强度', min: 0, max: 100, step: 1, kind: 'number' },
+    opacity: { label: '不透明度', min: 0, max: 1, step: 0.01, kind: 'number' },
+  },
+  intro: {
+    blur: { label: 'Blur', min: 0, max: 100, step: 1, kind: 'number' },
+    opacity: { label: '不透明度', min: 0, max: 1, step: 0.01, kind: 'number' },
+  },
+  color: {
+    bg: { label: '背景色', min: 0, max: 1, kind: 'color' },
+    primary: { label: '窗口颜色', min: 0, max: 1, kind: 'color' },
+    accent: { label: '字符颜色', min: 0, max: 1, kind: 'color' },
+    ink: { label: '图表颜色', min: 0, max: 1, kind: 'color' },
+  },
+  bpm: {
+    bpm: { label: 'BPM', min: 1, max: 300, step: 0.01, kind: 'number' },
+  },
+  mash: {
+    opacity: { label: '不透明度', min: 0, max: 1, step: 0.01, kind: 'number' },
+  },
+  batch: {
+    opacity: { label: '不透明度', min: 0, max: 1, step: 0.01, kind: 'number' },
+  },
+};
+
+export function automationValueAt(keys, relativeTime, fallback, kind = 'number') {
+  if (!Array.isArray(keys) || !keys.length) return fallback;
+  const sorted = keys.slice().sort((a, b) => a.t - b.t);
+  const t = Math.max(0, Number(relativeTime) || 0);
+  if (t <= sorted[0].t) return sorted[0].v;
+  if (t >= sorted[sorted.length - 1].t) return sorted[sorted.length - 1].v;
+  for (let i = 0; i < sorted.length - 1; i += 1) {
+    const a = sorted[i];
+    const b = sorted[i + 1];
+    if (t < a.t || t > b.t) continue;
+    const span = Math.max(0.0001, b.t - a.t);
+    const mix = (t - a.t) / span;
+    if (kind === 'color') return mixHex(a.v, b.v, mix);
+    return Number(a.v) + (Number(b.v) - Number(a.v)) * mix;
+  }
+  return fallback;
 }
 
 export function lighten(hex, amount = 0.2) {
@@ -359,6 +422,12 @@ export const DEFAULT_SETTINGS = {
   exportPulse: 0,
   uiTheme: 'neon',
   uiMode: 'auto',
+  uiFont: 'default',
+  themeBg: '#07050a',
+  themeWindow: '#171020',
+  themeText: '#f7eef3',
+  themeChart: '#ff4f8b',
+  themeChartFollow: 'custom',
   savePath: '',
   exportPath: '',
   timelineOpen: true,

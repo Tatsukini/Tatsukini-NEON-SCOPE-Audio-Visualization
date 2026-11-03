@@ -2,6 +2,7 @@ import {
   STAGE_W, STAGE_H, MODULE_DEFS, MODULE_ORDER, DEFAULT_SETTINGS,
   EXPORT_QUALITIES, LAYOUT_PRESETS, makeStudioLayout, makeScopeLayout, makeMinimalLayout,
   createModule, uid, hexToRgb, rgbToHex, mixHex, luminance, normalizeHexInput, clamp, formatTime, formatTC,
+  AUTOMATION_PROPERTIES, automationValueAt,
   formatShortTime, humanBytes, safeRead, safeStore, safeParse, debounce,
 } from './core.js';
 import { AudioEngine } from './audio.js';
@@ -113,6 +114,11 @@ const MODULE_OPTIONS = {
     { key: 'histogram', label: '声像分布柱', type: 'toggle', default: true },
     { key: 'balanceLine', label: '声像平衡线', type: 'toggle', default: true },
   ],
+  basicInfo: [
+    { key: 'primaryColor', label: '主字体颜色', type: 'color', default: '#101a3b' },
+    { key: 'secondaryColor', label: '次字体颜色', type: 'color', default: '#6d6782' },
+    { key: 'cardBg', label: '背景颜色', type: 'color', default: '#eeebf4' },
+  ],
 };
 const MODIFIER_CODES = new Set(['ControlLeft', 'ControlRight', 'ShiftLeft', 'ShiftRight', 'AltLeft', 'AltRight', 'MetaLeft', 'MetaRight']);
 const FORBIDDEN_BINDINGS = new Set(['Tab', 'Escape']);
@@ -223,7 +229,7 @@ class NeonScopeApp {
       settings: { ...DEFAULT_SETTINGS },
       midi: null,
       preset: 'studio',
-      info: { title: '', artist: '', album: '', genre: '', bpm: '', cover: '', show: false },
+      info: { title: '', artist: '', composer: '', album: '', genre: '', bpm: '', trackNo: '', cover: '', show: false },
       animationCues: [],
       ffmpegAvailable: false,
       exporting: false,
@@ -258,6 +264,7 @@ class NeonScopeApp {
     };
     this._panelZ = 66;
     this.subpanelState = {};
+    this.timelineState = { floating: false, x: null, y: null, w: null, h: null, height: 220, labelWidth: 148 };
     this._started = false;
     this._isNative = !!window.chrome?.webview;
     this._standaloneSettings = new URLSearchParams(location.search).has('settings');
@@ -273,9 +280,10 @@ class NeonScopeApp {
     this._bindUI();
     this._initPanels();
     this._initSubpanels();
-    this._applyAccent(this.state.settings.accent, this.state.settings.accentAlpha, { silent: true, noPersist: true });
+    this._applyThemePalette({ silent: true, noPersist: true });
     this._applyUiTheme(this.state.settings.uiTheme, { silent: true, noPersist: true });
     this._applyUiMode(this.state.settings.uiMode, { silent: true, noPersist: true });
+    this._applyUiFont(this.state.settings.uiFont, { silent: true, noPersist: true });
     this._syncSettingsUI();
     this._restoreBackgroundImage();
     this._renderLibrary();
@@ -479,6 +487,10 @@ class NeonScopeApp {
         else s[key] = value;
       }
       if (!/^#[0-9a-fA-F]{6}$/.test(s.accent)) s.accent = DEFAULT_SETTINGS.accent;
+      for (const key of ['themeBg', 'themeWindow', 'themeText', 'themeChart']) {
+        if (!/^#[0-9a-fA-F]{6}$/.test(s[key] || '')) s[key] = DEFAULT_SETTINGS[key];
+      }
+      if (!['custom', 'bg', 'primary', 'accent'].includes(s.themeChartFollow)) s.themeChartFollow = 'custom';
       if (!/^#[0-9a-fA-F]{6}$/.test(s.bgColor || '')) s.bgColor = DEFAULT_SETTINGS.bgColor;
       if (!['plasma', 'image', 'color'].includes(s.bgMode)) s.bgMode = 'plasma';
       if (!['gpu', 'cpu'].includes(s.rendererMode)) s.rendererMode = 'gpu';
@@ -490,6 +502,7 @@ class NeonScopeApp {
       if (s.uiTheme === 'aura') s.uiTheme = 'catbot';
       if (!['neon', 'vidi', 'catbot'].includes(s.uiTheme)) s.uiTheme = 'neon';
       if (!['auto', 'dark', 'light'].includes(s.uiMode)) s.uiMode = 'auto';
+      if (!['default', 'Bahnschrift', 'Segoe UI', 'Microsoft YaHei UI', 'Georgia', 'Arial', 'Times New Roman', 'Cascadia Code', 'Consolas'].includes(s.uiFont)) s.uiFont = 'default';
       s.bgMotionAmount = clamp(s.bgMotionAmount, 0, 100);
       s.bgMotionSpeed = clamp(s.bgMotionSpeed, 0, 200);
       s.exportFadeIn = clamp(s.exportFadeIn, 0, 3);
@@ -510,9 +523,10 @@ class NeonScopeApp {
       this.audio.setSensitivity(s.sensitivity);
       this.audio.setLoop(s.loop);
       this._setUiScale(s.uiScale, { silent: true, noPersist: true });
-      this._applyAccent(s.accent, s.accentAlpha, { silent: true, noPersist: true });
+      this._applyThemePalette({ silent: true, noPersist: true });
       this._applyUiTheme(s.uiTheme, { silent: true, noPersist: true });
       this._applyUiMode(s.uiMode, { silent: true, noPersist: true });
+      this._applyUiFont(s.uiFont, { silent: true, noPersist: true });
       this.visualizer.applyBackgroundSettings();
       this._syncSettingsUI();
       this._syncWatermark();
@@ -573,6 +587,8 @@ class NeonScopeApp {
       colorB: $('#colorB'), colorA: $('#colorA'), colorApplyBtn: $('#colorApplyBtn'),
       moduleMenu: $('#moduleMenu'),
       accentPickBtn: $('#accentPickBtn'), accentSwatch: $('#accentSwatch'), accentValue: $('#accentValue'),
+      themeBg: $('#themeBg'), themeWindow: $('#themeWindow'), themeText: $('#themeText'), themeChart: $('#themeChart'),
+      themeChartFollow: $('#themeChartFollow'),
       glow: $('#glow'), glowOut: $('#glowOut'),
       moduleTint: $('#moduleTint'), bgMode: $('#bgMode'), bgPreviewCanvas: $('#bgPreviewCanvas'),
       bgPreviewLabel: $('#bgPreviewLabel'), bgUploadBtn: $('#bgUploadBtn'), bgImageControls: $('#bgImageControls'),
@@ -583,7 +599,7 @@ class NeonScopeApp {
       rendererMode: $('#rendererMode'), sensitivity: $('#sensitivity'), sensitivityOut: $('#sensitivityOut'),
       smoothing: $('#smoothing'), smoothingOut: $('#smoothingOut'), watermarkToggle: $('#watermarkToggle'),
       scanlineToggle: $('#scanlineToggle'), resetLayoutBtn: $('#resetLayoutBtn'),
-      uiScale: $('#uiScale'), uiScaleOut: $('#uiScaleOut'),
+      uiScale: $('#uiScale'), uiScaleOut: $('#uiScaleOut'), uiFont: $('#uiFont'), uiFontReset: $('#uiFontReset'),
       bgMotion: $('#bgMotion'), bgMotionAmount: $('#bgMotionAmount'), bgMotionAmountOut: $('#bgMotionAmountOut'),
       bgMotionSpeed: $('#bgMotionSpeed'), bgMotionSpeedOut: $('#bgMotionSpeedOut'), bgMotionDirection: $('#bgMotionDirection'),
       exportFadeIn: $('#exportFadeIn'), exportFadeInOut: $('#exportFadeInOut'),
@@ -595,11 +611,14 @@ class NeonScopeApp {
       centerHBtn: $('#centerHBtn'), centerVBtn: $('#centerVBtn'), matchBtn: $('#matchBtn'),
       moduleOptions: $('#moduleOptions'), moduleOptionsType: $('#moduleOptionsType'),
       moduleOptionsHelp: $('#moduleOptionsHelp'), resetModuleOptionsBtn: $('#resetModuleOptionsBtn'),
-      infoTitle: $('#infoTitle'), infoArtist: $('#infoArtist'), infoAlbum: $('#infoAlbum'),
-      infoGenre: $('#infoGenre'), infoBpm: $('#infoBpm'), infoCoverBtn: $('#infoCoverBtn'),
+      infoTitle: $('#infoTitle'), infoArtist: $('#infoArtist'), infoComposer: $('#infoComposer'),
+      infoAlbum: $('#infoAlbum'), infoGenre: $('#infoGenre'), infoBpm: $('#infoBpm'), infoTrackNo: $('#infoTrackNo'),
+      infoCoverBtn: $('#infoCoverBtn'),
       infoCoverFile: $('#infoCoverFile'), infoCoverPreview: $('#infoCoverPreview'), infoOverlay: $('#infoOverlay'),
-      animType: $('#animType'), animTime: $('#animTime'), animDuration: $('#animDuration'),
-      animValue: $('#animValue'), animAddBtn: $('#animAddBtn'), animCueList: $('#animCueList'), animClearBtn: $('#animClearBtn'),
+      animOpenBuilder: $('#animOpenBuilder'), animCueList: $('#animCueList'), animClearBtn: $('#animClearBtn'),
+      actionBuilderModal: $('#actionBuilderModal'), actionBuilderTitle: $('#actionBuilderTitle'), actionBuilderType: $('#actionBuilderType'),
+      actionBuilderTime: $('#actionBuilderTime'), actionBuilderFields: $('#actionBuilderFields'),
+      actionBuilderPreview: $('#actionBuilderPreview'), actionBuilderInsert: $('#actionBuilderInsert'),
       animScript: $('#animScript'), animScriptApply: $('#animScriptApply'), animScriptExport: $('#animScriptExport'),
       animScriptImport: $('#animScriptImport'), animScriptFile: $('#animScriptFile'),
       archiveSaveBtn: $('#archiveSaveBtn'), archiveExportBtn: $('#archiveExportBtn'), archiveImportBtn: $('#archiveImportBtn'),
@@ -611,6 +630,24 @@ class NeonScopeApp {
       timelineContent: $('#timelineContent'), timelineScroll: $('#timelineScroll'), timelineZoomLabel: $('#timelineZoomLabel'),
       timelineTime: $('#timelineTime'), timelineAddCue: $('#timelineAddCue'),
       timelineZoomOut: $('#timelineZoomOut'), timelineZoomIn: $('#timelineZoomIn'),
+      timelineFloatBtn: $('#timelineFloatBtn'), timelineSplitter: $('#timelineSplitter'), timelineResizer: $('#timelineResizer'),
+      stageTimelineSplitter: $('#stageTimelineSplitter'), stageDetachBtn: $('#stageDetachBtn'),
+      stageWindowView: $('#stageWindowView'), stageMirrorCanvas: $('#stageMirrorCanvas'),
+      timelineMenu: $('#timelineMenu'), keyframeMenu: $('#keyframeMenu'), keyframePanel: $('#keyframePanel'), keyframeList: $('#keyframeList'),
+      aboutDeveloperBtn: $('#aboutDeveloperBtn'), aboutLicensesBtn: $('#aboutLicensesBtn'), aboutRepositoryBtn: $('#aboutRepositoryBtn'),
+      licenseModal: $('#licenseModal'), licenseList: $('#licenseList'),
+      developerModal: $('#developerModal'), developerSiteBtn: $('#developerSiteBtn'),
+      confirmModal: $('#confirmModal'), confirmMessage: $('#confirmMessage'),
+      confirmOk: $('#confirmModal [data-confirm-ok]'),
+      keyframeCount: $('#keyframeCount'), keyframeAddBtn: $('#keyframeAddBtn'),
+      keyframeEditorModal: $('#keyframeEditorModal'), keyframeEditorTitle: $('#keyframeEditorTitle'),
+      keyframeEditorCue: $('#keyframeEditorCue'), keyframePropSelect: $('#keyframePropSelect'),
+      keyframeEditorAdd: $('#keyframeEditorAdd'), keyframeEditorDelete: $('#keyframeEditorDelete'),
+      keyframeEditorRange: $('#keyframeEditorRange'), keyframeGraph: $('#keyframeGraph'),
+      keyframeKeyList: $('#keyframeKeyList'), keyframeEditorHint: $('#keyframeEditorHint'),
+      timelineSelectionLabel: $('#timelineSelectionLabel'), timelineSelStart: $('#timelineSelStart'),
+      timelineSelEnd: $('#timelineSelEnd'), timelineSelectionEdit: $('#timelineSelectionEdit'),
+      timelineSelectionDelete: $('#timelineSelectionDelete'), timelineSnap: $('#timelineSnap'),
       useGlobalColor: $('#useGlobalColor'), moduleColorPickBtn: $('#moduleColorPickBtn'), moduleColorSwatch: $('#moduleColorSwatch'),
       moduleColorValue: $('#moduleColorValue'),
       opacity: $('#opacity'), opacityOut: $('#opacityOut'), moduleVisible: $('#moduleVisible'),
@@ -645,6 +682,10 @@ class NeonScopeApp {
         else s[key] = value;
       }
       if (!/^#[0-9a-fA-F]{6}$/.test(s.accent)) s.accent = DEFAULT_SETTINGS.accent;
+      for (const key of ['themeBg', 'themeWindow', 'themeText', 'themeChart']) {
+        if (!/^#[0-9a-fA-F]{6}$/.test(s[key] || '')) s[key] = DEFAULT_SETTINGS[key];
+      }
+      if (!['custom', 'bg', 'primary', 'accent'].includes(s.themeChartFollow)) s.themeChartFollow = 'custom';
       if (!/^#[0-9a-fA-F]{6}$/.test(s.bgColor || '')) s.bgColor = DEFAULT_SETTINGS.bgColor;
       if (!['plasma', 'image', 'color'].includes(s.bgMode)) s.bgMode = 'plasma';
       if (!['gpu', 'cpu'].includes(s.rendererMode)) s.rendererMode = 'gpu';
@@ -658,6 +699,7 @@ class NeonScopeApp {
       if (s.uiTheme === 'aura') s.uiTheme = 'catbot';
       if (!['neon', 'vidi', 'catbot'].includes(s.uiTheme)) s.uiTheme = 'neon';
       if (!['auto', 'dark', 'light'].includes(s.uiMode)) s.uiMode = 'auto';
+      if (!['default', 'Bahnschrift', 'Segoe UI', 'Microsoft YaHei UI', 'Georgia', 'Arial', 'Times New Roman', 'Cascadia Code', 'Consolas'].includes(s.uiFont)) s.uiFont = 'default';
       s.bgMotionAmount = clamp(s.bgMotionAmount, 0, 100);
       s.bgMotionSpeed = clamp(s.bgMotionSpeed, 0, 200);
       s.exportFadeIn = clamp(s.exportFadeIn, 0, 3);
@@ -694,9 +736,11 @@ class NeonScopeApp {
       this.state.info = {
         title: typeof info.title === 'string' ? info.title.slice(0, 80) : '',
         artist: typeof info.artist === 'string' ? info.artist.slice(0, 80) : '',
+        composer: typeof info.composer === 'string' ? info.composer.slice(0, 80) : '',
         album: typeof info.album === 'string' ? info.album.slice(0, 80) : '',
         genre: typeof info.genre === 'string' ? info.genre.slice(0, 40) : '',
         bpm: info.bpm === '' ? '' : String(info.bpm ?? '').slice(0, 12),
+        trackNo: typeof info.trackNo === 'string' ? info.trackNo.slice(0, 12) : '',
         cover: typeof info.cover === 'string' ? info.cover : '',
         show: !!info.show,
       };
@@ -709,10 +753,36 @@ class NeonScopeApp {
           id: typeof cue.id === 'string' ? cue.id : uid('cue'),
           time: clamp(Number(cue.time) || 0, 0, 36000),
           duration: clamp(Number(cue.duration) || 1, 0.1, 60),
-          type: ['flash', 'text', 'subtitle', 'tint', 'fade', 'effect', 'mash', 'color', 'bpm'].includes(cue.type) ? cue.type : 'flash',
+          type: ['flash', 'text', 'subtitle', 'tint', 'fade', 'effect', 'mash', 'color', 'bpm', 'genre', 'intro', 'batch'].includes(cue.type) ? cue.type : 'flash',
           value: typeof cue.value === 'string' ? cue.value.slice(0, 200) : '',
           params: cue.params && typeof cue.params === 'object' ? cue.params : {},
+          keys: cue.keys && typeof cue.keys === 'object' ? cue.keys : {},
         }));
+      for (const cue of this.state.animationCues) {
+        if (cue.type !== 'text' && cue.type !== 'subtitle') continue;
+        const p = cue.params;
+        if (!p.coordMode) {
+          const x = Number(p.x);
+          const y = Number(p.y);
+          if (Number.isFinite(x) && Number.isFinite(y) && x >= 0 && x <= 1 && y >= 0 && y <= 1) {
+            p.x = (x - 0.5) * STAGE_W;
+            p.y = (y - 0.5) * STAGE_H;
+          }
+          for (const [prop, span] of [['x', STAGE_W], ['y', STAGE_H]]) {
+            if (!Array.isArray(cue.keys?.[prop])) continue;
+            cue.keys[prop] = cue.keys[prop].map((key) => {
+              const v = Number(key.v);
+              return Number.isFinite(v) && v >= 0 && v <= 1
+                ? { ...key, v: (v - 0.5) * span }
+                : key;
+            });
+          }
+          p.coordMode = 'absolute';
+        }
+        delete p.align;
+        p.fadeIn = Math.max(0, Number(p.fadeIn) || 0.35);
+        p.fadeOut = Math.max(0, Number(p.fadeOut) || 0.35);
+      }
     }
     if (data.subpanelState && typeof data.subpanelState === 'object') {
       for (const [id, raw] of Object.entries(data.subpanelState)) {
@@ -727,6 +797,19 @@ class NeonScopeApp {
           h: num(raw.h),
         };
       }
+    }
+    if (data.timelineState && typeof data.timelineState === 'object') {
+      const raw = data.timelineState;
+      const num = (value) => (value === null || value === undefined || value === '' || !Number.isFinite(Number(value)) ? null : Number(value));
+      this.timelineState = {
+        floating: !!raw.floating,
+        x: num(raw.x),
+        y: num(raw.y),
+        w: num(raw.w),
+        h: num(raw.h),
+        height: clamp(Number(raw.height) || 220, 80, 620),
+        labelWidth: clamp(Number(raw.labelWidth) || 148, 110, 420),
+      };
     }
     if (data.panelState && typeof data.panelState === 'object') {
       for (const id of ['left', 'stage', 'right']) {
@@ -771,7 +854,9 @@ class NeonScopeApp {
         else if (option.type === 'range') {
           const num = Number(v);
           if (Number.isFinite(num)) options[option.key] = clamp(num, option.min, option.max);
-        } else if (option.options.some(([value]) => String(value) === String(v))) {
+        } else if (option.type === 'color') {
+          if (/^#[0-9a-fA-F]{6}$/.test(String(v))) options[option.key] = String(v);
+        } else if (option.options?.some(([value]) => String(value) === String(v))) {
           options[option.key] = String(v);
         }
       }
@@ -904,6 +989,13 @@ class NeonScopeApp {
       if (uiMode) this._applyUiMode(uiMode.dataset.uiModeBtn);
     });
     d.accentPickBtn.addEventListener('click', () => this._openColorPicker('accent'));
+    for (const [key, input] of [['themeBg', d.themeBg], ['themeWindow', d.themeWindow], ['themeText', d.themeText], ['themeChart', d.themeChart]]) {
+      input?.addEventListener('input', () => this._setThemeColor(key, input.value));
+    }
+    d.themeChartFollow?.addEventListener('change', () => {
+      this.state.settings.themeChartFollow = d.themeChartFollow.value;
+      this._applyThemePalette({ silent: true });
+    });
     d.bgColorPickBtn.addEventListener('click', () => this._openColorPicker('background'));
     d.openShortcutsBtn.addEventListener('click', () => this._openShortcuts());
     d.openShortcutsBtn2.addEventListener('click', () => this._openShortcuts());
@@ -1211,6 +1303,8 @@ class NeonScopeApp {
       this._notifyNativePaths();
       this._persist();
     });
+    this.dom.uiFont?.addEventListener('change', () => this._applyUiFont(this.dom.uiFont.value));
+    this.dom.uiFontReset?.addEventListener('click', () => this._applyUiFont('default'));
     this.dom.savePathBrowse.addEventListener('click', () => this._chooseFolder('save'));
     this.dom.exportPathBrowse.addEventListener('click', () => this._chooseFolder('export'));
     this.dom.animScriptApply.addEventListener('click', () => this._applyAnimationScript());
@@ -1233,9 +1327,179 @@ class NeonScopeApp {
     this.dom.animScript.value = serializeAnimationCues(this.state.animationCues || []);
   }
 
+  _bindConfirmUI() {
+    this.dom.confirmOk?.addEventListener('click', () => this._closeConfirm(true));
+    document.addEventListener('click', (e) => {
+      if (e.target.closest('[data-confirm-cancel]')) this._closeConfirm(false);
+    });
+    document.addEventListener('keydown', (e) => {
+      if (!this.dom.confirmModal || this.dom.confirmModal.classList.contains('hidden')) return;
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        this._closeConfirm(false);
+      }
+    }, true);
+  }
+
+  _showConfirm(message, { title = '确认操作', confirmText = '确认恢复', cancelText = '取消' } = {}) {
+    if (!this.dom.confirmModal) return Promise.resolve(false);
+    this.dom.confirmMessage.textContent = message;
+    const titleEl = this.dom.confirmModal.querySelector('#confirmTitle');
+    if (titleEl) titleEl.textContent = title;
+    const ok = this.dom.confirmModal.querySelector('[data-confirm-ok]');
+    if (ok) ok.textContent = confirmText;
+    for (const btn of this.dom.confirmModal.querySelectorAll('[data-confirm-cancel]')) {
+      if (btn.classList.contains('btn')) btn.textContent = cancelText;
+    }
+    this.dom.confirmModal.classList.remove('hidden');
+    return new Promise((resolve) => {
+      this._confirmResolve = resolve;
+      requestAnimationFrame(() => this.dom.confirmOk?.focus());
+    });
+  }
+
+  _closeConfirm(value) {
+    if (!this.dom.confirmModal || this.dom.confirmModal.classList.contains('hidden')) return;
+    this.dom.confirmModal.classList.add('hidden');
+    const resolve = this._confirmResolve;
+    this._confirmResolve = null;
+    if (resolve) resolve(!!value);
+  }
+
+  _bindAboutUI() {
+    this.dom.aboutDeveloperBtn?.addEventListener('click', () => this._openModal('developer'));
+    this.dom.aboutRepositoryBtn?.addEventListener('click', () => {
+      this._openExternal('https://github.com/Tatsukini/Tatsukini-NEON-SCOPE-Audio-Visualization');
+    });
+    this.dom.developerSiteBtn?.addEventListener('click', () => {
+      this._openExternal('https://space.bilibili.com/3546631108561311');
+    });
+    this.dom.aboutLicensesBtn?.addEventListener('click', () => {
+      this._renderLicenses();
+      this._openModal('licenses');
+    });
+    this.dom.licenseList?.addEventListener('click', (e) => {
+      const link = e.target.closest('a[href]');
+      if (!link) return;
+      e.preventDefault();
+      this._openExternal(link.href);
+    });
+  }
+
+  _openExternal(url) {
+    try {
+      if (this._isNative && window.chrome?.webview) {
+        window.chrome.webview.postMessage({ action: 'open-external', url });
+        return;
+      }
+    } catch { /* fall through */ }
+    window.open(url, '_blank', 'noopener');
+  }
+
+  _renderLicenses() {
+    if (!this.dom.licenseList) return;
+    const items = [
+      {
+        name: '.NET Runtime / Windows Forms / ASP.NET Core',
+        copyright: 'Copyright © .NET Foundation and contributors.',
+        license: 'Licensed under the MIT License.',
+        source: 'https://github.com/dotnet/runtime',
+        doc: 'https://github.com/dotnet/runtime/blob/main/LICENSE.TXT',
+      },
+      {
+        name: 'Microsoft.Web.WebView2 SDK',
+        copyright: 'Copyright © Microsoft Corporation.',
+        license: 'Licensed under the BSD 3-Clause License.',
+        source: 'https://learn.microsoft.com/microsoft-edge/webview2/',
+        doc: 'https://github.com/MicrosoftEdge/WebView2Samples/blob/main/LICENSE.txt',
+      },
+      {
+        name: 'FFmpeg（可选外部组件）',
+        copyright: 'Copyright © FFmpeg developers.',
+        license: '通常以 LGPL 2.1+ 分发；具体取决于所使用的构建。本程序不捆绑 FFmpeg。',
+        source: 'https://ffmpeg.org/',
+        doc: 'https://ffmpeg.org/legal.html',
+      },
+    ];
+    this.dom.licenseList.innerHTML = items.map((item) => `
+      <div class="license-item">
+        <div class="license-name">${item.name}</div>
+        <div>
+          <div class="license-copy">${item.copyright}<br>${item.license}</div>
+          <div class="license-links">
+            <a href="${item.source}" target="_blank" rel="noopener">查看来源网站</a>
+            <a href="${item.doc}" target="_blank" rel="noopener">查看许可文档</a>
+          </div>
+        </div>
+      </div>`).join('');
+  }
+
+  _openStageWindow() {
+    if (this._isNative) {
+      try { window.chrome.webview.postMessage({ action: 'open-stage-window' }); } catch { /* noop */ }
+    } else {
+      const win = window.open(`${location.origin}/?stage=1`, 'neon-stage', 'width=1280,height=720');
+      if (!win) this._toast('舞台窗口被浏览器拦截，请允许弹出窗口', 'error');
+    }
+    this._initStageBroadcast();
+  }
+
+  _initStageBroadcast() {
+    if (this._stageChannel) return;
+    try {
+      this._stageChannel = new BroadcastChannel('neon-scope-stage-v1');
+      this._stageLastSeen = 0;
+      this._stageChannel.onmessage = (event) => {
+        const data = event.data;
+        if (data?.type === 'stage-ready' || data?.type === 'stage-heartbeat') {
+          this._stageLastSeen = performance.now();
+          this._startStageFrames();
+        }
+      };
+      this._stageWatch = setInterval(() => {
+        if (!this._stageLastSeen) return;
+        if (performance.now() - this._stageLastSeen > 3200) this._stopStageFrames();
+      }, 900);
+    } catch { /* BroadcastChannel is optional */ }
+  }
+
+  _startStageFrames() {
+    if (this._stageTimer || !this._stageChannel) return;
+    const off = document.createElement('canvas');
+    off.width = 960;
+    off.height = 540;
+    const offCtx = off.getContext('2d');
+    let busy = false;
+    this._stageTimer = setInterval(() => {
+      if (busy || !this.visualizer?.canvas) return;
+      busy = true;
+      try {
+        offCtx.drawImage(this.visualizer.canvas, 0, 0, off.width, off.height);
+        off.toBlob((blob) => {
+          busy = false;
+          if (!blob || !this._stageChannel) return;
+          this._stageChannel.postMessage({ type: 'frame', blob, time: this.audio.getTime() });
+        }, 'image/jpeg', 0.78);
+      } catch {
+        busy = false;
+      }
+    }, 105);
+  }
+
+  _stopStageFrames() {
+    if (this._stageTimer) clearInterval(this._stageTimer);
+    this._stageTimer = null;
+    this._stageLastSeen = 0;
+  }
+
   _bindTimeline() {
     if (!this.dom.timelinePanel) return;
     this._timelineZoom = 1;
+    this._timelineHome = { parent: this.dom.timelinePanel.parentNode, next: this.dom.timelinePanel.nextSibling };
+    this._tlSelectedId = null;
+    this._timelineScrubbing = false;
+    this._timelineSnap = this.dom.timelineSnap.checked;
     this._tlPps = 1;
     this._tlDuration = 1;
     this.dom.timelineToggle.addEventListener('click', () => {
@@ -1249,20 +1513,108 @@ class NeonScopeApp {
       this._timelineZoom = clamp(this._timelineZoom + 0.25, 0.5, 4);
       this._renderTimeline();
     });
-    this.dom.timelineAddCue.addEventListener('click', () => this._addTimelineCue());
+    this.dom.timelineAddCue.addEventListener('click', () => this._openActionBuilder('effect'));
     this.dom.timelineScroll.addEventListener('pointerdown', (e) => {
-      if (e.target.closest('.tl-bar') || e.target.closest('.timeline-ruler') === null && e.target.closest('.tl-row-label')) return;
+      if (e.button !== 0 || e.target.closest('.tl-bar')) return;
+      this._timelineScrubbing = true;
       this._seekFromTimeline(e.clientX);
     });
+    document.addEventListener('pointermove', (e) => {
+      if (this._timelineScrubbing) this._seekFromTimeline(e.clientX);
+    });
+    document.addEventListener('pointerup', () => { this._timelineScrubbing = false; });
+    this.dom.stageDetachBtn.addEventListener('click', () => this._openStageWindow());
+    this._initStageBroadcast();
+    this.dom.timelineContent.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      this._openTimelineMenu(e);
+    });
+    this.dom.timelineMenu.addEventListener('pointerdown', (e) => e.stopPropagation());
+    this.dom.timelineMenu.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-timeline-menu]');
+      if (!btn) return;
+      this._runTimelineMenuAction(btn.dataset.timelineMenu);
+    });
+    document.addEventListener('pointerdown', (e) => {
+      if (!e.target.closest('#timelineMenu')) this._closeTimelineMenu();
+    });
+    this.dom.timelineContent.addEventListener('click', (e) => {
+      const del = e.target.closest('.tl-del');
+      if (!del) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const guard = this._delPointer;
+      this._delPointer = null;
+      if (guard && Math.hypot(e.clientX - guard.x, e.clientY - guard.y) > 4) return;
+      this.state.animationCues = this.state.animationCues.filter((cue) => cue.id !== del.dataset.cueId);
+      this._renderAnimationCues();
+      this._persist();
+    });
+    this.dom.timelineContent.addEventListener('dblclick', (e) => {
+      const bar = e.target.closest('.tl-bar');
+      if (bar) {
+        const cue = this.state.animationCues.find((item) => item.id === bar.dataset.cueId);
+        if (cue) {
+          this._selectTimelineCue(cue.id);
+          this._openActionBuilder(cue.type, cue);
+        }
+        return;
+      }
+      const rect = this.dom.timelineContent.getBoundingClientRect();
+      const time = clamp((e.clientX - rect.left) / Math.max(1, rect.width), 0, 1) * (this._tlDuration || 0);
+      this._openActionBuilder('effect', null, time);
+    });
+    this.dom.timelineSelStart.addEventListener('change', () => {
+      const cue = this._selectedTimelineCue();
+      if (!cue) return;
+      const start = clamp(Number(this.dom.timelineSelStart.value) || 0, 0, 36000);
+      const end = start + cue.duration;
+      cue.time = start;
+      this.state.animationCues.sort((a, b) => a.time - b.time);
+      this._renderTimeline();
+      this._syncTimelineSelection();
+      this.dom.timelineSelEnd.value = end.toFixed(2);
+      this._persist();
+    });
+    this.dom.timelineSelEnd.addEventListener('change', () => {
+      const cue = this._selectedTimelineCue();
+      if (!cue) return;
+      const end = clamp(Number(this.dom.timelineSelEnd.value) || 0, cue.time + 0.1, 36000);
+      cue.duration = clamp(end - cue.time, 0.1, 60);
+      this._renderTimeline();
+      this._syncTimelineSelection();
+      this._persist();
+    });
+    this.dom.timelineSelectionEdit.addEventListener('click', () => {
+      const cue = this._selectedTimelineCue();
+      if (cue) this._openActionBuilder(cue.type, cue);
+    });
+    this.dom.timelineSelectionDelete.addEventListener('click', () => this._deleteSelectedTimelineCue());
+    this.dom.timelineSnap.addEventListener('change', () => {
+      this._timelineSnap = this.dom.timelineSnap.checked;
+    });
     this.dom.timelineContent.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
+      const keyMarker = e.target.closest('.tl-key-marker');
       const del = e.target.closest('.tl-del');
       const bar = e.target.closest('.tl-bar');
+      if (keyMarker) {
+        e.preventDefault();
+        e.stopPropagation();
+        const cue = this.state.animationCues.find((item) => item.id === keyMarker.dataset.keyCue);
+        if (cue) {
+          this._selectTimelineCue(cue.id);
+          this.audio.seek(cue.time);
+          this._updateTransport(cue.time);
+          this._syncTimelinePlayhead(cue.time);
+        }
+        return;
+      }
       if (del) {
         e.preventDefault();
         e.stopPropagation();
-        this.state.animationCues = this.state.animationCues.filter((cue) => cue.id !== del.dataset.cueId);
-        this._renderAnimationCues();
-        this._persist();
+        // Delete only on click, never as a side effect of starting a drag.
+        this._delPointer = { x: e.clientX, y: e.clientY };
         return;
       }
       if (!bar) return;
@@ -1270,16 +1622,28 @@ class NeonScopeApp {
       if (!cue) return;
       e.preventDefault();
       e.stopPropagation();
-      const resizing = !!e.target.closest('.tl-resize');
+      this._selectTimelineCue(cue.id);
+      const leftTrim = !!e.target.closest('.tl-trim-left');
+      const rightTrim = !!e.target.closest('.tl-resize');
       const startX = e.clientX;
       const startTime = cue.time;
       const startDuration = cue.duration;
+      const screenPps = this.dom.timelineContent.getBoundingClientRect().width / Math.max(0.1, this._tlDuration);
+      const snap = (value) => this._timelineSnap ? Math.round(value * 10) / 10 : value;
       const move = (ev) => {
-        const delta = (ev.clientX - startX) / Math.max(1, this._tlPps);
-        if (resizing) cue.duration = clamp(startDuration + delta, 0.1, 60);
-        else cue.time = clamp(startTime + delta, 0, Math.max(0.1, this._tlDuration));
+        const delta = (ev.clientX - startX) / Math.max(0.001, screenPps);
+        if (rightTrim) {
+          cue.duration = clamp(snap(startDuration + delta), 0.1, 60);
+        } else if (leftTrim) {
+          const nextTime = clamp(snap(startTime + delta), 0, startTime + startDuration - 0.1);
+          cue.duration = clamp(snap(startDuration - (nextTime - startTime)), 0.1, 60);
+          cue.time = nextTime;
+        } else {
+          cue.time = clamp(snap(startTime + delta), 0, Math.max(0.1, this._tlDuration));
+        }
         this.state.animationCues.sort((a, b) => a.time - b.time);
         this._renderTimeline();
+        this._syncTimelineSelection();
       };
       const up = () => {
         document.removeEventListener('pointermove', move);
@@ -1290,14 +1654,281 @@ class NeonScopeApp {
       document.addEventListener('pointermove', move);
       document.addEventListener('pointerup', up);
     });
+    this._bindTimelineFloat();
     this._applyTimelineOpen(this.state.settings.timelineOpen !== false, { silent: true });
+    this._applyTimelineLayout();
     this._renderTimeline();
+  }
+
+  _openTimelineMenu(e) {
+    const marker = e.target.closest('.tl-key-marker');
+    const bar = e.target.closest('.tl-bar');
+    const barCue = bar ? this.state.animationCues.find((cue) => cue.id === bar.dataset.cueId) : null;
+    const markerCue = marker ? this.state.animationCues.find((cue) => cue.id === marker.dataset.keyCue) : null;
+    const cue = barCue || markerCue || null;
+    if (cue) this._selectTimelineCue(cue.id);
+    const rect = this.dom.timelineContent.getBoundingClientRect();
+    const time = cue ? cue.time : clamp((e.clientX - rect.left) / Math.max(1, rect.width), 0, 1) * (this._tlDuration || 0);
+    this._timelineMenuCueId = cue?.id || null;
+    this._timelineMenuTime = time;
+    const edit = this.dom.timelineMenu.querySelector('[data-timeline-menu="edit"]');
+    const keys = this.dom.timelineMenu.querySelector('[data-timeline-menu="keys"]');
+    const duplicate = this.dom.timelineMenu.querySelector('[data-timeline-menu="duplicate"]');
+    const del = this.dom.timelineMenu.querySelector('[data-timeline-menu="delete"]');
+    if (edit) edit.disabled = !cue;
+    if (keys) keys.disabled = !cue;
+    if (duplicate) duplicate.disabled = !cue;
+    if (del) del.disabled = !cue;
+    const snap = this.dom.timelineMenu.querySelector('[data-timeline-menu="snap"] .menu-state');
+    if (snap) snap.textContent = this._timelineSnap ? 'ON' : 'OFF';
+    this.dom.timelineMenu.classList.remove('hidden');
+    const vp = this._panelViewport();
+    const localX = e.clientX / vp.scale;
+    const localY = e.clientY / vp.scale;
+    const mw = this.dom.timelineMenu.offsetWidth || 218;
+    const mh = this.dom.timelineMenu.offsetHeight || 240;
+    this.dom.timelineMenu.style.left = `${clamp(localX, 8, vp.w - mw - 8)}px`;
+    this.dom.timelineMenu.style.top = `${clamp(localY, 8, vp.h - mh - 8)}px`;
+  }
+
+  _closeTimelineMenu() {
+    this.dom.timelineMenu?.classList.add('hidden');
+    this._timelineMenuCueId = null;
+  }
+
+  _runTimelineMenuAction(action) {
+    const cue = this.state.animationCues.find((item) => item.id === this._timelineMenuCueId) || null;
+    const time = Number(this._timelineMenuTime) || 0;
+    this._closeTimelineMenu();
+    if (action === 'add') { this._openActionBuilder('effect', null, time); return; }
+    if (!cue && ['edit', 'duplicate', 'delete'].includes(action)) return;
+    if (action === 'edit') { this._openActionBuilder(cue.type, cue); return; }
+    if (action === 'keys') { this._openKeyframeEditor(cue); return; }
+    if (action === 'duplicate') {
+      const copy = JSON.parse(JSON.stringify(cue));
+      copy.id = uid('cue');
+      copy.time = clamp(cue.time + 0.5, 0, 36000);
+      this.state.animationCues.push(copy);
+      this.state.animationCues.sort((a, b) => a.time - b.time);
+      this._tlSelectedId = copy.id;
+      this._renderAnimationCues();
+      this._persist();
+      return;
+    }
+    if (action === 'delete') {
+      this.state.animationCues = this.state.animationCues.filter((item) => item.id !== cue.id);
+      this._tlSelectedId = null;
+      this._renderAnimationCues();
+      this._persist();
+      return;
+    }
+    if (action === 'locate') {
+      const t = cue ? cue.time : time;
+      this.audio.seek(t);
+      this._updateTransport(t);
+      this._syncTimelinePlayhead(t);
+      return;
+    }
+    if (action === 'keyframes') {
+      this._showKeyframeRack();
+      return;
+    }
+    if (action === 'float') { this._toggleTimelineFloat(); return; }
+    if (action === 'snap') {
+      this.dom.timelineSnap.checked = !this.dom.timelineSnap.checked;
+      this._timelineSnap = this.dom.timelineSnap.checked;
+    }
+  }
+
+  _showKeyframeRack() {
+    const st = this.subpanelState.keyframes;
+    if (!st) return;
+    if (st.hidden || !st.floating) {
+      st.hidden = false;
+      st.floating = true;
+      this._applySubpanelState();
+    }
+  }
+
+  _applyTimelineLabelWidth() {
+    const width = clamp(Number(this.timelineState.labelWidth) || 148, 110, 420);
+    this.timelineState.labelWidth = width;
+    if (this.dom.timelineLabels) {
+      this.dom.timelineLabels.style.width = `${width}px`;
+      this.dom.timelineLabels.style.flexBasis = `${width}px`;
+      this.dom.timelineLabels.style.flexGrow = '0';
+      this.dom.timelineLabels.style.flexShrink = '0';
+    }
+  }
+
+  _applyTimelineLayout() {
+    const panel = this.dom.timelinePanel;
+    if (!panel) return;
+    const st = this.timelineState;
+    const layer = this.dom.subpanelLayer;
+    st.height = clamp(Number(st.height) || 220, 80, 620);
+    panel.style.setProperty('--timeline-height', `${st.height}px`);
+    if (this.dom.stageTimelineSplitter) this.dom.stageTimelineSplitter.style.display = st.floating ? 'none' : '';
+    this._applyTimelineLabelWidth();
+    if (st.floating) {
+      if (layer && panel.parentNode !== layer) layer.appendChild(panel);
+      panel.classList.add('timeline-floating');
+      const vp = this._panelViewport();
+      if (!Number.isFinite(st.w)) st.w = clamp(840, 500, vp.w - 24);
+      if (!Number.isFinite(st.h)) st.h = clamp(300, 210, vp.h - 60);
+      st.w = Math.round(clamp(st.w, 500, vp.w - 24));
+      st.h = Math.round(clamp(st.h, 210, vp.h - 60));
+      if (!Number.isFinite(st.x)) st.x = Math.round((vp.w - st.w) / 2);
+      if (!Number.isFinite(st.y)) st.y = Math.round(vp.h - st.h - 64);
+      st.x = Math.round(clamp(st.x, 4, vp.w - st.w - 4));
+      st.y = Math.round(clamp(st.y, 4, vp.h - st.h - 4));
+      panel.style.left = `${st.x}px`;
+      panel.style.top = `${st.y}px`;
+      panel.style.width = `${st.w}px`;
+      panel.style.height = `${st.h}px`;
+      if (this.dom.timelineFloatBtn) {
+        const use = this.dom.timelineFloatBtn.querySelector('use');
+        if (use) use.setAttribute('href', '#i-dock');
+        this.dom.timelineFloatBtn.classList.add('active');
+        this.dom.timelineFloatBtn.title = '停靠时间轴';
+      }
+    } else {
+      panel.classList.remove('timeline-floating');
+      panel.style.left = '';
+      panel.style.top = '';
+      panel.style.width = '';
+      panel.style.height = '';
+      if (this._timelineHome && this._timelineHome.parent && panel.parentNode !== this._timelineHome.parent) {
+        this._timelineHome.parent.insertBefore(panel, this._timelineHome.next);
+      }
+      if (this.dom.timelineFloatBtn) {
+        const use = this.dom.timelineFloatBtn.querySelector('use');
+        if (use) use.setAttribute('href', '#i-window');
+        this.dom.timelineFloatBtn.classList.remove('active');
+        this.dom.timelineFloatBtn.title = '浮动时间轴';
+      }
+    }
+    requestAnimationFrame(() => this._renderTimeline());
+  }
+
+  _toggleTimelineFloat() {
+    this.timelineState.floating = !this.timelineState.floating;
+    this._applyTimelineLayout();
+    this._persist();
+  }
+
+  _bindTimelineFloat() {
+    const panel = this.dom.timelinePanel;
+    if (!panel) return;
+    this.dom.timelineFloatBtn.addEventListener('click', () => this._toggleTimelineFloat());
+
+    this.dom.timelineSplitter.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      const startX = e.clientX;
+      const startWidth = Number(this.timelineState.labelWidth) || 148;
+      const scale = this._panelViewport().scale || 1;
+      const maxWidth = Math.max(180, panel.clientWidth - 220);
+      const move = (ev) => {
+        this.timelineState.labelWidth = clamp(startWidth + (ev.clientX - startX) / scale, 110, Math.min(420, maxWidth));
+        this._applyTimelineLabelWidth();
+        this._renderTimeline();
+      };
+      const up = () => {
+        document.removeEventListener('pointermove', move);
+        document.removeEventListener('pointerup', up);
+        this.dom.timelineSplitter.classList.remove('dragging');
+        this._persist();
+      };
+      this.dom.timelineSplitter.classList.add('dragging');
+      document.addEventListener('pointermove', move);
+      document.addEventListener('pointerup', up);
+    });
+
+    const head = panel.querySelector('.timeline-head');
+    head.addEventListener('pointerdown', (e) => {
+      if (!this.timelineState.floating || e.target.closest('button, input, select, .mini-action')) return;
+      e.preventDefault();
+      const startX = e.clientX;
+      const startY = e.clientY;
+      const startLeft = Number(panel.style.left.replace('px', '')) || 0;
+      const startTop = Number(panel.style.top.replace('px', '')) || 0;
+      const scale = this._panelViewport().scale || 1;
+      const move = (ev) => {
+        const vp = this._panelViewport();
+        const left = clamp(startLeft + (ev.clientX - startX) / scale, 4, vp.w - panel.offsetWidth - 4);
+        const top = clamp(startTop + (ev.clientY - startY) / scale, 4, vp.h - panel.offsetHeight - 4);
+        this.timelineState.x = Math.round(left);
+        this.timelineState.y = Math.round(top);
+        panel.style.left = `${left}px`;
+        panel.style.top = `${top}px`;
+      };
+      const up = () => {
+        document.removeEventListener('pointermove', move);
+        document.removeEventListener('pointerup', up);
+        this._persist();
+      };
+      document.addEventListener('pointermove', move);
+      document.addEventListener('pointerup', up);
+    });
+
+    this.dom.stageTimelineSplitter?.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0 || this.timelineState.floating) return;
+      e.preventDefault();
+      const startY = e.clientY;
+      const startHeight = this.timelineState.height;
+      const scale = this._panelViewport().scale || 1;
+      const maxHeight = Math.max(90, (this.dom.timelinePanel.parentElement?.clientHeight || 900) - 150);
+      const move = (ev) => {
+        const h = clamp(startHeight - (ev.clientY - startY) / scale, 80, maxHeight);
+        this.timelineState.height = Math.round(h);
+        this.dom.timelinePanel.style.setProperty('--timeline-height', `${this.timelineState.height}px`);
+        this._renderTimeline();
+      };
+      const up = () => {
+        document.removeEventListener('pointermove', move);
+        document.removeEventListener('pointerup', up);
+        this.dom.stageTimelineSplitter.classList.remove('dragging');
+        this._persist();
+      };
+      this.dom.stageTimelineSplitter.classList.add('dragging');
+      document.addEventListener('pointermove', move);
+      document.addEventListener('pointerup', up);
+    });
+
+    this.dom.timelineResizer.addEventListener('pointerdown', (e) => {
+      if (!this.timelineState.floating) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const startX = e.clientX;
+      const startY = e.clientY;
+      const startW = panel.offsetWidth;
+      const startH = panel.offsetHeight;
+      const scale = this._panelViewport().scale || 1;
+      const move = (ev) => {
+        const vp = this._panelViewport();
+        const w = clamp(startW + (ev.clientX - startX) / scale, 500, vp.w - this.timelineState.x - 4);
+        const h = clamp(startH + (ev.clientY - startY) / scale, 210, vp.h - this.timelineState.y - 4);
+        this.timelineState.w = Math.round(w);
+        this.timelineState.h = Math.round(h);
+        panel.style.width = `${w}px`;
+        panel.style.height = `${h}px`;
+      };
+      const up = () => {
+        document.removeEventListener('pointermove', move);
+        document.removeEventListener('pointerup', up);
+        this._renderTimeline();
+        this._persist();
+      };
+      document.addEventListener('pointermove', move);
+      document.addEventListener('pointerup', up);
+    });
   }
 
   _applyTimelineOpen(open, { silent = false } = {}) {
     this.state.settings.timelineOpen = !!open;
     this.dom.timelinePanel?.classList.toggle('collapsed', !open);
     this.dom.timelineToggle?.classList.toggle('active', !!open);
+    if (open) requestAnimationFrame(() => this._renderTimeline());
     if (!silent) this._persist();
   }
 
@@ -1305,31 +1936,67 @@ class NeonScopeApp {
     const p = cue.params || {};
     if (cue.type === 'text' || cue.type === 'subtitle') return p.text || cue.value || cue.type;
     if (cue.type === 'mash') return p.title || cue.value || 'mash';
-    if (cue.type === 'color') return p.accent || 'color';
+    if (cue.type === 'color') return p.ink || p.accent || 'color';
     if (cue.type === 'effect') return p.effect || 'effect';
     if (cue.type === 'bpm') return `${p.bpm ?? cue.value ?? ''} BPM`;
+    if (cue.type === 'genre') return p.name || cue.value || 'genre';
+    if (cue.type === 'intro') return `blur ${p.blur ?? 0}`;
+    if (cue.type === 'batch') return p.batch || cue.value || 'call';
     return cue.value || cue.type;
   }
 
   _addTimelineCue() {
-    const time = this.audio.getTime() || 0;
-    const cue = {
-      id: uid('cue'), time, duration: 2, type: 'text', value: 'TEXT',
-      params: { text: 'TEXT', x: 0.5, y: 0.5, size: 26, align: 'center' },
-    };
-    this.state.animationCues.push(cue);
-    this.state.animationCues.sort((a, b) => a.time - b.time);
-    this._renderAnimationCues();
-    this._persist();
-    this._toast('已在播放头添加文字动作');
+    this._openActionBuilder('text');
   }
 
   _seekFromTimeline(clientX) {
     const rect = this.dom.timelineContent.getBoundingClientRect();
-    const t = clamp((clientX - rect.left) / Math.max(1, this._tlPps), 0, this._tlDuration);
+    // getBoundingClientRect is in screen pixels (UI scale included); _tlPps is
+    // in local CSS pixels. Use the rendered width so a click at 20s is 20s at
+    // every UI scale.
+    const ratio = clamp((clientX - rect.left) / Math.max(1, rect.width), 0, 1);
+    const raw = ratio * (this._tlDuration || 0);
+    const t = this._timelineSnap ? Math.round(raw * 10) / 10 : raw;
     this.audio.seek(t);
     this._updateTransport(t);
     this._syncTimelinePlayhead(t);
+  }
+
+  _selectedTimelineCue() {
+    return (this.state.animationCues || []).find((cue) => cue.id === this._tlSelectedId) || null;
+  }
+
+  _selectTimelineCue(id) {
+    this._tlSelectedId = id;
+    this._syncTimelineSelection();
+    this._renderTimeline();
+  }
+
+  _deleteSelectedTimelineCue() {
+    const cue = this._selectedTimelineCue();
+    if (!cue) return;
+    this.state.animationCues = this.state.animationCues.filter((item) => item.id !== cue.id);
+    this._tlSelectedId = null;
+    this._renderAnimationCues();
+    this._persist();
+  }
+
+  _syncTimelineSelection() {
+    if (!this.dom.timelineSelectionLabel) return;
+    const cue = this._selectedTimelineCue();
+    const has = !!cue;
+    for (const el of [this.dom.timelineSelStart, this.dom.timelineSelEnd, this.dom.timelineSelectionEdit, this.dom.timelineSelectionDelete]) {
+      if (el) el.disabled = !has;
+    }
+    if (!has) {
+      this.dom.timelineSelectionLabel.textContent = '未选择动作';
+      this.dom.timelineSelStart.value = '';
+      this.dom.timelineSelEnd.value = '';
+      return;
+    }
+    this.dom.timelineSelectionLabel.textContent = `${this._timelineLabel(cue)} · ${cue.type}`;
+    this.dom.timelineSelStart.value = Number(cue.time).toFixed(2);
+    this.dom.timelineSelEnd.value = Number(cue.time + cue.duration).toFixed(2);
   }
 
   _renderTimeline() {
@@ -1345,16 +2012,33 @@ class NeonScopeApp {
     const cues = this.state.animationCues.slice().sort((a, b) => a.time - b.time);
     const labels = [];
     const lanes = [];
-    const labelsMap = { text: 'TEXT', subtitle: 'SUB', mash: 'MASH', color: 'COLOR', effect: 'FX', bpm: 'BPM', flash: 'FLASH', tint: 'TINT', fade: 'FADE' };
+    const keyMarkers = [];
+    const labelsMap = { text: 'TEXT', subtitle: 'SUB', mash: 'MASH', color: 'COLOR', effect: 'FX', bpm: 'BPM', genre: 'GENRE', intro: 'INTRO', batch: 'CALL', flash: 'FLASH', tint: 'TINT', fade: 'FADE' };
     for (const cue of cues) {
       labels.push(`<div class="tl-row-label"><span class="tl-type">${labelsMap[cue.type] || cue.type.toUpperCase()}</span><span class="tl-value">${this._timelineLabel(cue)}</span></div>`);
+      const kfStart = cue.time * this._tlPps;
+      const kfEnd = (cue.time + cue.duration) * this._tlPps;
+      const kfSel = this._tlSelectedId === cue.id ? ' selected' : '';
+      keyMarkers.push(`<span class="tl-key-marker ${cue.type}${kfSel}" data-key-cue="${cue.id}" style="left:${kfStart}px" title="${formatCueTime(cue.time)} · start"></span>`);
+      keyMarkers.push(`<span class="tl-key-marker tl-key-marker-end ${cue.type}${kfSel}" data-key-cue="${cue.id}" style="left:${kfEnd}px" title="${formatCueTime(cue.time + cue.duration)} · end"></span>`);
+      for (const [prop, keys] of Object.entries(cue.keys || {})) {
+        if (!Array.isArray(keys)) continue;
+        for (const key of keys) {
+          if (key.t <= 0.01 || (cue.duration > 0 && key.t >= cue.duration - 0.01)) continue;
+          const x = (cue.time + key.t) * this._tlPps;
+          keyMarkers.push(`<span class="tl-key-marker tl-key-marker-auto ${cue.type}${kfSel}" data-key-cue="${cue.id}" style="left:${x}px" title="${formatCueTime(cue.time + key.t)} · ${prop}"></span>`);
+        }
+      }
       const left = cue.time * this._tlPps;
       const bw = Math.max(10, cue.duration * this._tlPps);
       lanes.push(`<div class="tl-row">
-        <div class="tl-bar ${cue.type}" data-cue-id="${cue.id}" style="left:${left}px;width:${bw}px" title="${formatCueTime(cue.time)} · ${cue.type}">
-          <span>${this._timelineLabel(cue)}</span>
+        <div class="tl-bar ${cue.type} ${this._tlSelectedId === cue.id ? 'selected' : ''}" data-cue-id="${cue.id}" style="left:${left}px;width:${bw}px" title="${formatCueTime(cue.time)} · ${cue.type}">
+          <span class="tl-keyframe" title="起始关键帧"></span>
+          <span class="tl-keyframe tl-keyframe-end" title="结束关键帧"></span>
+          <span class="tl-trim-left" title="拖动改变开始时间"></span>
+          <span class="tl-label">${this._timelineLabel(cue)}</span>
           <span class="tl-del" data-cue-id="${cue.id}" title="删除动作">×</span>
-          <span class="tl-resize" title="拖动改变时长"></span>
+          <span class="tl-resize" title="拖动改变结束时间"></span>
         </div>
       </div>`);
     }
@@ -1362,8 +2046,8 @@ class NeonScopeApp {
       labels.push('<div class="tl-row-label"><span class="tl-type">EMPTY</span></div>');
       lanes.push('<div class="tl-row"><div class="timeline-empty">还没有动画动作 · 点击「+ 动作」或导入动画脚本</div></div>');
     }
-    this.dom.timelineLabels.innerHTML = `<div style="height:22px"></div>${labels.join('')}`;
-    this.dom.timelineLanes.innerHTML = lanes.join('');
+    this.dom.timelineLabels.innerHTML = `<div style="height:22px"></div><div class="tl-row-label tl-key-label"><span class="tl-type">KEYS</span><span class="tl-value">${cues.length * 2} keyframes</span></div>${labels.join('')}`;
+    this.dom.timelineLanes.innerHTML = `<div class="tl-key-row">${keyMarkers.join('')}</div>${lanes.join('')}`;
     const ruler = [];
     const steps = [0.25, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300];
     const step = steps.find((s) => s * this._tlPps >= 54) || 600;
@@ -1372,7 +2056,60 @@ class NeonScopeApp {
       ruler.push(`<div class="tl-tick" style="left:${x}px"><span>${formatCueTime(t).slice(0, 6)}</span></div>`);
     }
     this.dom.timelineRuler.innerHTML = ruler.join('');
+    if (this._tlSelectedId && !this.state.animationCues.some((cue) => cue.id === this._tlSelectedId)) {
+      this._tlSelectedId = null;
+    }
+    this._syncTimelineSelection();
     this._syncTimelinePlayhead(this.audio.getTime() || 0);
+    this._renderKeyframeManager();
+  }
+
+  _renderKeyframeManager() {
+    if (!this.dom.keyframeList) return;
+    const cues = (this.state.animationCues || []).slice().sort((a, b) => a.time - b.time);
+    const total = Math.max(1, this.audio.duration || 36, ...cues.map((cue) => cue.time + cue.duration));
+    const totalKeys = cues.reduce((sum, cue) => {
+      const tracks = Object.values(cue.keys || {}).filter(Array.isArray);
+      return sum + (tracks.length ? tracks.reduce((n, keys) => n + keys.length, 0) : 2);
+    }, 0);
+    this.dom.keyframeCount.textContent = `${cues.length} 个动画 · ${totalKeys} 关键帧`;
+    if (!cues.length) {
+      this.dom.keyframeList.innerHTML = '<div class="kf-empty">总线为空。点击「新建动作」或在时间轴右键添加动画。</div>';
+      return;
+    }
+    const labels = { bpm: 'BPM', color: 'COLOR', genre: 'GENRE', effect: 'FX', intro: 'INTRO', text: 'TEXT', subtitle: 'SUB', mash: 'MASH', batch: 'CALL', flash: 'FLASH', tint: 'TINT', fade: 'FADE' };
+    this.dom.keyframeList.innerHTML = cues.map((cue, index) => {
+      const start = clamp(cue.time / total, 0, 1) * 100;
+      const width = Math.max(1, cue.duration / total * 100);
+      const extraKeys = [];
+      for (const keys of Object.values(cue.keys || {})) {
+        if (!Array.isArray(keys)) continue;
+        for (const key of keys) {
+          if (key.t <= 0.01 || (cue.duration > 0 && key.t >= cue.duration - 0.01)) continue;
+          extraKeys.push(`<span class="kf-key kf-key-auto" style="left:${clamp((cue.time + key.t) / total, 0, 1) * 100}%"></span>`);
+        }
+      }
+      return `<div class="kf-item ${this._tlSelectedId === cue.id ? 'selected' : ''}" data-kf-id="${cue.id}">
+        <span class="kf-no">${String(index + 1).padStart(2, '0')}</span>
+        <span class="kf-kind ${cue.type}">${labels[cue.type] || cue.type}</span>
+        <div class="kf-main">
+          <div class="kf-title">${String(this._timelineLabel(cue)).replace(/[<>&]/g, (ch) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[ch]))}</div>
+          <div class="kf-track" title="${formatCueTime(cue.time)} → ${formatCueTime(cue.time + cue.duration)}">
+            <span class="kf-fill" style="left:${start}%;width:${width}%"></span>
+            <span class="kf-key" style="left:${start}%"></span>
+            <span class="kf-key kf-key-end" style="left:${clamp(start + width, 0, 100)}%"></span>
+            ${extraKeys.join('')}
+          </div>
+        </div>
+        <span class="kf-time">${formatCueTime(cue.time).slice(0, 6)}</span>
+        <div class="kf-actions">
+          <button data-kf-action="locate" title="定位">◎</button>
+          <button data-kf-action="keys" title="关键帧曲线">∿</button>
+          <button data-kf-action="edit" title="编辑动作">✎</button>
+          <button data-kf-action="delete" title="删除">×</button>
+        </div>
+      </div>`;
+    }).join('');
   }
 
   _syncTimelinePlayhead(t) {
@@ -1447,6 +2184,7 @@ class NeonScopeApp {
         keybinds: this.keybinds,
         panelState: this.panelState,
         subpanelState: this.subpanelState,
+        timelineState: this.timelineState,
         info: this.state.info,
         animationCues: this.state.animationCues,
         exportSettings: this.exportSettings,
@@ -1518,7 +2256,8 @@ class NeonScopeApp {
   _bindInfoAnimationUI() {
     const fields = [
       ['title', this.dom.infoTitle], ['artist', this.dom.infoArtist],
-      ['album', this.dom.infoAlbum], ['genre', this.dom.infoGenre], ['bpm', this.dom.infoBpm],
+      ['composer', this.dom.infoComposer], ['album', this.dom.infoAlbum],
+      ['genre', this.dom.infoGenre], ['bpm', this.dom.infoBpm], ['trackNo', this.dom.infoTrackNo],
     ];
     for (const [key, el] of fields) {
       el.addEventListener('input', () => {
@@ -1536,7 +2275,7 @@ class NeonScopeApp {
       this.dom.infoCoverFile.value = '';
       if (file) this._loadInfoCover(file);
     });
-    this.dom.animAddBtn.addEventListener('click', () => this._addAnimationCue());
+    this.dom.animOpenBuilder.addEventListener('click', () => this._openActionBuilder('effect'));
     this.dom.animClearBtn.addEventListener('click', () => {
       this.state.animationCues = [];
       this._renderAnimationCues();
@@ -1549,8 +2288,387 @@ class NeonScopeApp {
       this._renderAnimationCues();
       this._persist();
     });
+    this.dom.actionBuilderType.addEventListener('change', () => {
+      this._renderActionBuilderFields();
+      this._captureActionBuilderSnapshot();
+    });
+    this.dom.actionBuilderTime.addEventListener('input', () => this._updateActionBuilderPreview());
+    this.dom.actionBuilderFields.addEventListener('input', () => this._updateActionBuilderPreview());
+    this.dom.actionBuilderFields.addEventListener('change', () => this._updateActionBuilderPreview());
+    this.dom.actionBuilderFields.addEventListener('click', (e) => {
+      const pageBtn = e.target.closest('[data-action-page-btn]');
+      if (pageBtn) {
+        this._setActionBuilderPage(pageBtn.dataset.actionPageBtn);
+        return;
+      }
+      if (e.target.closest('[data-action-reset]')) {
+        this._resetActionBuilderFields();
+        return;
+      }
+      if (!e.target.closest('[data-action-use-colors]')) return;
+      const palette = this._resolveThemeColors();
+      const colors = {
+        bg: palette.bg,
+        primary: palette.window,
+        accent: palette.text,
+        ink: palette.chart,
+        chartFollow: this.state.settings.themeChartFollow || 'custom',
+      };
+      for (const [slot, value] of Object.entries(colors)) {
+        const el = this.dom.actionBuilderFields.querySelector(`[data-action-field="${slot}"]`);
+        if (el) el.value = value;
+      }
+      this._updateActionBuilderPreview();
+    });
+    this.dom.actionBuilderInsert.addEventListener('click', () => this._insertActionFromBuilder());
+    this.dom.actionBuilderModal.addEventListener('click', (e) => {
+      if (e.target === this.dom.actionBuilderModal || e.target.closest('[data-action-builder-cancel]')) {
+        this._closeActionBuilder();
+      }
+    });
+    this.dom.keyframeAddBtn.addEventListener('click', () => this._openActionBuilder('effect'));
+    this.dom.keyframeList.addEventListener('click', (e) => {
+      const action = e.target.closest('[data-kf-action]');
+      const row = e.target.closest('[data-kf-id]');
+      if (!row) return;
+      const cue = this.state.animationCues.find((item) => item.id === row.dataset.kfId);
+      if (!cue) return;
+      this._selectTimelineCue(cue.id);
+      if (!action) return;
+      const kind = action.dataset.kfAction;
+      if (kind === 'locate') {
+        this.audio.seek(cue.time);
+        this._updateTransport(cue.time);
+        this._syncTimelinePlayhead(cue.time);
+      } else if (kind === 'keys') {
+        this._openKeyframeEditor(cue);
+      } else if (kind === 'edit') {
+        this._openActionBuilder(cue.type, cue);
+      } else if (kind === 'delete') {
+        this.state.animationCues = this.state.animationCues.filter((item) => item.id !== cue.id);
+        this._renderAnimationCues();
+        this._persist();
+      }
+    });
+    this.dom.keyframeList.addEventListener('dblclick', (e) => {
+      const row = e.target.closest('[data-kf-id]');
+      if (!row) return;
+      const cue = this.state.animationCues.find((item) => item.id === row.dataset.kfId);
+      if (cue) this._openActionBuilder(cue.type, cue);
+    });
+    this._bindKeyframeEditor();
+    this._bindConfirmUI();
+    this._bindAboutUI();
     this._syncInfoPanel();
     this._renderAnimationCues();
+  }
+
+  _bindKeyframeEditor() {
+    this.dom.keyframePropSelect.addEventListener('change', () => {
+      this._kfProp = this.dom.keyframePropSelect.value;
+      this._kfSelectedKey = 0;
+      this._ensureAutomation();
+      this._renderKeyframeEditor();
+    });
+    this.dom.keyframeEditorAdd.addEventListener('click', () => this._addAutomationKey());
+    this.dom.keyframeEditorDelete.addEventListener('click', () => this._deleteAutomationKey());
+    this.dom.keyframeKeyList.addEventListener('change', (e) => this._onAutomationListChange(e));
+    this.dom.keyframeKeyList.addEventListener('click', (e) => {
+      const del = e.target.closest('[data-kf-delete]');
+      if (del) {
+        e.preventDefault();
+        e.stopPropagation();
+        this._kfSelectedKey = Number(del.dataset.kfDelete);
+        this._deleteAutomationKey();
+        return;
+      }
+      const row = e.target.closest('[data-kf-row]');
+      if (row) {
+        this._kfSelectedKey = Number(row.dataset.kfRow);
+        this._renderKeyframeEditor();
+      }
+    });
+    this.dom.keyframeEditorModal.addEventListener('click', (e) => {
+      if (e.target === this.dom.keyframeEditorModal || e.target.closest('[data-keyframe-editor-close]')) {
+        this._closeModal('keyframeEditor');
+      }
+    });
+    this.dom.keyframeGraph.addEventListener('pointerdown', (e) => this._onAutomationGraphPointer(e));
+    this.dom.keyframeGraph.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      const point = e.target.closest('[data-kf-point]');
+      if (!point) return;
+      this._kfSelectedKey = Number(point.dataset.kfPoint);
+      this._renderKeyframeEditor();
+      this._openKeyframeMenu(e);
+    });
+    this.dom.keyframeMenu.addEventListener('pointerdown', (e) => e.stopPropagation());
+    this.dom.keyframeMenu.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-keyframe-menu]');
+      if (!btn) return;
+      const action = btn.dataset.keyframeMenu;
+      this._closeKeyframeMenu();
+      if (action === 'delete') this._deleteAutomationKey();
+    });
+    document.addEventListener('pointerdown', (e) => {
+      if (!e.target.closest('#keyframeMenu')) this._closeKeyframeMenu();
+    });
+    document.addEventListener('keydown', (e) => {
+      if (this._activeModal !== 'keyframeEditor') return;
+      if (this._isTypingTarget(e.target)) return;
+      if (e.key === 'Delete' || e.code === 'NumpadDecimal' || e.code === 'Delete') {
+        e.preventDefault();
+        e.stopPropagation();
+        this._deleteAutomationKey();
+      }
+    });
+  }
+
+  _openKeyframeMenu(e) {
+    const vp = this._panelViewport();
+    this.dom.keyframeMenu.classList.remove('hidden');
+    const mw = this.dom.keyframeMenu.offsetWidth || 180;
+    const mh = this.dom.keyframeMenu.offsetHeight || 64;
+    this.dom.keyframeMenu.style.left = `${clamp(e.clientX / vp.scale, 8, vp.w - mw - 8)}px`;
+    this.dom.keyframeMenu.style.top = `${clamp(e.clientY / vp.scale, 8, vp.h - mh - 8)}px`;
+  }
+
+  _closeKeyframeMenu() {
+    this.dom.keyframeMenu?.classList.add('hidden');
+  }
+
+  _automationCue() {
+    return this.state.animationCues.find((cue) => cue.id === this._kfCueId) || null;
+  }
+
+  _automationSpan(cue) {
+    const maxKey = Object.values(cue.keys || {}).flat().reduce((max, key) => Math.max(max, Number(key.t) || 0), 0);
+    return Math.max(0.1, cue.duration > 0 ? cue.duration : Math.max(5, this.audio.duration || 36, maxKey + 1));
+  }
+
+  _automationSpec(cue, prop) {
+    return (AUTOMATION_PROPERTIES[cue.type] || { opacity: { label: '不透明度', min: 0, max: 1, step: 0.01, kind: 'number' } })[prop];
+  }
+
+  _automationBase(cue, prop, spec) {
+    const p = cue.params || {};
+    if (prop === 'opacity') return 1;
+    if (prop === 'x') return p.x ?? 0;
+    if (prop === 'y') return p.y ?? (cue.type === 'subtitle' ? 360 : 0);
+    if (prop === 'size') return p.size ?? (cue.type === 'subtitle' ? 15 : 26);
+    if (prop === 'amount') return p.amount ?? 35;
+    if (prop === 'blur') return p.blur ?? 35;
+    if (prop === 'bpm') return p.bpm ?? (Number(cue.value) || 120);
+    if (spec.kind === 'color') {
+      return p[prop] || (prop === 'accent' ? this.state.settings.accent : prop === 'bg' ? this.state.settings.bgColor : '#0F1C4A');
+    }
+    return 0;
+  }
+
+  _ensureAutomation() {
+    const cue = this._automationCue();
+    const prop = this._kfProp;
+    if (!cue || !prop) return null;
+    cue.keys = cue.keys && typeof cue.keys === 'object' ? cue.keys : {};
+    const spec = this._automationSpec(cue, prop);
+    if (!spec) return null;
+    if (!Array.isArray(cue.keys[prop])) {
+      const base = this._automationBase(cue, prop, spec);
+      const span = this._automationSpan(cue);
+      cue.keys[prop] = [{ t: 0, v: base }, { t: span, v: base }];
+    }
+    cue.keys[prop].sort((a, b) => a.t - b.t);
+    return cue.keys[prop];
+  }
+
+  _openKeyframeEditor(cue, prop = null) {
+    if (!cue) return;
+    this._kfCueId = cue.id;
+    const props = AUTOMATION_PROPERTIES[cue.type] || { opacity: { label: '不透明度', min: 0, max: 1, step: 0.01, kind: 'number' } };
+    this.dom.keyframePropSelect.innerHTML = Object.entries(props)
+      .map(([key, spec]) => `<option value="${key}">${spec.label}</option>`).join('');
+    this._kfProp = prop && props[prop] ? prop : Object.keys(props)[0];
+    this.dom.keyframePropSelect.value = this._kfProp;
+    this._kfSelectedKey = 0;
+    this._ensureAutomation();
+    this._openModal('keyframeEditor');
+    this._renderKeyframeEditor();
+  }
+
+  _renderKeyframeEditor() {
+    const cue = this._automationCue();
+    if (!cue) return;
+    const keys = this._ensureAutomation();
+    const spec = this._automationSpec(cue, this._kfProp);
+    if (!keys || !spec) return;
+    const span = this._automationSpan(cue);
+    this.dom.keyframeEditorTitle.textContent = `关键帧编辑器 · ${this._timelineLabel(cue)}`;
+    this.dom.keyframeEditorCue.textContent = `${cue.type.toUpperCase()} · ${formatCueTime(cue.time)}`;
+    this.dom.keyframeEditorRange.textContent = `${spec.label} · 0–${formatCueTime(span).slice(0, 6)}`;
+    this.dom.keyframeEditorHint.textContent = spec.kind === 'color'
+      ? '颜色关键帧会按时间自动插值。单击曲线轨道添加关键帧，拖动圆点调整时间。'
+      : '单击曲线添加关键帧，拖动圆点调整时间和数值；数值会在关键帧之间自动插值。';
+    this._renderAutomationGraph(cue, keys, spec, span);
+    const selected = clamp(Number(this._kfSelectedKey) || 0, 0, Math.max(0, keys.length - 1));
+    this._kfSelectedKey = selected;
+    this.dom.keyframeKeyList.innerHTML = keys.map((key, index) => `
+      <div class="kf-key-row ${index === selected ? 'selected' : ''}" data-kf-row="${index}">
+        <span class="kf-key-no">${index + 1}</span>
+        <input data-kf-field="time" type="number" min="0" step="0.01" value="${Number(key.t).toFixed(2)}" title="时间 s" />
+        ${spec.kind === 'color'
+          ? `<input data-kf-field="value" type="color" value="${/^#[0-9a-fA-F]{6}$/.test(key.v) ? key.v : '#ff4f8b'}" />`
+          : `<input data-kf-field="value" type="number" min="${spec.min ?? ''}" max="${spec.max ?? ''}" step="${spec.step ?? 'any'}" value="${Number(key.v).toFixed(3)}" />`}
+        <button data-kf-delete="${index}" title="删除关键帧">×</button>
+      </div>`).join('');
+  }
+
+  _renderAutomationGraph(cue, keys, spec, span) {
+    const W = 720, H = 300, L = 44, R = 12, T = 16, B = 26;
+    const plotW = W - L - R;
+    const plotH = H - T - B;
+    const kind = spec.kind;
+    const min = kind === 'color' ? 0 : spec.min ?? 0;
+    const max = kind === 'color' ? 1 : spec.max ?? 1;
+    const xFor = (t) => L + clamp(t / span, 0, 1) * plotW;
+    const yFor = (v) => kind === 'color' ? T + plotH / 2 : T + (1 - clamp((v - min) / Math.max(0.0001, max - min), 0, 1)) * plotH;
+    const grid = [];
+    for (let i = 0; i <= 4; i += 1) {
+      const y = T + (plotH / 4) * i;
+      grid.push(`<line class="kf-grid-line ${i === 0 || i === 4 ? 'major' : ''}" x1="${L}" y1="${y}" x2="${W - R}" y2="${y}"/>`);
+      if (kind !== 'color') {
+        const value = max - ((max - min) / 4) * i;
+        grid.push(`<text class="kf-axis-label" x="4" y="${y + 3}">${Number(value).toFixed(value < 10 ? 2 : 0)}</text>`);
+      }
+    }
+    for (let i = 0; i <= 6; i += 1) {
+      const x = L + (plotW / 6) * i;
+      grid.push(`<line class="kf-grid-line" x1="${x}" y1="${T}" x2="${x}" y2="${H - B}"/>`);
+      const tickTime = span * i / 6;
+      const tickLabel = span <= 10 ? `${tickTime.toFixed(1)}s` : formatCueTime(tickTime).slice(0, 6);
+      grid.push(`<text class="kf-axis-label" x="${x}" y="${H - 8}" text-anchor="middle">${tickLabel}</text>`);
+    }
+    let curve = '';
+    if (kind === 'color') {
+      const stops = keys.map((key) => `<stop offset="${clamp(key.t / span, 0, 1) * 100}%" stop-color="${/^#[0-9a-fA-F]{6}$/.test(key.v) ? key.v : '#ff4f8b'}"/>`).join('');
+      curve = `<defs><linearGradient id="kfColorGradient">${stops}</linearGradient></defs>
+        <rect class="kf-color-track" x="${L}" y="${T + plotH / 2 - 10}" width="${plotW}" height="20" fill="url(#kfColorGradient)" stroke="rgba(255,255,255,.2)"/>`;
+    } else {
+      const points = keys.map((key) => `${xFor(key.t).toFixed(1)},${yFor(Number(key.v) || 0).toFixed(1)}`).join(' ');
+      curve = `<polyline class="kf-curve" points="${points}"/>`;
+    }
+    const circles = keys.map((key, index) => `<circle class="kf-curve-point ${index === this._kfSelectedKey ? 'selected' : ''}" data-kf-point="${index}" cx="${xFor(key.t)}" cy="${yFor(Number(key.v) || 0)}" r="6"/>`).join('');
+    const rel = clamp(this.audio.getTime() - cue.time, 0, span);
+    const playhead = cue.duration > 0 ? `<line class="kf-playhead" x1="${xFor(rel)}" y1="${T}" x2="${xFor(rel)}" y2="${H - B}"/>` : '';
+    this.dom.keyframeGraph.innerHTML = `${grid.join('')}${curve}${playhead}${circles}`;
+  }
+
+  _automationPointFromEvent(e) {
+    const cue = this._automationCue();
+    const keys = this._ensureAutomation();
+    const spec = this._automationSpec(cue, this._kfProp);
+    if (!cue || !keys || !spec) return null;
+    const W = 720, H = 300, L = 44, R = 12, T = 16, B = 26;
+    const plotW = W - L - R, plotH = H - T - B;
+    const rect = this.dom.keyframeGraph.getBoundingClientRect();
+    const x = (e.clientX - rect.left) / rect.width * W;
+    const y = (e.clientY - rect.top) / rect.height * H;
+    const span = this._automationSpan(cue);
+    const t = clamp((x - L) / plotW, 0, 1) * span;
+    const min = spec.kind === 'color' ? 0 : spec.min ?? 0;
+    const max = spec.kind === 'color' ? 1 : spec.max ?? 1;
+    const value = spec.kind === 'color' ? null : clamp(min + (1 - (y - T) / plotH) * (max - min), min, max);
+    return { t, value, keys, spec, span };
+  }
+
+  _onAutomationGraphPointer(e) {
+    if (e.button !== 0) return;
+    const cue = this._automationCue();
+    const data = this._automationPointFromEvent(e);
+    if (!cue || !data) return;
+    const point = e.target.closest('[data-kf-point]');
+    let index;
+    if (point) {
+      index = Number(point.dataset.kfPoint);
+    } else {
+      const keys = data.keys;
+      const kind = data.spec.kind;
+      const value = kind === 'color'
+        ? automationValueAt(keys, data.t, this._automationBase(cue, this._kfProp, data.spec), 'color')
+        : data.value;
+      const existing = keys.findIndex((key) => Math.abs(key.t - data.t) < 0.02);
+      const entry = { t: Math.round(data.t * 100) / 100, v: value };
+      if (existing >= 0) keys[existing] = entry; else keys.push(entry);
+      keys.sort((a, b) => a.t - b.t);
+      index = keys.findIndex((key) => Math.abs(key.t - entry.t) < 0.001);
+    }
+    this._kfSelectedKey = index;
+    const snap = (v) => Math.round(v * 100) / 100;
+    const move = (ev) => {
+      const next = this._automationPointFromEvent(ev);
+      if (!next) return;
+      const key = data.keys[index];
+      if (!key) return;
+      key.t = snap(clamp(next.t, 0, next.span));
+      if (data.spec.kind !== 'color') key.v = next.value;
+      data.keys.sort((a, b) => a.t - b.t);
+      this._kfSelectedKey = data.keys.indexOf(key);
+      this._renderKeyframeEditor();
+      this._renderTimeline();
+    };
+    const up = () => {
+      document.removeEventListener('pointermove', move);
+      document.removeEventListener('pointerup', up);
+      this._persist();
+    };
+    document.addEventListener('pointermove', move);
+    document.addEventListener('pointerup', up);
+    this._renderKeyframeEditor();
+  }
+
+  _addAutomationKey() {
+    const cue = this._automationCue();
+    const keys = this._ensureAutomation();
+    if (!cue || !keys) return;
+    const spec = this._automationSpec(cue, this._kfProp);
+    const span = this._automationSpan(cue);
+    const t = Math.round(clamp(this.audio.getTime() - cue.time, 0, span) * 100) / 100;
+    const value = automationValueAt(keys, t, this._automationBase(cue, this._kfProp, spec), spec.kind);
+    const existing = keys.findIndex((key) => Math.abs(key.t - t) < 0.02);
+    if (existing >= 0) keys[existing].v = value;
+    else keys.push({ t, v: value });
+    keys.sort((a, b) => a.t - b.t);
+    this._kfSelectedKey = keys.findIndex((key) => Math.abs(key.t - t) < 0.02);
+    this._renderKeyframeEditor();
+    this._renderTimeline();
+    this._persist();
+  }
+
+  _deleteAutomationKey() {
+    const keys = this._ensureAutomation();
+    if (!keys || !keys.length) return;
+    keys.splice(clamp(Number(this._kfSelectedKey) || 0, 0, keys.length - 1), 1);
+    this._kfSelectedKey = Math.max(0, Math.min(this._kfSelectedKey, keys.length - 1));
+    this._renderKeyframeEditor();
+    this._renderTimeline();
+    this._persist();
+  }
+
+  _onAutomationListChange(e) {
+    const row = e.target.closest('[data-kf-row]');
+    if (!row) return;
+    const keys = this._ensureAutomation();
+    if (!keys) return;
+    const cue = this._automationCue();
+    const spec = this._automationSpec(cue, this._kfProp);
+    const index = clamp(Number(row.dataset.kfRow), 0, keys.length - 1);
+    const field = e.target.dataset.kfField;
+    if (field === 'time') keys[index].t = clamp(Number(e.target.value) || 0, 0, this._automationSpan(cue));
+    if (field === 'value') keys[index].v = spec.kind === 'color' ? e.target.value : (Number(e.target.value) || 0);
+    keys.sort((a, b) => a.t - b.t);
+    this._kfSelectedKey = Math.min(index, keys.length - 1);
+    this._renderKeyframeEditor();
+    this._renderTimeline();
+    this._persist();
   }
 
   _loadInfoCover(file) {
@@ -1580,9 +2698,11 @@ class NeonScopeApp {
     const info = this.state.info;
     this.dom.infoTitle.value = info.title || '';
     this.dom.infoArtist.value = info.artist || '';
+    this.dom.infoComposer.value = info.composer || '';
     this.dom.infoAlbum.value = info.album || '';
     this.dom.infoGenre.value = info.genre || '';
     this.dom.infoBpm.value = info.bpm || '';
+    this.dom.infoTrackNo.value = info.trackNo || '';
     this.dom.infoOverlay.checked = !!info.show;
     if (info.cover) {
       this.dom.infoCoverPreview.innerHTML = `<img alt="cover" src="${info.cover}">`;
@@ -1591,42 +2711,371 @@ class NeonScopeApp {
     }
   }
 
-  _addAnimationCue() {
-    const time = clamp(Number(this.dom.animTime.value) || this.audio.getTime() || 0, 0, 36000);
-    const duration = clamp(Number(this.dom.animDuration.value) || 1, 0.1, 60);
-    const type = this.dom.animType.value;
-    let value = this.dom.animValue.value.trim();
-    if ((type === 'text' || type === 'subtitle') && !value) value = type === 'subtitle' ? 'NEON//SCOPE' : 'TITLE';
-    if (type === 'tint' && !/^#[0-9a-fA-F]{6}$/.test(value)) value = this.state.settings.accent;
-    const params = {};
-    if (type === 'text' || type === 'subtitle') {
-      params.text = value;
-      params.x = 0.5;
-      params.y = type === 'subtitle' ? 0.88 : 0.5;
-      params.size = 26;
-      params.align = 'center';
+  _actionArg(value) {
+    const raw = String(value ?? '').trim().replace(/\r\n?/g, '\n');
+    if (!raw) return '""';
+    if (/^[^\s"']+$/.test(raw)) return raw;
+    return `"${raw.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n')}"`;
+  }
+
+  _openActionBuilder(type = 'effect', cue = null, atTime = null) {
+    if (!this.dom.actionBuilderModal) return;
+    if (cue && !['bpm', 'color', 'genre', 'effect', 'intro', 'text', 'subtitle', 'mash', 'batch'].includes(cue.type)) {
+      this._toast('该旧动作请在动画脚本区直接编辑', 'info');
+      return;
     }
-    this.state.animationCues.push({ id: uid('cue'), time, duration, type, value, params });
+    this._editingCueId = cue?.id || null;
+    if (this.dom.actionBuilderTitle) this.dom.actionBuilderTitle.textContent = cue ? '编辑动作' : '添加动作';
+    if (this.dom.actionBuilderInsert) this.dom.actionBuilderInsert.textContent = cue ? '更新动作' : '插入动作';
+    this.dom.actionBuilderType.value = type;
+    const time = cue ? cue.time : (Number.isFinite(atTime) ? atTime : this.audio.getTime() || 0);
+    this.dom.actionBuilderTime.value = formatCueTime(time);
+    this._renderActionBuilderFields();
+    if (cue) this._fillActionBuilderFromCue(cue);
+    this._captureActionBuilderSnapshot();
+    this._openModal('action');
+    requestAnimationFrame(() => {
+      this.dom.actionBuilderTime.focus();
+      this.dom.actionBuilderTime.select();
+    });
+  }
+
+  _fillActionBuilderFromCue(cue) {
+    const p = cue.params || {};
+    const set = (name, value) => {
+      const el = this.dom.actionBuilderFields.querySelector(`[data-action-field="${name}"]`);
+      if (el && value !== undefined && value !== null) el.value = String(value);
+    };
+    if (cue.type === 'bpm') set('bpm', p.bpm ?? cue.value);
+    if (cue.type === 'color') {
+      for (const slot of ['bg', 'primary', 'accent', 'ink']) set(slot, p[slot]);
+      set('chartFollow', p.chartFollow || 'custom');
+      set('duration', cue.duration);
+      set('fadeIn', p.fadeIn ?? 0.35);
+      set('fadeOut', p.fadeOut ?? 0.35);
+    }
+    if (cue.type === 'genre') set('genre', p.name || cue.value);
+    if (cue.type === 'effect') {
+      set('effect', p.effect || 'blur');
+      set('duration', cue.duration);
+      set('amount', p.amount ?? 35);
+    }
+    if (cue.type === 'intro') {
+      set('duration', cue.duration);
+      set('blur', p.blur ?? 35);
+    }
+    if (cue.type === 'text' || cue.type === 'subtitle') {
+      set('text', p.text || cue.value);
+      set('duration', cue.duration);
+      set('x', p.x ?? 0);
+      set('y', p.y ?? (cue.type === 'subtitle' ? 360 : 0));
+      set('size', p.size ?? (cue.type === 'subtitle' ? 26 : 86));
+      set('fadeIn', p.fadeIn ?? 0.35);
+      set('fadeOut', p.fadeOut ?? 0.35);
+      set('lineGap', p.lineGap ?? 8);
+      set('scaleX', p.scaleX ?? 100);
+      set('scaleY', p.scaleY ?? 100);
+      set('role', p.role || 'main');
+    }
+    if (cue.type === 'mash') {
+      set('title', p.title || cue.value);
+      set('author', p.author || 'Artist');
+      set('origin', p.origin || 'Origin');
+      set('hold', cue.duration);
+      set('x', p.x ?? 0);
+      set('y', p.y ?? 0);
+      set('scaleX', p.scaleX ?? 100);
+      set('scaleY', p.scaleY ?? 100);
+    }
+    if (cue.type === 'batch') {
+      set('batch', p.batch || cue.value);
+      set('split', p.split ? 'true' : 'false');
+      set('role', p.role || 'main');
+      set('x', p.x ?? 0.5);
+      set('y', p.y ?? 0.95);
+    }
+    this._updateActionBuilderPreview();
+  }
+
+  _closeActionBuilder() {
+    this._editingCueId = null;
+    this._closeModal('action');
+  }
+
+  _actionField(name, label, { type = 'text', value = '', placeholder = '', wide = false, min = '', max = '', step = '' } = {}) {
+    return `<label class="action-builder-field ${wide ? 'action-builder-wide' : ''}"><span>${label}</span>
+      <input data-action-field="${name}" type="${type}" value="${String(value).replace(/"/g, '&quot;')}" placeholder="${placeholder}" ${min !== '' ? `min="${min}"` : ''} ${max !== '' ? `max="${max}"` : ''} ${step !== '' ? `step="${step}"` : ''} />
+    </label>`;
+  }
+
+  _actionTextarea(name, label, value, { rows = 3, wide = true } = {}) {
+    const text = String(value ?? '').replace(/[&<>]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[ch]));
+    return `<label class="action-builder-field ${wide ? 'action-builder-wide' : ''}"><span>${label}</span>
+      <textarea data-action-field="${name}" rows="${rows}" spellcheck="false">${text}</textarea>
+    </label>`;
+  }
+
+  _actionSelect(name, label, options, value, { wide = false } = {}) {
+    const html = options.map((opt) => {
+      const [val, text] = Array.isArray(opt) ? opt : [opt, opt];
+      return `<option value="${val}" ${String(val) === String(value) ? 'selected' : ''}>${text}</option>`;
+    }).join('');
+    return `<label class="action-builder-field ${wide ? 'action-builder-wide' : ''}"><span>${label}</span>
+      <select data-action-field="${name}">${html}</select>
+    </label>`;
+  }
+
+  _captureActionBuilderSnapshot() {
+    this._actionBuilderSnapshot = {};
+    for (const el of this.dom.actionBuilderFields.querySelectorAll('[data-action-field]')) {
+      this._actionBuilderSnapshot[el.dataset.actionField] = el.value;
+    }
+  }
+
+  _setActionBuilderPage(page) {
+    const pages = [...this.dom.actionBuilderFields.querySelectorAll('[data-action-page-index]')];
+    if (!pages.length) return;
+    const max = pages.length;
+    const next = page === 'prev' ? Math.max(1, (this._actionBuilderPage || 1) - 1)
+      : page === 'next' ? Math.min(max, (this._actionBuilderPage || 1) + 1)
+        : clamp(Number(page) || 1, 1, max);
+    this._actionBuilderPage = next;
+    for (const el of pages) {
+      el.classList.toggle('hidden', Number(el.dataset.actionPageIndex) !== next);
+    }
+    for (const btn of this.dom.actionBuilderFields.querySelectorAll('[data-action-page-btn]')) {
+      const value = btn.dataset.actionPageBtn;
+      btn.classList.toggle('active', value === String(next));
+    }
+  }
+
+  async _resetActionBuilderFields() {
+    if (!this._actionBuilderSnapshot) return;
+    const confirmed = await this._showConfirm('是否将所有参数恢复为设置前的状态');
+    if (!confirmed) return;
+    for (const el of this.dom.actionBuilderFields.querySelectorAll('[data-action-field]')) {
+      const value = this._actionBuilderSnapshot[el.dataset.actionField];
+      if (value !== undefined) el.value = value;
+    }
+    this._setActionBuilderPage(1);
+    this._updateActionBuilderPreview();
+  }
+
+  _renderActionBuilderFields() {
+    const type = this.dom.actionBuilderType.value || 'effect';
+    const d = this.dom.actionBuilderFields;
+    const palette = this._resolveThemeColors();
+    const colors = {
+      bg: palette.bg,
+      primary: palette.window,
+      accent: palette.text,
+      ink: palette.chart,
+      chartFollow: this.state.settings.themeChartFollow || 'custom',
+    };
+    let body = '';
+    if (type === 'bpm') {
+      body = this._actionField('bpm', 'BPM', { type: 'number', value: '180', min: 1, max: 999, step: '0.01', wide: true });
+    } else if (type === 'color') {
+      body = [
+        this._actionField('bg', '背景色', { value: colors.bg }),
+        this._actionField('primary', '窗口颜色', { value: colors.primary }),
+        this._actionField('accent', '字符颜色', { value: colors.accent }),
+        this._actionField('ink', '图表颜色', { value: colors.ink }),
+        this._actionSelect('chartFollow', '跟随颜色', [
+          ['custom', '自定义图表颜色'],
+          ['bg', '跟随背景色'],
+          ['primary', '跟随窗口颜色'],
+          ['accent', '跟随字符颜色'],
+        ], colors.chartFollow),
+        this._actionField('duration', '持续', { type: 'number', value: '0', min: 0, step: '0.1' }),
+        this._actionField('fadeIn', '颜色淡入', { type: 'number', value: '0.35', min: 0, step: 0.05 }),
+        this._actionField('fadeOut', '颜色淡出', { type: 'number', value: '0.35', min: 0, step: 0.05 }),
+        `<button class="mini-action action-builder-use-colors" data-action-use-colors type="button">使用当前 UI 配色</button>`,
+      ].join('');
+    } else if (type === 'genre') {
+      body = this._actionField('genre', 'Genre', { value: this.state.info.genre || 'Drum & Bass', wide: true });
+    } else if (type === 'effect') {
+      body = [
+        this._actionSelect('effect', '特效', ['blur', 'motion-blur', 'exposure', 'glow', 'shake-x', 'shake-y', 'shake-zoom'], 'blur'),
+        this._actionField('duration', '持续', { type: 'number', value: '1', min: 0.01, step: 'any' }),
+        this._actionField('amount', '强度', { type: 'number', value: '35', min: 0, max: 100, step: 1 }),
+        `<p class="action-builder-note">0–100；shake-* 的 duration 是单次摆动长度。</p>`,
+      ].join('');
+    } else if (type === 'intro') {
+      body = [
+        this._actionField('duration', '持续', { type: 'number', value: '5', min: 0.1, step: 0.1 }),
+        this._actionField('blur', 'Blur', { type: 'number', value: '35', min: 0, max: 100, step: 1 }),
+      ].join('');
+    } else if (type === 'text') {
+      body = [
+        this._actionField('text', '文字', { value: 'Text overlay', wide: true }),
+        this._actionField('duration', '持续', { type: 'number', value: '3', min: 0.1, step: 0.1 }),
+        this._actionField('x', 'X（绝对）', { type: 'number', value: '0', step: 1 }),
+        this._actionField('y', 'Y（绝对）', { type: 'number', value: '0', step: 1 }),
+        this._actionField('size', '大小', { type: 'number', value: '86', min: 12, step: 1 }),
+        this._actionField('fadeIn', '淡入', { type: 'number', value: '0.35', min: 0, step: 0.05 }),
+        this._actionField('fadeOut', '淡出', { type: 'number', value: '0.35', min: 0, step: 0.05 }),
+        `<p class="action-builder-note">X / Y 为绝对像素偏移，0 / 0 是画面正中心。</p>`,
+      ].join('');
+    } else if (type === 'subtitle') {
+      const page1 = [
+        this._actionTextarea('text', '字幕文字（可换行）', 'Subtitle line', { rows: 3 }),
+        this._actionField('duration', '持续', { type: 'number', value: '4', min: 0.1, step: 0.1 }),
+        this._actionField('size', '字号', { type: 'number', value: '26', min: 8, max: 200, step: 1 }),
+        this._actionField('x', 'X（绝对）', { type: 'number', value: '0', step: 1 }),
+        this._actionField('y', 'Y（绝对）', { type: 'number', value: '360', step: 1 }),
+        this._actionField('fadeIn', '淡入', { type: 'number', value: '0.35', min: 0, step: 0.05 }),
+        this._actionField('fadeOut', '淡出', { type: 'number', value: '0.35', min: 0, step: 0.05 }),
+        this._actionField('lineGap', '行间距', { type: 'number', value: '8', min: 0, step: 1 }),
+      ].join('');
+      const page2 = [
+        this._actionField('scaleX', '横向延展（%）', { type: 'number', value: '100', min: 20, max: 400, step: 1 }),
+        this._actionField('scaleY', '纵向延展（%）', { type: 'number', value: '100', min: 20, max: 400, step: 1 }),
+        this._actionSelect('role', '字幕角色', ['main', 'sub'], 'main'),
+        `<button class="mini-action action-builder-reset" data-action-reset type="button">恢复为原本设置</button>`,
+      ].join('');
+      body = `
+        <div class="action-builder-page" data-action-page-index="1">${page1}</div>
+        <div class="action-builder-page hidden" data-action-page-index="2">${page2}</div>
+        <div class="action-builder-pager">
+          <button type="button" data-action-page-btn="prev" title="上一页">&lt;</button>
+          <button type="button" data-action-page-btn="1" class="active">1</button>
+          <button type="button" data-action-page-btn="2">2</button>
+          <button type="button" data-action-page-btn="next" title="下一页">&gt;</button>
+        </div>`;
+    } else if (type === 'mash') {
+      const page1 = [
+        this._actionField('title', '标题', { value: 'Title', wide: true }),
+        this._actionField('author', '作者', { value: 'Artist' }),
+        this._actionField('origin', '来源', { value: 'Origin' }),
+        this._actionField('hold', '保留', { type: 'number', value: '3', min: 0.1, step: 0.1 }),
+        this._actionField('x', 'X（绝对）', { type: 'number', value: '0', step: 1 }),
+        this._actionField('y', 'Y（绝对）', { type: 'number', value: '0', step: 1 }),
+      ].join('');
+      const page2 = [
+        this._actionField('scaleX', '横向延展（%）', { type: 'number', value: '100', min: 20, max: 400, step: 1 }),
+        this._actionField('scaleY', '纵向延展（%）', { type: 'number', value: '100', min: 20, max: 400, step: 1 }),
+        `<button class="mini-action action-builder-reset" data-action-reset type="button">恢复为原本设置</button>`,
+      ].join('');
+      body = `
+        <div class="action-builder-page" data-action-page-index="1">${page1}</div>
+        <div class="action-builder-page hidden" data-action-page-index="2">${page2}</div>
+        <div class="action-builder-pager">
+          <button type="button" data-action-page-btn="prev" title="上一页">&lt;</button>
+          <button type="button" data-action-page-btn="1" class="active">1</button>
+          <button type="button" data-action-page-btn="2">2</button>
+          <button type="button" data-action-page-btn="next" title="下一页">&gt;</button>
+        </div>`;
+    } else if (type === 'batch') {
+      body = [
+        this._actionField('batch', '动作组名称', { value: 'batch-name', wide: true }),
+        this._actionSelect('split', '拆分子幕', ['false', 'true'], 'false'),
+        this._actionSelect('role', '字幕角色', ['main', 'sub'], 'main'),
+        this._actionField('x', 'X', { type: 'number', value: '0.5', step: 0.01 }),
+        this._actionField('y', 'Y', { type: 'number', value: '0.95', step: 0.01 }),
+        `<p class="action-builder-note">动作组需先在动画脚本中定义；这里生成 call 调用。</p>`,
+      ].join('');
+    }
+    d.innerHTML = body;
+    this._setActionBuilderPage(1);
+    this._updateActionBuilderPreview();
+  }
+
+  _actionFieldValue(name) {
+    return this.dom.actionBuilderFields.querySelector(`[data-action-field="${name}"]`)?.value.trim() || '';
+  }
+
+  _generateActionLine() {
+    const type = this.dom.actionBuilderType.value;
+    const time = this.dom.actionBuilderTime.value.trim() || formatCueTime(this.audio.getTime() || 0);
+    if (type === 'bpm') return `${time} bpm ${this._actionFieldValue('bpm') || '180'}`;
+    if (type === 'color') {
+      const slots = ['bg', 'primary', 'accent', 'ink']
+        .map((slot) => `${slot}=${this._actionFieldValue(slot)}`)
+        .filter((part) => !part.endsWith('='));
+      const follow = this._actionFieldValue('chartFollow') || 'custom';
+      return `${time} color ${slots.join(' ')} chartFollow=${follow} duration=${this._actionFieldValue('duration') || '0'} fadeIn=${this._actionFieldValue('fadeIn') || '0'} fadeOut=${this._actionFieldValue('fadeOut') || '0'}`.trim();
+    }
+    if (type === 'genre') return `${time} genre name=${this._actionArg(this._actionFieldValue('genre') || 'Genre')}`;
+    if (type === 'effect') {
+      const effect = this._actionFieldValue('effect') || 'blur';
+      const parts = [
+        `${time} effect ${effect}`,
+        `duration=${this._actionFieldValue('duration') || '1'}`,
+        `amount=${this._actionFieldValue('amount') || '35'}`,
+      ];
+      if (effect === 'glow') parts.push('colors=2,3');
+      return parts.join(' ');
+    }
+    if (type === 'intro') return `${time} intro duration=${this._actionFieldValue('duration') || '5'} blur=${this._actionFieldValue('blur') || '35'}`;
+    if (type === 'text') {
+      return `${time} text text=${this._actionArg(this._actionFieldValue('text') || 'Text overlay')} duration=${this._actionFieldValue('duration') || '3'} x=${this._actionFieldValue('x') || '0'} y=${this._actionFieldValue('y') || '0'} size=${this._actionFieldValue('size') || '86'} fadeIn=${this._actionFieldValue('fadeIn') || '0.35'} fadeOut=${this._actionFieldValue('fadeOut') || '0.35'}`;
+    }
+    if (type === 'subtitle') {
+      return `${time} subtitle text=${this._actionArg(this._actionFieldValue('text') || 'Subtitle')} duration=${this._actionFieldValue('duration') || '4'} x=${this._actionFieldValue('x') || '0'} y=${this._actionFieldValue('y') || '360'} size=${this._actionFieldValue('size') || '26'} fadeIn=${this._actionFieldValue('fadeIn') || '0.35'} fadeOut=${this._actionFieldValue('fadeOut') || '0.35'} lineGap=${this._actionFieldValue('lineGap') || '8'} scaleX=${this._actionFieldValue('scaleX') || '100'} scaleY=${this._actionFieldValue('scaleY') || '100'} role=${this._actionFieldValue('role') || 'main'}`;
+    }
+    if (type === 'mash') {
+      return `${time} mash title=${this._actionArg(this._actionFieldValue('title') || 'Title')} author=${this._actionArg(this._actionFieldValue('author') || 'Artist')} origin=${this._actionArg(this._actionFieldValue('origin') || 'Origin')} hold=${this._actionFieldValue('hold') || '3'} x=${this._actionFieldValue('x') || '0'} y=${this._actionFieldValue('y') || '0'} scaleX=${this._actionFieldValue('scaleX') || '100'} scaleY=${this._actionFieldValue('scaleY') || '100'}`;
+    }
+    if (type === 'batch') {
+      const split = this._actionFieldValue('split') || 'false';
+      const role = split === 'true' ? ` role=${this._actionFieldValue('role') || 'main'}` : '';
+      return `${time} call ${this._actionFieldValue('batch') || 'batch-name'} split=${split}${role} x=${this._actionFieldValue('x') || '0.5'} y=${this._actionFieldValue('y') || '0.95'}`;
+    }
+    return `${time} bpm 180`;
+  }
+
+  _updateActionBuilderPreview() {
+    if (this.dom.actionBuilderPreview) this.dom.actionBuilderPreview.textContent = this._generateActionLine();
+  }
+
+  _insertActionFromBuilder() {
+    const line = this._generateActionLine();
+    const cues = parseAnimationScript(line);
+    if (!cues.length) {
+      this._toast('动作参数不完整，无法生成', 'error');
+      return;
+    }
+    const editing = this._editingCueId ? this.state.animationCues.find((cue) => cue.id === this._editingCueId) : null;
+    if (editing) {
+      const replacement = cues[0];
+      replacement.id = editing.id;
+      replacement.keys = editing.keys || {};
+      const index = this.state.animationCues.indexOf(editing);
+      this.state.animationCues[index] = replacement;
+      this._tlSelectedId = replacement.id;
+      this._toast('动作已更新', 'success');
+    } else {
+      this.state.animationCues.push(...cues);
+      this._tlSelectedId = cues[0].id;
+      this._toast('动作已插入', 'success');
+    }
     this.state.animationCues.sort((a, b) => a.time - b.time);
     this._renderAnimationCues();
     this._persist();
+    this._closeActionBuilder();
   }
 
   _renderAnimationCues() {
     if (!this.dom.animCueList) return;
-    const labels = { flash: '闪白', text: '文字', subtitle: '字幕', tint: '染色', fade: '淡出', effect: '效果', mash: '标题卡', color: '调色', bpm: 'BPM' };
+    const labels = { flash: '闪白', text: '文字', subtitle: '字幕', tint: '染色', fade: '淡出', effect: '效果', mash: '标题卡', color: '调色', bpm: 'BPM', genre: '流派', intro: '开场', batch: '动作组' };
     const esc = (value) => String(value).replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
     const cues = this.state.animationCues || [];
     if (!cues.length) {
-      this.dom.animCueList.innerHTML = '<div class="anim-empty">还没有动作。输入时间码后点击「添加动作」。</div>';
+      this.dom.animCueList.innerHTML = '<div class="anim-empty">还没有动作。点击「添加动作」或右键时间轴创建。</div>';
+      this._renderTimeline();
+      this._renderKeyframeManager();
       return;
     }
     this.dom.animCueList.innerHTML = cues.map((cue) => {
       const p = cue.params || {};
       const detail = cue.type === 'mash' ? (p.title || cue.value)
-        : cue.type === 'color' ? `${p.accent || ''}`
+        : cue.type === 'color' ? `${p.ink || p.accent || ''}`
         : cue.type === 'effect' ? `${p.effect || 'blur'} ${p.amount ?? ''}`
         : cue.type === 'bpm' ? `${p.bpm ?? cue.value} BPM`
+        : cue.type === 'genre' ? (p.name || cue.value)
+        : cue.type === 'intro' ? `blur ${p.blur ?? 0}`
+        : cue.type === 'batch' ? (p.batch || cue.value)
         : (p.text || cue.value || '');
       return `
       <div class="anim-cue">
@@ -1640,6 +3089,7 @@ class NeonScopeApp {
       this.dom.animScript.value = serializeAnimationCues(cues);
     }
     this._renderTimeline();
+    this._renderKeyframeManager();
   }
 
   _panelElements() {
@@ -1734,7 +3184,7 @@ class NeonScopeApp {
         el.style.zIndex = '';
       }
       for (const btn of $$(`[data-panel-float="${id}"]`)) {
-        btn.title = floating ? '停靠面板' : '浮动面板';
+        btn.title = id === 'stage' ? '在桌面新建独立舞台窗口' : (floating ? '停靠面板' : '浮动面板');
         const use = btn.querySelector('use');
         if (use) use.setAttribute('href', floating ? '#i-dock' : '#i-window');
       }
@@ -1760,7 +3210,8 @@ class NeonScopeApp {
     document.addEventListener('click', (e) => {
       const floatBtn = e.target.closest('[data-panel-float]');
       if (floatBtn) {
-        this._togglePanelFloat(floatBtn.dataset.panelFloat);
+        if (floatBtn.dataset.panelFloat === 'stage') this._openStageWindow();
+        else this._togglePanelFloat(floatBtn.dataset.panelFloat);
         return;
       }
       const closeBtn = e.target.closest('[data-panel-close]');
@@ -1927,7 +3378,7 @@ class NeonScopeApp {
 
   _initSubpanels() {
     const specs = [];
-    const reserve = new Set(['source', 'library', 'info', 'animation', 'geometry', 'style', 'options', 'layer', 'about', 'output', 'tips']);
+    const reserve = new Set(['source', 'library', 'info', 'animation', 'keyframes', 'geometry', 'style', 'options', 'layer', 'about', 'output', 'tips']);
     const add = (id, el, title) => {
       if (!el || !reserve.has(id)) return;
       specs.push({ id, el, title: title || el.querySelector('.section-head > span')?.textContent || id });
@@ -1937,6 +3388,7 @@ class NeonScopeApp {
     add('library', leftSections[1], '模块库');
     add('info', leftSections[2], '信息编辑');
     add('animation', leftSections[3], '动画设计');
+    add('keyframes', leftSections[4], '关键帧管理总线');
     const propSections = $$('#inspectorModule > .inspector-section');
     add('geometry', propSections[0], '位置与尺寸');
     add('style', propSections[1], '模块外观');
@@ -1950,7 +3402,7 @@ class NeonScopeApp {
     this._subpanels = {};
     for (const [index, spec] of specs.entries()) {
       const st = this.subpanelState[spec.id] || {
-        hidden: spec.id === 'info' || spec.id === 'animation',
+        hidden: spec.id === 'info' || spec.id === 'animation' || spec.id === 'keyframes',
         floating: false, x: null, y: null, w: null, h: null,
       };
       if (st.hidden && st.floating) st.floating = false;
@@ -1994,6 +3446,16 @@ class NeonScopeApp {
 
   _subpanelDefaults(index, el = null) {
     const vp = this._panelViewport();
+    if (el?.id === 'keyframePanel') {
+      const kw = Math.round(clamp(vp.w * 0.30, 340, 430));
+      const kh = Math.round(clamp(vp.h * 0.38, 260, 370));
+      return {
+        x: Math.round(clamp(vp.w - kw - 36, 8, vp.w - kw - 8)),
+        y: Math.round(clamp(vp.h - kh - 72, 8, vp.h - kh - 8)),
+        w: kw,
+        h: kh,
+      };
+    }
     const w = Math.min(330, Math.max(270, vp.w * 0.24));
     const measured = el ? el.scrollHeight + 18 : 280;
     const h = clamp(measured, 180, Math.min(570, vp.h - 26));
@@ -2205,9 +3667,11 @@ class NeonScopeApp {
     if (st.hidden) {
       this._ensureSubpanelParent(id);
       st.hidden = false;
-      st.floating = false;
+      st.floating = id === 'keyframes';
       this._applySubpanelState();
-      setTimeout(() => this._subpanels[id]?.el.scrollIntoView({ block: 'nearest', behavior: 'smooth' }), 40);
+      if (id !== 'keyframes') {
+        setTimeout(() => this._subpanels[id]?.el.scrollIntoView({ block: 'nearest', behavior: 'smooth' }), 40);
+      }
     } else if (st.floating) {
       st.floating = false;
       this._applySubpanelState();
@@ -2219,7 +3683,10 @@ class NeonScopeApp {
 
   _resetSubpanels() {
     for (const spec of this._subpanelSpecs || []) {
-      this.subpanelState[spec.id] = { hidden: false, floating: false, x: null, y: null, w: null, h: null };
+      this.subpanelState[spec.id] = {
+        hidden: spec.id === 'keyframes',
+        floating: false, x: null, y: null, w: null, h: null,
+      };
     }
     this._applySubpanelState();
   }
@@ -3070,6 +4537,9 @@ class NeonScopeApp {
         const opts = option.options.map(([val, label]) => `<option value="${val}" ${String(value) === String(val) ? 'selected' : ''}>${label}</option>`).join('');
         return `<label class="module-option-field"><span>${option.label}</span><select data-opt-key="${option.key}">${opts}</select></label>`;
       }
+      if (option.type === 'color') {
+        return `<label class="module-option-field module-option-color"><span>${option.label}</span><input type="color" data-opt-key="${option.key}" value="${/^#[0-9a-fA-F]{6}$/.test(String(value)) ? value : option.default}" /></label>`;
+      }
       const output = `${Math.round(Number(value))}${option.unit || ''}`;
       return `<div class="field-row module-option-range"><label class="field-label">${option.label} <output data-opt-output="${option.key}">${output}</output></label><input type="range" data-opt-key="${option.key}" min="${option.min}" max="${option.max}" step="${option.step}" value="${value}" /></div>`;
     }).join('');
@@ -3176,6 +4646,33 @@ class NeonScopeApp {
     }
   }
 
+  _applyUiFont(font, { silent = false, noPersist = false } = {}) {
+    const value = ['default', 'Bahnschrift', 'Segoe UI', 'Microsoft YaHei UI', 'Georgia', 'Arial', 'Times New Roman', 'Cascadia Code', 'Consolas'].includes(font)
+      ? font : 'default';
+    this.state.settings.uiFont = value;
+    const root = document.documentElement;
+    if (value === 'default') {
+      root.style.removeProperty('--ui-font');
+      document.body.classList.remove('ui-font-custom');
+    } else {
+      const stacks = {
+        'Bahnschrift': '"Bahnschrift", "Microsoft YaHei UI", sans-serif',
+        'Segoe UI': '"Segoe UI", "Microsoft YaHei UI", sans-serif',
+        'Microsoft YaHei UI': '"Microsoft YaHei UI", "Microsoft YaHei", sans-serif',
+        'Georgia': 'Georgia, "Microsoft YaHei UI", serif',
+        'Arial': 'Arial, "Microsoft YaHei UI", sans-serif',
+        'Times New Roman': '"Times New Roman", "Microsoft YaHei UI", serif',
+        'Cascadia Code': '"Cascadia Code", Consolas, monospace',
+        'Consolas': 'Consolas, "Cascadia Code", monospace',
+      };
+      root.style.setProperty('--ui-font', stacks[value] || stacks.Bahnschrift);
+      document.body.classList.add('ui-font-custom');
+    }
+    if (this.dom.uiFont) this.dom.uiFont.value = value;
+    if (!noPersist) this._persist();
+    if (!silent) this._toast(value === 'default' ? '已恢复默认字体' : `界面字体已切换 · ${value}`, 'info', 1800);
+  }
+
   _applyUiTheme(theme, { silent = false, noPersist = false } = {}) {
     if (theme === 'studio') theme = 'vidi';
     if (theme === 'aura') theme = 'catbot';
@@ -3210,6 +4707,50 @@ class NeonScopeApp {
     set('--ui-dark-head', mixHex(bg, '#0c0812', 0.64));
     set('--ui-dark-panel', mixHex(bg, '#0d0913', 0.62));
     set('--ui-dark-line', mixHex(bg, '#8d7a94', 0.24));
+  }
+
+  _resolveThemeColors(settings = this.state.settings) {
+    const bg = /^#[0-9a-fA-F]{6}$/.test(settings.themeBg || '') ? settings.themeBg : '#07050a';
+    const windowColor = /^#[0-9a-fA-F]{6}$/.test(settings.themeWindow || '') ? settings.themeWindow : '#171020';
+    const text = /^#[0-9a-fA-F]{6}$/.test(settings.themeText || '') ? settings.themeText : '#f7eef3';
+    const chartBase = /^#[0-9a-fA-F]{6}$/.test(settings.themeChart || '') ? settings.themeChart : '#ff4f8b';
+    const follow = settings.themeChartFollow || 'custom';
+    const chart = follow === 'bg' ? bg : follow === 'primary' ? windowColor : follow === 'accent' ? text : chartBase;
+    return { bg, window: windowColor, text, chart };
+  }
+
+  _applyThemePalette({ silent = false, noPersist = false } = {}) {
+    const colors = this._resolveThemeColors();
+    const s = this.state.settings;
+    s.themeChart = s.themeChartFollow === 'custom' ? colors.chart : s.themeChart;
+    s.accent = colors.chart;
+    this._applyAccent(colors.chart, s.accentAlpha, { silent: true, noPersist: true });
+    const root = document.documentElement;
+    const set = (name, value) => root.style.setProperty(name, value);
+    set('--bg', colors.bg);
+    set('--bg-2', mixHex(colors.bg, colors.window, 0.25));
+    set('--panel', colors.window);
+    set('--panel-2', mixHex(colors.window, colors.bg, 0.18));
+    set('--panel-3', mixHex(colors.window, colors.bg, 0.32));
+    set('--text', colors.text);
+    set('--muted', mixHex(colors.text, colors.bg, 0.46));
+    set('--dim', mixHex(colors.text, colors.bg, 0.68));
+    set('--line', `rgba(${hexToRgb(colors.text).r}, ${hexToRgb(colors.text).g}, ${hexToRgb(colors.text).b}, 0.12)`);
+    if (this.dom.themeBg) this.dom.themeBg.value = colors.bg;
+    if (this.dom.themeWindow) this.dom.themeWindow.value = colors.window;
+    if (this.dom.themeText) this.dom.themeText.value = colors.text;
+    if (this.dom.themeChart) this.dom.themeChart.value = s.themeChart;
+    if (this.dom.themeChartFollow) this.dom.themeChartFollow.value = s.themeChartFollow;
+    this.visualizer?.applyBackgroundSettings();
+    if (!noPersist) this._persist();
+    if (!silent) this._toast('界面四色已更新', 'info', 1600);
+  }
+
+  _setThemeColor(key, value) {
+    if (!/^#[0-9a-fA-F]{6}$/.test(value)) return;
+    if (key === 'themeChart') this.state.settings.themeChartFollow = 'custom';
+    this.state.settings[key] = value;
+    this._applyThemePalette({ silent: true });
   }
 
   _applyAccent(hex, alpha = this.state.settings.accentAlpha ?? 1, { silent = false, noPersist = false } = {}) {
@@ -3580,6 +5121,7 @@ class NeonScopeApp {
     d.exportPulseOut.textContent = `${s.exportPulse}%`;
     this._applyUiTheme(s.uiTheme, { silent: true, noPersist: true });
     this._applyUiMode(s.uiMode, { silent: true, noPersist: true });
+    this._applyUiFont(s.uiFont, { silent: true, noPersist: true });
     this._syncBgModeUI();
     this._syncRendererUI();
     this._syncWatermark();
@@ -3870,6 +5412,10 @@ class NeonScopeApp {
     if (name === 'settings') return this.dom.settingsModal;
     if (name === 'shortcuts') return this.dom.shortcutsModal;
     if (name === 'color') return this.dom.colorModal;
+    if (name === 'action') return this.dom.actionBuilderModal;
+    if (name === 'keyframeEditor') return this.dom.keyframeEditorModal;
+    if (name === 'licenses') return this.dom.licenseModal;
+    if (name === 'developer') return this.dom.developerModal;
     return null;
   }
 
@@ -3889,6 +5435,7 @@ class NeonScopeApp {
 
   _closeModal(name) {
     if (!name) return;
+    if (name === 'keyframeEditor') this._closeKeyframeMenu();
     if (name === 'export' && this.state.exporting) return;
     if (name === 'shortcuts' && this._keyCapture) this._cancelKeyCapture();
     if (name === 'settings' && this._standaloneSettings) {
@@ -3963,6 +5510,7 @@ class NeonScopeApp {
       keybinds: this.keybinds,
       panelState: this.panelState,
       subpanelState: this.subpanelState,
+      timelineState: this.timelineState,
       info: this.state.info,
       animationCues: this.state.animationCues,
       exportSettings: this.exportSettings,
@@ -4010,6 +5558,7 @@ function parseAnimationScript(text) {
     if (!Number.isFinite(time)) continue;
     const type = match[2].toLowerCase();
     const rest = match[3].trim();
+    const firstToken = rest.split(/\s+/)[0] || '';
     const tokens = {};
     const tokenRe = /([a-zA-Z_]+)(?:=(?:"([^"]*)"|'([^']*)'|([^\s]+)))?/g;
     let firstBare = '';
@@ -4026,24 +5575,46 @@ function parseAnimationScript(text) {
     const base = { id: uid('cue'), time, duration, type, value: '', params: {} };
     if (type === 'effect') {
       base.type = 'effect';
-      base.params.effect = tokens.effect || firstBare || 'blur';
+      base.params.effect = tokens.effect || firstToken || 'blur';
       base.params.amount = num('amount', 35);
       base.duration = Math.max(0.1, base.duration);
       base.value = base.params.effect;
     } else if (type === 'text' || type === 'subtitle') {
       base.type = type === 'subtitle' ? 'subtitle' : 'text';
-      base.params.text = tokens.text ?? tokens.value ?? rest.replace(/[a-zA-Z_]+=(?:"[^"]*"|'[^']*'|[^\s]+)/g, '').trim();
-      base.params.x = num('x', 0.5);
-      base.params.y = num('y', type === 'subtitle' ? 0.88 : 0.5);
+      const rawText = tokens.text ?? tokens.value ?? rest.replace(/[a-zA-Z_]+=(?:"[^"]*"|'[^']*'|[^\s]+)/g, '').trim();
+      base.params.text = String(rawText).replace(/\\n/g, '\n');
+      base.params.x = num('x', 0);
+      base.params.y = num('y', type === 'subtitle' ? 360 : 0);
       base.params.size = num('size', 26);
-      base.params.align = tokens.align || 'center';
+      base.params.fadeIn = Math.max(0, num('fadeIn', 0.35));
+      base.params.fadeOut = Math.max(0, num('fadeOut', 0.35));
+      base.params.coordMode = 'absolute';
+      if (base.type === 'subtitle') {
+        base.params.lineGap = Math.max(0, num('lineGap', 8));
+        base.params.scaleX = clamp(num('scaleX', 100), 20, 400);
+        base.params.scaleY = clamp(num('scaleY', 100), 20, 400);
+        base.params.role = tokens.role || 'main';
+      }
       base.duration = Math.max(0.1, base.duration);
       base.value = base.params.text || '';
+    } else if (type === 'genre') {
+      base.type = 'genre';
+      base.params.name = tokens.name || tokens.genre || firstBare || 'Genre';
+      base.value = base.params.name;
+    } else if (type === 'intro') {
+      base.type = 'intro';
+      base.params.blur = num('blur', 35);
+      base.duration = Math.max(0.1, base.duration);
+      base.value = 'intro';
     } else if (type === 'mash') {
       base.type = 'mash';
       base.params.title = tokens.title || 'Title';
       base.params.author = tokens.author || 'Artist';
       base.params.origin = tokens.origin || 'Origin';
+      base.params.x = num('x', 0);
+      base.params.y = num('y', 0);
+      base.params.scaleX = clamp(num('scaleX', 100), 20, 400);
+      base.params.scaleY = clamp(num('scaleY', 100), 20, 400);
       base.duration = Math.max(0.1, base.duration);
       base.value = base.params.title;
     } else if (type === 'color') {
@@ -4052,8 +5623,20 @@ function parseAnimationScript(text) {
       base.params.primary = tokens.primary || '#0F1C4A';
       base.params.accent = tokens.accent || '#DE9FCA';
       base.params.ink = tokens.ink || '#0a0a0a';
+      base.params.chartFollow = ['bg', 'primary', 'accent'].includes(tokens.chartFollow) ? tokens.chartFollow : 'custom';
+      base.params.fadeIn = Math.max(0, num('fadeIn', 0.35));
+      base.params.fadeOut = Math.max(0, num('fadeOut', 0.35));
       base.duration = Math.max(0, base.duration);
       base.value = base.params.accent;
+    } else if (type === 'call' || type === 'batch') {
+      base.type = 'batch';
+      base.params.batch = tokens.batch || firstToken || 'batch-name';
+      base.params.split = tokens.split === 'true';
+      base.params.role = tokens.role || 'main';
+      base.params.x = num('x', 0.5);
+      base.params.y = num('y', 0.95);
+      base.duration = Math.max(0.1, base.duration);
+      base.value = base.params.batch;
     } else if (type === 'bpm') {
       base.type = 'bpm';
       base.params.bpm = num('bpm', Number(rest) || 120);
@@ -4079,21 +5662,71 @@ function serializeAnimationCues(cues) {
     }
     if (cue.type === 'text' || cue.type === 'subtitle') {
       const text = p.text ?? cue.value ?? 'Text overlay';
-      return `${t} ${cue.type} text="${String(text).replace(/"/g, '\\"')}" duration=${Number(cue.duration).toFixed(2)} x=${p.x ?? 0.5} y=${p.y ?? (cue.type === 'subtitle' ? 0.88 : 0.5)} size=${p.size ?? 26} align=${p.align || 'center'}`;
+      if (cue.type === 'subtitle') {
+        return `${t} subtitle text="${String(text).replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\r?\n/g, '\\n')}" duration=${Number(cue.duration).toFixed(2)} x=${p.x ?? 0} y=${p.y ?? 360} size=${p.size ?? 26} fadeIn=${Number(p.fadeIn ?? 0.35).toFixed(2)} fadeOut=${Number(p.fadeOut ?? 0.35).toFixed(2)} lineGap=${Number(p.lineGap ?? 8).toFixed(1)} scaleX=${Number(p.scaleX ?? 100).toFixed(1)} scaleY=${Number(p.scaleY ?? 100).toFixed(1)} role=${p.role || 'main'}`;
+      }
+      return `${t} text text="${String(text).replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\r?\n/g, '\\n')}" duration=${Number(cue.duration).toFixed(2)} x=${p.x ?? 0} y=${p.y ?? 0} size=${p.size ?? 26} fadeIn=${Number(p.fadeIn ?? 0.35).toFixed(2)} fadeOut=${Number(p.fadeOut ?? 0.35).toFixed(2)}`;
+    }
+    if (cue.type === 'genre') return `${t} genre name=${/^[^\s"']+$/.test(p.name || cue.value || 'Genre') ? (p.name || cue.value || 'Genre') : `"${String(p.name || cue.value || 'Genre').replace(/"/g, '\\"')}"`}`;
+    if (cue.type === 'intro') return `${t} intro duration=${Number(cue.duration).toFixed(2)} blur=${p.blur ?? 0}`;
+    if (cue.type === 'batch') {
+      const split = p.split === true ? 'true' : 'false';
+      const role = split === 'true' ? ` role=${p.role || 'main'}` : '';
+      return `${t} call ${p.batch || cue.value || 'batch-name'} split=${split}${role} x=${p.x ?? 0.5} y=${p.y ?? 0.95}`;
     }
     if (cue.type === 'mash') {
-      return `${t} mash title="${String(p.title || cue.value || 'Title').replace(/"/g, '\\"')}" author="${String(p.author || 'Artist').replace(/"/g, '\\"')}" origin="${String(p.origin || 'Origin').replace(/"/g, '\\"')}" hold=${Number(cue.duration).toFixed(2)}`;
+      return `${t} mash title="${String(p.title || cue.value || 'Title').replace(/"/g, '\\"')}" author="${String(p.author || 'Artist').replace(/"/g, '\\"')}" origin="${String(p.origin || 'Origin').replace(/"/g, '\\"')}" hold=${Number(cue.duration).toFixed(2)} x=${p.x ?? 0} y=${p.y ?? 0} scaleX=${Number(p.scaleX ?? 100).toFixed(1)} scaleY=${Number(p.scaleY ?? 100).toFixed(1)}`;
     }
     if (cue.type === 'color') {
-      return `${t} color bg=${p.bg || '#DCDCE8'} primary=${p.primary || '#0F1C4A'} accent=${p.accent || '#DE9FCA'} ink=${p.ink || '#0a0a0a'} duration=${Number(cue.duration).toFixed(2)}`;
+      return `${t} color bg=${p.bg || '#DCDCE8'} primary=${p.primary || '#0F1C4A'} accent=${p.accent || '#DE9FCA'} ink=${p.ink || '#0a0a0a'} chartFollow=${p.chartFollow || 'custom'} duration=${Number(cue.duration).toFixed(2)} fadeIn=${Number(p.fadeIn || 0).toFixed(2)} fadeOut=${Number(p.fadeOut || 0).toFixed(2)}`;
     }
     if (cue.type === 'bpm') return `${t} bpm ${p.bpm ?? cue.value ?? 120}`;
     return `${t} ${cue.type}${cue.value ? ` text="${String(cue.value).replace(/"/g, '\\"')}"` : ''} duration=${Number(cue.duration).toFixed(2)}`;
   }).join('\n');
 }
 
+function bootStageMirror() {
+  document.body.classList.add('stage-window');
+  document.title = 'NEON//SCOPE — 独立舞台';
+  const canvas = document.getElementById('stageMirrorCanvas');
+  const ctx = canvas?.getContext('2d');
+  if (!canvas || !ctx) return;
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  try {
+    const channel = new BroadcastChannel('neon-scope-stage-v1');
+    let drawing = false;
+    channel.onmessage = async (event) => {
+      const data = event.data;
+      if (data?.type !== 'frame' || !data.blob || drawing) return;
+      drawing = true;
+      try {
+        const bitmap = await createImageBitmap(data.blob);
+        ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+        bitmap.close?.();
+      } catch { /* ignore malformed frame */ }
+      drawing = false;
+    };
+    channel.postMessage({ type: 'stage-ready' });
+    const heartbeat = setInterval(() => channel.postMessage({ type: 'stage-heartbeat' }), 1000);
+    window.addEventListener('beforeunload', () => {
+      clearInterval(heartbeat);
+      try { channel.postMessage({ type: 'stage-closed' }); channel.close(); } catch { /* noop */ }
+    });
+  } catch {
+    ctx.fillStyle = '#f4e6ec';
+    ctx.font = '24px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('当前浏览器不支持独立舞台通道', canvas.width / 2, canvas.height / 2);
+  }
+}
+
 function boot() {
   try {
+    if (new URLSearchParams(location.search).has('stage')) {
+      bootStageMirror();
+      return;
+    }
     ensureUiRoot();
     window.neonScope = new NeonScopeApp();
   } catch (err) {

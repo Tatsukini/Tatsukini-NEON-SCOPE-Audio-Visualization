@@ -140,9 +140,11 @@
             <div class="meta-grid">
               <label>歌曲名<input id="infoTitle" type="text" placeholder="Untitled signal" maxlength="80" /></label>
               <label>艺术家<input id="infoArtist" type="text" placeholder="Unknown source" maxlength="80" /></label>
+              <label>作曲<input id="infoComposer" type="text" placeholder="Composer" maxlength="80" /></label>
               <label>专辑<input id="infoAlbum" type="text" placeholder="Album" maxlength="80" /></label>
               <label>流派<input id="infoGenre" type="text" placeholder="Genre" maxlength="40" /></label>
               <label>BPM<input id="infoBpm" type="number" min="0" max="300" step="0.1" placeholder="BPM" /></label>
+              <label>曲序<input id="infoTrackNo" type="text" placeholder="01" maxlength="12" /></label>
             </div>
             <div class="meta-cover-row">
               <div class="meta-cover-preview" id="infoCoverPreview"><span>COVER</span></div>
@@ -157,21 +159,10 @@
 
           <section class="panel-section extra-panel subpanel-hidden" id="animationPanel">
             <div class="section-head"><span>动画设计</span><em>ANIMATION</em></div>
-            <p class="section-help">按时间码插入颜色、文字、闪白和淡出动作，预览与导出同步生效。</p>
-            <div class="anim-form">
-              <label><span>类型</span>
-                <select id="animType">
-                  <option value="flash">闪白</option>
-                  <option value="text">文字</option>
-                  <option value="subtitle">字幕</option>
-                  <option value="tint">颜色染色</option>
-                  <option value="fade">淡出</option>
-                </select>
-              </label>
-              <label><span>时间 s</span><input id="animTime" type="number" min="0" step="0.1" placeholder="0.0" /></label>
-              <label><span>时长 s</span><input id="animDuration" type="number" min="0.1" step="0.1" value="1" placeholder="1.0" /></label>
-              <label class="anim-value-field"><span>内容 / 颜色</span><input id="animValue" type="text" maxlength="80" placeholder="文字或 #RRGGBB" /></label>
-              <button class="mini-action anim-add-btn" id="animAddBtn">添加动作</button>
+            <p class="section-help">按时间码插入颜色、BPM、文字、字幕、标题卡和效果动作，预览与导出同步生效。</p>
+            <div class="anim-builder-launch">
+              <button class="btn primary" id="animOpenBuilder">＋ 添加动作…</button>
+              <span>按类型填写字段，自动生成动作脚本</span>
             </div>
             <div class="anim-cue-list" id="animCueList"></div>
             <button class="text-btn" id="animClearBtn">清空动作列表</button>
@@ -183,6 +174,16 @@
               <button class="mini-action" id="animScriptExport">导出 .txt</button>
               <input type="file" id="animScriptFile" accept=".txt,.js,text/plain" hidden />
             </div>
+          </section>
+
+          <section class="panel-section extra-panel subpanel-hidden" id="keyframePanel">
+            <div class="section-head"><span>关键帧管理总线</span><em>KEYFRAME RACK</em></div>
+            <p class="section-help">类似 FL 通道机架，实时管理所有动画的关键帧与时长；初始隐藏，从面板菜单启用后默认位于中下右部。</p>
+            <div class="kf-toolbar">
+              <button class="mini-action" id="keyframeAddBtn">＋ 新建动作</button>
+              <span id="keyframeCount">0 个关键帧</span>
+            </div>
+            <div class="kf-list" id="keyframeList"></div>
           </section>
 
         </div>
@@ -212,6 +213,7 @@
           <div class="stage-tools">
             <button class="mini-action" id="fitBtn" title="适配窗口">FIT</button>
             <button class="mini-action" id="timelineToggle" title="显示 / 收起动画时间轴">TIME</button>
+            <button class="mini-action" id="stageDetachBtn" title="在桌面新建独立舞台窗口">WINDOW</button>
             <button class="mini-action" id="theaterBtn" title="专注预览（F）">FOCUS</button>
           </div>
           <div class="panel-tools stage-panel-tools">
@@ -245,6 +247,8 @@
           </div>
         </div>
 
+        <div class="stage-timeline-splitter" id="stageTimelineSplitter" title="拖动调整舞台与时间轴的高度"></div>
+
         <section class="timeline-panel" id="timelinePanel">
           <div class="timeline-head">
             <span class="timeline-title">动画时间轴 <em>ANIMATION TIMELINE</em></span>
@@ -253,11 +257,13 @@
               <button class="mini-action" id="timelineZoomOut" title="缩小">−</button>
               <span class="timeline-zoom" id="timelineZoomLabel">100%</span>
               <button class="mini-action" id="timelineZoomIn" title="放大">+</button>
+              <button class="mini-action" id="timelineFloatBtn" title="浮动 / 停靠时间轴"><svg class="icon"><use href="#i-window"/></svg></button>
               <button class="mini-action accent" id="timelineAddCue">+ 动作</button>
             </div>
           </div>
           <div class="timeline-body">
             <div class="timeline-label-col" id="timelineLabels"></div>
+            <div class="timeline-splitter" id="timelineSplitter" title="拖动调整信息列与时间轴的横向比例"></div>
             <div class="timeline-scroll" id="timelineScroll">
               <div class="timeline-content" id="timelineContent">
                 <div class="timeline-ruler" id="timelineRuler"></div>
@@ -266,6 +272,15 @@
               </div>
             </div>
           </div>
+          <div class="timeline-selection">
+            <span class="timeline-selection-label" id="timelineSelectionLabel">未选择动作</span>
+            <label>IN <input id="timelineSelStart" type="number" min="0" step="0.01" placeholder="0.00" /></label>
+            <label>OUT <input id="timelineSelEnd" type="number" min="0" step="0.01" placeholder="0.00" /></label>
+            <button class="mini-action" id="timelineSelectionEdit">编辑参数</button>
+            <button class="mini-action danger" id="timelineSelectionDelete">删除</button>
+            <label class="timeline-snap-toggle"><input id="timelineSnap" type="checkbox" checked /> 吸附 0.1s</label>
+          </div>
+          <div class="timeline-resizer" id="timelineResizer" title="拖动调整时间轴大小"></div>
         </section>
 
         <div class="stage-footer">
@@ -574,6 +589,7 @@
           <button class="settings-nav-btn" data-settings-tab="motion"><span>04</span>动效</button>
           <button class="settings-nav-btn" data-settings-tab="engine"><span>05</span>分析引擎</button>
           <button class="settings-nav-btn" data-settings-tab="files"><span>06</span>文件</button>
+          <button class="settings-nav-btn" data-settings-tab="about"><span>07</span>关于</button>
           <div class="settings-nav-spacer"></div>
           <button class="settings-nav-btn accent" id="openShortcutsBtn"><span>⌘</span>快捷键</button>
         </nav>
@@ -584,7 +600,7 @@
               <h3>主色与光晕</h3>
               <p>使用 RGB + 透明度色盘定义界面、模块、光晕与背景的统一主色。</p>
             </div>
-            <button class="color-well theme-color-well" id="accentPickBtn" type="button">
+            <button class="color-well theme-color-well" id="accentPickBtn" type="button" style="display:none">
               <span class="color-well-swatch" id="accentSwatch"></span>
               <span class="color-well-copy">
                 <strong>主题色 / ACCENT</strong>
@@ -593,17 +609,47 @@
               </span>
               <span class="color-well-action">编辑颜色</span>
             </button>
-            <div class="theme-presets" aria-label="主题预设">
+            <div class="theme-presets" aria-label="主题预设" style="display:none">
               <button data-theme-color="#FF4F8B" title="NEON MAGENTA"><i style="background:#FF4F8B"></i>MAGENTA</button>
               <button data-theme-color="#37D8FF" title="SIGNAL CYAN"><i style="background:#37D8FF"></i>CYAN</button>
               <button data-theme-color="#FFB454" title="AMBER"><i style="background:#FFB454"></i>AMBER</button>
               <button data-theme-color="#A67CFF" title="ULTRA VIOLET"><i style="background:#A67CFF"></i>VIOLET</button>
+            </div>
+            <div class="theme-four">
+              <label class="theme-color-row"><span>背景色</span><input type="color" id="themeBg" value="#07050a" /></label>
+              <label class="theme-color-row"><span>窗口颜色</span><input type="color" id="themeWindow" value="#171020" /></label>
+              <label class="theme-color-row"><span>字符颜色</span><input type="color" id="themeText" value="#f7eef3" /></label>
+              <label class="theme-color-row"><span>图表颜色</span><input type="color" id="themeChart" value="#ff4f8b" /></label>
+              <label class="theme-color-row theme-follow-row"><span>跟随颜色</span>
+                <select id="themeChartFollow">
+                  <option value="custom">自定义图表颜色</option>
+                  <option value="bg">跟随背景色</option>
+                  <option value="primary">跟随窗口颜色</option>
+                  <option value="accent">跟随字符颜色</option>
+                </select>
+              </label>
             </div>
             <div class="field-row">
               <label class="field-label">光晕强度 <output id="glowOut">45%</output></label>
               <input id="glow" type="range" min="0" max="100" value="45" />
             </div>
             <label class="check-row"><input type="checkbox" id="moduleTint" checked /><span>模块标题栏使用主色</span></label>
+            <div class="settings-subhead"><span>默认字体</span><em>UI FONT</em></div>
+            <div class="ui-font-row">
+              <select id="uiFont">
+                <option value="default">应用默认字体</option>
+                <option value="Bahnschrift">Bahnschrift</option>
+                <option value="Segoe UI">Segoe UI</option>
+                <option value="Microsoft YaHei UI">微软雅黑 UI</option>
+                <option value="Georgia">Georgia</option>
+                <option value="Arial">Arial</option>
+                <option value="Times New Roman">Times New Roman</option>
+                <option value="Cascadia Code">Cascadia Code</option>
+                <option value="Consolas">Consolas</option>
+              </select>
+              <button class="mini-action" id="uiFontReset">恢复默认字体</button>
+            </div>
+            <p class="section-help">只影响应用界面文字；画布模块和动画中的字体仍由模块专属设置控制。</p>
             <div class="settings-note"><span>提示</span>主题色透明度会同时作用于界面强调色和可视化模块（以叠加暗底的方式保持可读性）。</div>
           </section>
 
@@ -835,6 +881,19 @@
               <p class="section-help">编辑会自动写入本机恢复缓存；即使意外关闭，重新打开也会恢复最近一次自动保存。需要长期保存或迁移时，请使用上方“保存存档”。</p>
             </div>
           </section>
+          <section class="settings-panel hidden" data-settings-panel="about">
+            <div class="settings-panel-head">
+              <span class="eyebrow">ABOUT / CREDITS</span>
+              <h3>关于</h3>
+              <p>NEON//SCOPE · realtime audio visualization workstation.</p>
+            </div>
+            <div class="about-actions">
+              <button class="btn ghost about-btn" id="aboutDeveloperBtn"><b>开发者</b><span>Developer</span></button>
+              <button class="btn ghost about-btn" id="aboutLicensesBtn"><b>许可与版权声明</b><span>Licenses</span></button>
+              <button class="btn ghost about-btn" id="aboutRepositoryBtn"><b>仓库地址</b><span>GitHub</span></button>
+            </div>
+            <div class="settings-note"><span>致谢</span>本程序使用 .NET、Microsoft WebView2 SDK 等开源组件；可选外部 FFmpeg 用于视频封装。</div>
+          </section>
         </div>
       </div>
       <div class="window-foot">
@@ -949,12 +1008,158 @@
     <button data-menu-action="delete" class="danger">删除模块<kbd data-menu-key="delete_module">DEL</kbd></button>
   </div>
 
+  <div class="modal-layer confirm-layer hidden" id="confirmModal" role="dialog" aria-modal="true" aria-labelledby="confirmTitle">
+    <div class="modal-backdrop" data-confirm-cancel></div>
+    <div class="window-card confirm-window">
+      <div class="window-head" data-window-drag>
+        <div class="window-title">
+          <span class="eyebrow">CONFIRM / ACTION</span>
+          <h2 id="confirmTitle">确认操作</h2>
+        </div>
+        <div class="window-head-actions">
+          <button class="icon-btn small" data-confirm-cancel aria-label="关闭"><svg class="icon"><use href="#i-close"/></svg></button>
+        </div>
+      </div>
+      <div class="confirm-body"><p id="confirmMessage"></p></div>
+      <div class="window-foot">
+        <span class="window-foot-note">此操作会恢复动作构建器打开时的全部参数</span>
+        <div class="confirm-actions">
+          <button class="btn ghost" data-confirm-cancel>取消</button>
+          <button class="btn primary" data-confirm-ok>确认恢复</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-layer hidden" id="developerModal" role="dialog" aria-modal="true" aria-labelledby="developerTitle">
+    <div class="modal-backdrop" data-close="developer"></div>
+    <div class="window-card developer-window">
+      <div class="window-head" data-window-drag>
+        <div class="window-title">
+          <span class="eyebrow">DEVELOPER / PROFILE</span>
+          <h2 id="developerTitle">开发者</h2>
+        </div>
+        <div class="window-head-actions">
+          <button class="icon-btn small" data-close="developer" aria-label="关闭"><svg class="icon"><use href="#i-close"/></svg></button>
+        </div>
+      </div>
+      <div class="developer-body">
+        <img class="developer-avatar" src="assets/developer-avatar.jpg" alt="Tatsukini 头像" />
+        <div class="developer-copy">
+          <strong>Tatsukini</strong>
+          <p>一个经常在夜晚出没的神秘开发者。</p>
+          <button class="btn primary developer-link" id="developerSiteBtn">前往个人网站 · Bilibili</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-layer hidden" id="licenseModal" role="dialog" aria-modal="true" aria-labelledby="licenseTitle">
+    <div class="modal-backdrop" data-close="licenses"></div>
+    <div class="window-card license-window">
+      <div class="window-head" data-window-drag>
+        <div class="window-title">
+          <span class="eyebrow">LICENSES / CREDITS</span>
+          <h2 id="licenseTitle">许可与版权声明</h2>
+        </div>
+        <div class="window-head-actions">
+          <button class="icon-btn small" data-close="licenses" aria-label="关闭"><svg class="icon"><use href="#i-close"/></svg></button>
+        </div>
+      </div>
+      <div class="license-list" id="licenseList"></div>
+      <div class="window-foot">
+        <span class="window-foot-note">开源组件版权归原作者所有；许可见对应项目页面。</span>
+        <button class="btn primary" data-close="licenses">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-layer hidden" id="keyframeEditorModal" role="dialog" aria-modal="true" aria-labelledby="keyframeEditorTitle">
+    <div class="modal-backdrop" data-keyframe-editor-close></div>
+    <div class="window-card keyframe-editor-window">
+      <div class="window-head" data-window-drag>
+        <div class="window-title">
+          <span class="eyebrow">KEYFRAME EDITOR / AUTOMATION CURVE</span>
+          <h2 id="keyframeEditorTitle">关键帧编辑器</h2>
+        </div>
+        <div class="window-head-actions">
+          <span class="window-hint" id="keyframeEditorCue"></span>
+          <button class="icon-btn small" data-keyframe-editor-close aria-label="关闭"><svg class="icon"><use href="#i-close"/></svg></button>
+        </div>
+      </div>
+      <div class="keyframe-editor-body">
+        <div class="kf-editor-toolbar">
+          <label>属性<select id="keyframePropSelect"></select></label>
+          <button class="mini-action" id="keyframeEditorAdd">＋ 关键帧</button>
+          <button class="mini-action danger" id="keyframeEditorDelete">删除所选</button>
+          <span id="keyframeEditorRange" class="kf-editor-range"></span>
+        </div>
+        <div class="kf-graph-wrap">
+          <svg id="keyframeGraph" viewBox="0 0 720 300" preserveAspectRatio="none"></svg>
+        </div>
+        <div class="kf-key-list" id="keyframeKeyList"></div>
+        <p class="kf-editor-hint" id="keyframeEditorHint">在曲线上单击添加关键帧，拖动圆点调整时间与数值；数值会在关键帧之间自动插值。</p>
+      </div>
+      <div class="window-foot">
+        <span class="window-foot-note">关键帧随动作移动，并在预览 / 导出时实时生效</span>
+        <button class="btn primary" data-keyframe-editor-close>完成</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-layer hidden" id="actionBuilderModal" role="dialog" aria-modal="true" aria-labelledby="actionBuilderTitle">
+    <div class="modal-backdrop" data-action-builder-cancel></div>
+    <div class="window-card action-builder-window">
+      <div class="window-head" data-window-drag>
+        <div class="window-title">
+          <span class="eyebrow">ACTION BUILDER / CATBOT FORMAT</span>
+          <h2 id="actionBuilderTitle">添加动作</h2>
+        </div>
+        <div class="window-head-actions">
+          <span class="window-hint">生成的动作可直接编辑</span>
+          <button class="icon-btn small" data-action-builder-cancel aria-label="关闭"><svg class="icon"><use href="#i-close"/></svg></button>
+        </div>
+      </div>
+      <div class="action-builder-body">
+        <label class="action-builder-field action-builder-wide">
+          <span>类型</span>
+          <select id="actionBuilderType">
+            <option value="bpm">bpm</option>
+            <option value="color">color</option>
+            <option value="genre">genre</option>
+            <option value="effect">effect</option>
+            <option value="intro">intro</option>
+            <option value="text">text</option>
+            <option value="subtitle">subtitle</option>
+            <option value="mash">mash</option>
+            <option value="batch">动作组 / call</option>
+          </select>
+        </label>
+        <label class="action-builder-field action-builder-wide">
+          <span>时间</span>
+          <input id="actionBuilderTime" type="text" value="00:00.000" spellcheck="false" />
+        </label>
+        <div class="action-builder-fields" id="actionBuilderFields"></div>
+        <pre class="action-builder-preview" id="actionBuilderPreview"></pre>
+      </div>
+      <div class="window-foot">
+        <button class="btn ghost" data-action-builder-cancel>取消</button>
+        <button class="btn primary" id="actionBuilderInsert">插入动作</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="stage-window-view" id="stageWindowView">
+    <canvas id="stageMirrorCanvas" width="1280" height="720"></canvas>
+    <div class="stage-window-badge"><span></span>NEON//SCOPE · STAGE</div>
+  </div>
+
   <div class="alpha-layer" id="alphaNotice" role="dialog" aria-modal="true" aria-labelledby="alphaNoticeTitle">
     <div class="alpha-backdrop"></div>
     <div class="alpha-card">
       <div class="alpha-mark" aria-hidden="true">!</div>
       <div class="alpha-body">
-        <div class="alpha-kicker">ALPHA BUILD / V0.1.0_1104_alpha</div>
+        <div class="alpha-kicker">ALPHA BUILD / V0.1.1_1104_alpha_Num.2</div>
         <h2 id="alphaNoticeTitle">注意！这是 NEON//SCOPE 的 Alpha 测试版本。</h2>
         <p>Alpha 测试版本不代表最终产品的最终质量。感谢您的理解和支持，祝你好运！</p>
         <div class="alpha-foot">
@@ -963,6 +1168,24 @@
         </div>
       </div>
     </div>
+  </div>
+
+  <div class="timeline-menu keyframe-menu hidden" id="keyframeMenu" role="menu">
+    <button data-keyframe-menu="delete" class="danger">删除此关键帧<kbd>DEL</kbd></button>
+    <button data-keyframe-menu="select">仅选中节点</button>
+  </div>
+
+  <div class="timeline-menu hidden" id="timelineMenu" role="menu">
+    <button data-timeline-menu="add">添加动作<kbd>+</kbd></button>
+    <button data-timeline-menu="edit">编辑所选动作<kbd>DBL</kbd></button>
+    <button data-timeline-menu="keys">编辑关键帧曲线</button>
+    <button data-timeline-menu="duplicate">复制动作<kbd>CTRL + D</kbd></button>
+    <button data-timeline-menu="delete" class="danger">删除动作<kbd>DEL</kbd></button>
+    <div class="timeline-menu-sep"></div>
+    <button data-timeline-menu="locate">定位到播放头<kbd>↵</kbd></button>
+    <button data-timeline-menu="keyframes">显示关键帧管理总线</button>
+    <button data-timeline-menu="float">浮动 / 停靠时间轴</button>
+    <button data-timeline-menu="snap">切换吸附 <span class="menu-state">ON</span></button>
   </div>
 
   <div class="toast-stack" id="toastStack" aria-live="polite"></div>

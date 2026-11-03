@@ -22,6 +22,7 @@ const META_LABELS = {
   lissajous: 'X-Y', spectrum: 'FFT', phase: 'CORR', rhythm: 'BPM',
   dynamics: 'DYN', spectrogram: 'STFT', stereometer: 'POLAR',
   waveform: 'FULL', pianoRoll: 'MIDI', peakSlope: 'PEAK', stereoField: 'WIDE',
+  basicInfo: 'INFO',
 };
 
 function mono(ctx, size, weight = '400') {
@@ -94,11 +95,10 @@ function drawCard(ctx, mod, accent, env) {
   const x = Math.round(mod.x), y = Math.round(mod.y);
   const w = Math.round(mod.w), h = Math.round(mod.h);
   const glow = clamp(env.settings.glow / 100, 0, 1);
-  const rgb = hexToRgb(accent);
-  const tinted = env.settings.moduleTint;
-  const titleBg = tinted ? accent : '#171020';
-  const titleText = tinted && luminance(accent) > 0.42 ? '#190910' : (tinted ? '#fff4f8' : lighten(accent, 0.3));
-  const micro = rgba(accent, 0.55);
+  const palette = env.palette || { bg: '#050308', window: '#171020', text: '#f7eef3', chart: accent };
+  const rgb = hexToRgb(palette.chart || accent);
+  const titleText = palette.text || '#f7eef3';
+  const micro = rgba(palette.chart || accent, 0.55);
 
   ctx.save();
   ctx.globalAlpha = clamp(mod.opacity ?? 1, 0.05, 1);
@@ -109,7 +109,7 @@ function drawCard(ctx, mod, accent, env) {
     ctx.shadowBlur = 12 + 18 * glow;
   }
   roundRect(ctx, x, y, w, h, 3.5);
-  ctx.fillStyle = 'rgba(5, 3, 8, .86)';
+  ctx.fillStyle = rgba(palette.bg || '#050308', 0.9);
   ctx.fill();
   ctx.shadowBlur = 0;
 
@@ -118,9 +118,9 @@ function drawCard(ctx, mod, accent, env) {
   ctx.clip();
 
   const bg = ctx.createLinearGradient(x, y + HEAD_H, x + w, y + h);
-  bg.addColorStop(0, `rgba(${rgb.r},${rgb.g},${rgb.b},0.038)`);
-  bg.addColorStop(0.45, 'rgba(5,3,9,0.25)');
-  bg.addColorStop(1, 'rgba(8,4,11,0.34)');
+  bg.addColorStop(0, `rgba(${rgb.r},${rgb.g},${rgb.b},0.045)`);
+  bg.addColorStop(0.45, rgba(palette.bg || '#050308', 0.22));
+  bg.addColorStop(1, rgba(palette.window || '#171020', 0.32));
   ctx.fillStyle = bg;
   ctx.fillRect(x, y + HEAD_H, w, h - HEAD_H);
 
@@ -143,28 +143,21 @@ function drawCard(ctx, mod, accent, env) {
     for (let sy = y + HEAD_H + 2; sy < y + h; sy += 4) ctx.fillRect(x, sy, w, 1);
   }
 
-  // Header strip.
+  // Header strip uses the dedicated window color.
   const hg = ctx.createLinearGradient(x, y, x + w, y);
-  if (tinted) {
-    hg.addColorStop(0, lighten(accent, 0.18));
-    hg.addColorStop(0.42, accent);
-    hg.addColorStop(1, darken(accent, 0.12));
-  } else {
-    hg.addColorStop(0, '#171020');
-    hg.addColorStop(1, '#0d0913');
-  }
+  hg.addColorStop(0, lighten(palette.window || '#171020', 0.08));
+  hg.addColorStop(0.45, palette.window || '#171020');
+  hg.addColorStop(1, darken(palette.window || '#171020', 0.12));
   ctx.fillStyle = hg;
   ctx.fillRect(x, y, w, HEAD_H);
-  if (!tinted) {
-    ctx.fillStyle = rgba(accent, 0.75);
-    ctx.fillRect(x, y, w, 1);
-  }
-  ctx.fillStyle = tinted ? 'rgba(0,0,0,.12)' : rgba(accent, 0.28);
+  ctx.fillStyle = rgba(palette.chart || accent, 0.75);
+  ctx.fillRect(x, y, w, 1);
+  ctx.fillStyle = rgba(palette.chart || accent, 0.3);
   ctx.fillRect(x, y + HEAD_H - 1, w, 1);
 
   // Header icon.
-  ctx.fillStyle = tinted ? titleText : accent;
-  ctx.globalAlpha = (mod.opacity ?? 1) * (tinted ? 0.8 : 0.9);
+  ctx.fillStyle = palette.chart || accent;
+  ctx.globalAlpha = (mod.opacity ?? 1) * 0.9;
   mono(ctx, 8, '700');
   ctx.textAlign = 'left';
   ctx.textBaseline = 'middle';
@@ -186,9 +179,9 @@ function drawCard(ctx, mod, accent, env) {
   // Right meta and tiny status marks.
   ctx.textAlign = 'right';
   mono(ctx, 6.5, '600');
-  ctx.fillStyle = tinted ? 'rgba(16,5,10,.55)' : rgba(accent, 0.5);
+  ctx.fillStyle = rgba(palette.text || titleText, 0.5);
   ctx.fillText(META_LABELS[mod.type] || '', x + w - 8, y + HEAD_H / 2 + 0.5);
-  ctx.fillStyle = tinted ? 'rgba(0,0,0,.28)' : rgba(accent, 0.25);
+  ctx.fillStyle = rgba(palette.chart || accent, 0.3);
   for (let i = 0; i < 3; i++) ctx.fillRect(x + w - 48 + i * 4, y + 9, 1.5, 1.5);
 
   ctx.restore();
@@ -1821,6 +1814,164 @@ function drawPianoRoll(ctx, mod, body, frame, st, env) {
 
 // ── Export dispatcher ───────────────────────────────────────────────────────
 
+function drawBasicInfo(ctx, mod, body, frame, st, env) {
+  const info = env.info || {};
+  const engine = env.engine || {};
+  const accent = body.accent || '#ff4f8b';
+  const primaryColor = /^#[0-9a-fA-F]{6}$/.test(modOpt(mod, 'primaryColor', '#101a3b')) ? modOpt(mod, 'primaryColor', '#101a3b') : '#101a3b';
+  const secondaryColor = /^#[0-9a-fA-F]{6}$/.test(modOpt(mod, 'secondaryColor', '#6d6782')) ? modOpt(mod, 'secondaryColor', '#6d6782') : '#6d6782';
+  const cardBg = /^#[0-9a-fA-F]{6}$/.test(modOpt(mod, 'cardBg', '#eeebf4')) ? modOpt(mod, 'cardBg', '#eeebf4') : '#eeebf4';
+  const x = body.x;
+  const y = body.y;
+  const w = body.w;
+  const h = body.h;
+  const k = Math.max(0.45, Math.sqrt((w / 900) * (h / 300)));
+  const p = Math.max(10, Math.min(w, h) * 0.06);
+  const ink = primaryColor;
+  const soft = secondaryColor;
+  const pink = accent;
+  const coverSize = Math.max(62, Math.min(h - p * 2, w * 0.28));
+  const coverX = x + p;
+  const coverY = y + p;
+  const tx = coverX + coverSize + p * 1.15;
+  const tw = x + w - p - tx;
+  const coverSrc = info.cover || '';
+  if (coverSrc && st.coverSrc !== coverSrc) {
+    st.coverSrc = coverSrc;
+    const img = new Image();
+    img.onload = () => { st.coverImage = img; };
+    img.src = coverSrc;
+  }
+
+  ctx.save();
+  clipRect(ctx, x, y, w, h);
+  ctx.fillStyle = cardBg;
+  ctx.fillRect(x, y, w, h);
+
+  // Thin editorial grid.
+  ctx.strokeStyle = 'rgba(25, 28, 60, .055)';
+  ctx.lineWidth = 0.7;
+  for (let gx = x + 12; gx < x + w; gx += Math.max(34, w / 22)) {
+    ctx.beginPath(); ctx.moveTo(gx, y); ctx.lineTo(gx, y + h); ctx.stroke();
+  }
+  for (let gy = y + 12; gy < y + h; gy += Math.max(34, h / 6)) {
+    ctx.beginPath(); ctx.moveTo(x, gy); ctx.lineTo(x + w, gy); ctx.stroke();
+  }
+
+  // Cover plate with cut-corner crop marks.
+  ctx.fillStyle = '#e6e2ee';
+  ctx.fillRect(coverX, coverY, coverSize, coverSize);
+  if (st.coverImage) {
+    const img = st.coverImage;
+    const scale = Math.max(coverSize / img.width, coverSize / img.height);
+    const dw = img.width * scale;
+    const dh = img.height * scale;
+    ctx.drawImage(img, coverX + (coverSize - dw) / 2, coverY + (coverSize - dh) / 2, dw, dh);
+  } else {
+    ctx.strokeStyle = 'rgba(25,28,60,.18)';
+    ctx.setLineDash([4, 5]);
+    ctx.strokeRect(coverX + 8, coverY + 8, coverSize - 16, coverSize - 16);
+    ctx.setLineDash([]);
+    ctx.fillStyle = 'rgba(25,28,60,.34)';
+    ctx.font = `600 ${Math.max(8, coverSize * 0.09)}px ${MONO}`;
+    ctx.textAlign = 'center';
+    ctx.fillText('COVER ART', coverX + coverSize / 2, coverY + coverSize / 2);
+  }
+  ctx.strokeStyle = 'rgba(25,28,60,.36)';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(coverX + 0.5, coverY + 0.5, coverSize - 1, coverSize - 1);
+  ctx.strokeStyle = pink;
+  ctx.lineWidth = 2;
+  const corner = Math.min(18, coverSize * 0.14);
+  for (const [cx, cy, sx, sy] of [
+    [coverX, coverY, 1, 1], [coverX + coverSize, coverY, -1, 1],
+    [coverX, coverY + coverSize, 1, -1], [coverX + coverSize, coverY + coverSize, -1, -1],
+  ]) {
+    ctx.beginPath();
+    ctx.moveTo(cx + sx * corner, cy);
+    ctx.lineTo(cx, cy);
+    ctx.lineTo(cx, cy + sy * corner);
+    ctx.stroke();
+  }
+
+  const title = info.title || engine.track?.name || 'Untitled signal';
+  const composer = info.composer || info.artist || engine.track?.artist || 'Unknown source';
+  const album = info.album || 'Album';
+  const genre = info.genre || engine.track?.genre || 'Genre';
+  const bpm = info.bpm || engine.track?.bpm || '—';
+  const trackNo = info.trackNo || '—';
+  const sampleRate = engine.sampleRate ? `${(engine.sampleRate / 1000).toFixed(1)} kHz` : '—';
+  const duration = engine.duration ? formatShortTime(engine.duration) : '—';
+
+  ctx.textAlign = 'left';
+  const tiny = 9 * k;
+  const label = 12 * k;
+  ctx.fillStyle = pink;
+  ctx.font = `600 ${tiny}px ${MONO}`;
+  ctx.fillText(`FROM: ${composer}`, tx, y + p + tiny);
+  ctx.fillStyle = soft;
+  ctx.textAlign = 'right';
+  ctx.fillText('AUDIO VISUALIZATION INTERFACE', x + w - p, y + p + tiny);
+  ctx.textAlign = 'left';
+
+  const titleSize = 50 * k;
+  ctx.fillStyle = ink;
+  ctx.font = `700 ${titleSize}px ${SANS}`;
+  ctx.fillText(`{${title}}`, tx, y + p + titleSize + tiny * 2, tw);
+  ctx.fillStyle = pink;
+  ctx.fillRect(tx, y + p + titleSize + tiny * 4, Math.min(tw * 0.54, 190), 2);
+
+  const rowY = y + p + titleSize + tiny * 7;
+  const colW = tw / 3;
+  const labels = ['ARTIST', 'ALBUM', 'TRACK'];
+  const values = [composer, album, trackNo];
+  for (let i = 0; i < 3; i += 1) {
+    const cx = tx + i * colW;
+    ctx.fillStyle = soft;
+    ctx.font = `500 ${tiny}px ${MONO}`;
+    ctx.fillText(labels[i], cx, rowY);
+    ctx.fillStyle = ink;
+    ctx.font = `600 ${14 * k}px ${SANS}`;
+    ctx.fillText(String(values[i]), cx, rowY + label + 12 * k, colW - 8);
+  }
+
+  const metaY = y + h - p - 28 * k;
+  ctx.fillStyle = soft;
+  ctx.font = `500 ${tiny}px ${MONO}`;
+  const meta = `GENRE ${genre}    BPM ${bpm}    SAMPLE ${sampleRate}    DURATION ${duration}`;
+  ctx.fillText(meta, tx, metaY, tw);
+
+  // Waveform preview.
+  const waveY = y + h - p - 12 * k;
+  const waveW = Math.max(30, tw);
+  const minArr = engine.overviewMin;
+  const maxArr = engine.overviewMax;
+  ctx.strokeStyle = 'rgba(25,28,60,.30)';
+  ctx.lineWidth = 0.8;
+  ctx.beginPath();
+  const cols = Math.max(30, Math.min(220, Math.floor(waveW / 3)));
+  for (let i = 0; i < cols; i += 1) {
+    let lo = 0;
+    let hi = 0;
+    if (minArr?.length && maxArr?.length) {
+      const idx = Math.floor(i / cols * minArr.length);
+      lo = minArr[idx] || 0;
+      hi = maxArr[idx] || 0;
+    } else {
+      lo = Math.sin(i * 0.37) * 0.4;
+      hi = Math.cos(i * 0.23) * 0.4;
+    }
+    const wx = tx + i * (waveW / cols);
+    ctx.moveTo(wx, waveY - hi * 8 * k);
+    ctx.lineTo(wx, waveY - lo * 8 * k);
+  }
+  ctx.stroke();
+  ctx.fillStyle = pink;
+  ctx.font = `500 ${tiny}px ${MONO}`;
+  ctx.fillText('WAVEFORM PREVIEW', tx, waveY - 12 * k);
+  ctx.restore();
+}
+
 const DRAWERS = {
   levels: drawLevels,
   loudness: drawLoudness,
@@ -1837,16 +1988,27 @@ const DRAWERS = {
   pianoRoll: drawPianoRoll,
   peakSlope: drawPeakSlope,
   stereoField: drawStereoField,
+  basicInfo: drawBasicInfo,
 };
 
 export function drawVisualModule(ctx, mod, accent, env) {
   if (!MODULE_DEFS[mod.type] || mod.hidden) return;
-  const body = drawCard(ctx, mod, accent, env);
+  const palette = env.palette || {
+    bg: '#050308', window: '#171020', text: '#f7eef3', chart: accent,
+  };
+  const body = drawCard(ctx, mod, palette.chart || accent, env);
   const st = getState(env, mod);
   const drawer = DRAWERS[mod.type];
   if (!drawer) return;
   ctx.save();
   clipRect(ctx, body.x, body.y, body.w, body.h);
+  const originalFillText = ctx.fillText;
+  if (mod.type !== 'basicInfo' && palette.text) {
+    ctx.fillText = function (text, x, y, maxWidth) {
+      ctx.fillStyle = palette.text;
+      return originalFillText.call(ctx, text, x, y, maxWidth);
+    };
+  }
   try {
     drawer(ctx, mod, body, env.frame, st, env);
   } catch (err) {
@@ -1856,6 +2018,7 @@ export function drawVisualModule(ctx, mod, accent, env) {
     ctx.textAlign = 'center';
     ctx.fillText('RENDER ERROR', body.x + body.w / 2, body.y + body.h / 2);
   }
+  ctx.fillText = originalFillText;
   ctx.restore();
 }
 

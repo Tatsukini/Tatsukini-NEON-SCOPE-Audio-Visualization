@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
@@ -9,8 +9,8 @@
     <RootNamespace>NeonScope</RootNamespace>
     <AssemblyName>NEON-SCOPE</AssemblyName>
     <ApplicationIcon>app.ico</ApplicationIcon>
-    <Version>1.4.0</Version>
-    <FileVersion>1.4.0.0</FileVersion>
+    <Version>1.4.1</Version>
+    <FileVersion>1.4.1.0</FileVersion>
     <Product>NEON//SCOPE</Product>
     <AssemblyTitle>NEON//SCOPE Audio Visualizer</AssemblyTitle>
     <Description>Realtime audio and MIDI visualizer with video export.</Description>
@@ -39,8 +39,10 @@
     <EmbeddedResource Include="..\js\*.js">
       <LogicalName>web/js/%(Filename)%(Extension)</LogicalName>
     </EmbeddedResource>
+    <EmbeddedResource Include="..\assets\*.jpg">
+      <LogicalName>web/assets/%(Filename)%(Extension)</LogicalName>
+    </EmbeddedResource>
   </ItemGroup>
 
 </Project>
-
 
