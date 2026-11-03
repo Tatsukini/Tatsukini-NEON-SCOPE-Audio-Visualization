@@ -1701,7 +1701,7 @@ function drawPianoRoll(ctx, mod, body, frame, st, env) {
   const p = 8;
   const x = body.x + p + 22, y = body.y + p + 1;
   const w = body.w - p * 2 - 22, h = body.h - p * 2 - 12;
-  const midi = env.midi;
+  const midi = (env.midiLayers || []).find((layer) => layer.id === mod.options?.midiId) || env.midi;
 
   if (!midi || !midi.notes?.length) {
     ctx.strokeStyle = 'rgba(255,255,255,.055)';

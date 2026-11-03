@@ -245,6 +245,7 @@ class NeonScopeApp {
       selectedId: null,
       settings: { ...DEFAULT_SETTINGS },
       midi: null,
+      midiLayers: [],
       preset: 'studio',
       info: { title: '', artist: '', composer: '', album: '', genre: '', bpm: '', trackNo: '', cover: '', show: false },
       animationCues: [],
@@ -651,6 +652,7 @@ class NeonScopeApp {
       stageTimelineSplitter: $('#stageTimelineSplitter'), stageDetachBtn: $('#stageDetachBtn'),
       stageWindowView: $('#stageWindowView'), stageMirrorCanvas: $('#stageMirrorCanvas'),
       timelineMenu: $('#timelineMenu'), keyframeMenu: $('#keyframeMenu'), keyframePanel: $('#keyframePanel'), keyframeList: $('#keyframeList'),
+      midiBusPanel: $('#midiBusPanel'), midiBusList: $('#midiBusList'), midiBusCount: $('#midiBusCount'), midiBusImportBtn: $('#midiBusImportBtn'),
       aboutDeveloperBtn: $('#aboutDeveloperBtn'), aboutLicensesBtn: $('#aboutLicensesBtn'), aboutRepositoryBtn: $('#aboutRepositoryBtn'),
       licenseModal: $('#licenseModal'), licenseList: $('#licenseList'),
       developerModal: $('#developerModal'), developerSiteBtn: $('#developerSiteBtn'),
@@ -748,8 +750,26 @@ class NeonScopeApp {
     if (data.exportSettings && typeof data.exportSettings === 'object') {
       Object.assign(this.exportSettings, data.exportSettings);
     }
-    if (data.midi && Array.isArray(data.midi.notes) && data.midi.notes.length) {
-      this.state.midi = data.midi;
+    if (Array.isArray(data.midiLayers) && data.midiLayers.length) {
+      this.state.midiLayers = data.midiLayers.filter((layer) => layer && Array.isArray(layer.notes) && layer.notes.length);
+    } else if (data.midi && Array.isArray(data.midi.notes) && data.midi.notes.length) {
+      this.state.midiLayers = [{ ...data.midi, id: data.midi.id || uid('midi') }];
+    }
+    if (this.state.midiLayers.length) {
+      this.state.midi = this.state.midiLayers[this.state.midiLayers.length - 1];
+      const pianoRolls = this.state.modules.filter((m) => m.type === 'pianoRoll');
+      for (const layer of this.state.midiLayers) {
+        const linked = pianoRolls.find((m) => m.options?.midiId === layer.id);
+        if (linked) {
+          layer.moduleId = linked.id;
+          continue;
+        }
+        const free = pianoRolls.find((m) => !m.options?.midiId);
+        if (free) {
+          free.options = { ...(free.options || {}), midiId: layer.id };
+          layer.moduleId = free.id;
+        }
+      }
     }
     if (data.info && typeof data.info === 'object') {
       const info = data.info;
@@ -883,6 +903,7 @@ class NeonScopeApp {
         }
       }
       if (raw.type === 'pianoRoll' && raw.options && typeof raw.options === 'object') {
+        if (typeof raw.options.midiId === 'string') options.midiId = raw.options.midiId;
         if (Array.isArray(raw.options.trackColors)) {
           options.trackColors = raw.options.trackColors.slice(0, 16).map((v) => /^#[0-9a-fA-F]{6}$/.test(String(v)) ? String(v) : null);
         }
@@ -984,10 +1005,12 @@ class NeonScopeApp {
       if (file) this._loadAudioFile(file);
     });
     d.midiFile.addEventListener('change', () => {
-      const file = d.midiFile.files?.[0];
+      const files = Array.from(d.midiFile.files || []);
       d.midiFile.value = '';
-      if (file) this._loadMidiFile(file);
+      if (files.length) this._loadMidiFiles(files);
     });
+    d.midiBusImportBtn?.addEventListener('click', () => d.midiFile.click());
+    this._bindMidiBus();
     d.bgFile.addEventListener('change', () => {
       const file = d.bgFile.files?.[0];
       d.bgFile.value = '';
@@ -1242,7 +1265,8 @@ class NeonScopeApp {
     d.resetModuleOptionsBtn.addEventListener('click', () => {
       const mod = this._selected();
       if (!mod) return;
-      mod.options = {};
+      const midiId = mod.options?.midiId;
+      mod.options = midiId ? { midiId } : {};
       this._syncModuleOptions(mod);
       this._persist();
       this._toast('模块专属参数已恢复默认');
@@ -2263,6 +2287,7 @@ class NeonScopeApp {
         timelineState: this.timelineState,
         info: this.state.info,
         midi: this.state.midi,
+        midiLayers: this.state.midiLayers,
         animationCues: this.state.animationCues,
         exportSettings: this.exportSettings,
       },
@@ -3463,7 +3488,7 @@ class NeonScopeApp {
 
   _initSubpanels() {
     const specs = [];
-    const reserve = new Set(['source', 'library', 'info', 'animation', 'keyframes', 'geometry', 'style', 'options', 'layer', 'about', 'output', 'tips']);
+    const reserve = new Set(['source', 'library', 'info', 'animation', 'keyframes', 'midiBus', 'geometry', 'style', 'options', 'layer', 'about', 'output', 'tips']);
     const add = (id, el, title) => {
       if (!el || !reserve.has(id)) return;
       specs.push({ id, el, title: title || el.querySelector('.section-head > span')?.textContent || id });
@@ -3474,6 +3499,7 @@ class NeonScopeApp {
     add('info', leftSections[2], '信息编辑');
     add('animation', leftSections[3], '动画设计');
     add('keyframes', leftSections[4], '关键帧管理总线');
+    add('midiBus', leftSections[5], 'MIDI 模块总线');
     const propSections = $$('#inspectorModule > .inspector-section');
     add('geometry', propSections[0], '位置与尺寸');
     add('style', propSections[1], '模块外观');
@@ -3487,7 +3513,7 @@ class NeonScopeApp {
     this._subpanels = {};
     for (const [index, spec] of specs.entries()) {
       const st = this.subpanelState[spec.id] || {
-        hidden: spec.id === 'info' || spec.id === 'animation' || spec.id === 'keyframes',
+        hidden: spec.id === 'info' || spec.id === 'animation' || spec.id === 'keyframes' || spec.id === 'midiBus',
         floating: false, x: null, y: null, w: null, h: null,
       };
       if (st.hidden && st.floating) st.floating = false;
@@ -3527,10 +3553,21 @@ class NeonScopeApp {
     }
     this._bindSubpanelEvents();
     this._applySubpanelState();
+    this._renderMidiBus();
   }
 
   _subpanelDefaults(index, el = null) {
     const vp = this._panelViewport();
+    if (el?.id === 'midiBusPanel') {
+      const mw = Math.round(clamp(vp.w * 0.32, 380, 460));
+      const mh = Math.round(clamp(vp.h * 0.58, 360, 540));
+      return {
+        x: Math.round(clamp(vp.w - mw - 36, 8, vp.w - mw - 8)),
+        y: Math.round(clamp(vp.h - mh - 72, 8, vp.h - mh - 8)),
+        w: mw,
+        h: mh,
+      };
+    }
     if (el?.id === 'keyframePanel') {
       const kw = Math.round(clamp(vp.w * 0.30, 340, 430));
       const kh = Math.round(clamp(vp.h * 0.38, 260, 370));
@@ -3752,9 +3789,9 @@ class NeonScopeApp {
     if (st.hidden) {
       this._ensureSubpanelParent(id);
       st.hidden = false;
-      st.floating = id === 'keyframes';
+      st.floating = id === 'keyframes' || id === 'midiBus';
       this._applySubpanelState();
-      if (id !== 'keyframes') {
+      if (id !== 'keyframes' && id !== 'midiBus') {
         setTimeout(() => this._subpanels[id]?.el.scrollIntoView({ block: 'nearest', behavior: 'smooth' }), 40);
       }
     } else if (st.floating) {
@@ -3769,7 +3806,7 @@ class NeonScopeApp {
   _resetSubpanels() {
     for (const spec of this._subpanelSpecs || []) {
       this.subpanelState[spec.id] = {
-        hidden: spec.id === 'keyframes',
+        hidden: spec.id === 'keyframes' || spec.id === 'midiBus',
         floating: false, x: null, y: null, w: null, h: null,
       };
     }
@@ -4083,10 +4120,10 @@ class NeonScopeApp {
       const files = Array.from(e.dataTransfer?.files || []);
       if (!files.length) return;
       const image = files.find((f) => f.type.startsWith('image/'));
-      const midi = files.find((f) => /\.(mid|midi)$/i.test(f.name));
+      const midis = files.filter((f) => /\.(mid|midi)$/i.test(f.name));
       const audio = files.find((f) => f.type.startsWith('audio/') || /\.(wav|mp3|flac|ogg|m4a|aac)$/i.test(f.name));
       if (image) this._loadBackgroundFile(image);
-      if (midi) this._loadMidiFile(midi);
+      if (midis.length) this._loadMidiFiles(midis);
       else if (audio) this._loadAudioFile(audio);
     });
   }
@@ -4383,45 +4420,80 @@ class NeonScopeApp {
   }
 
   async _loadMidiFile(file) {
-    if (!file) return;
-    const token = (this._midiLoadToken = (this._midiLoadToken || 0) + 1);
-    this._setEngineStatus('解析 MIDI…', 'busy');
-    this._toast('正在解析 MIDI 可视化数据…', '', 1800);
-    try {
-      const buf = await file.arrayBuffer();
-      if (token !== this._midiLoadToken) return;
-      const midi = parseMidi(buf);
-      midi.title = file.name.replace(/\.[^.]+$/, '');
-      this.state.midi = midi;
-      const mod = this._ensurePianoRoll();
-      if (mod) this._syncSelectionUI(mod.id);
-      this.visualizer.states.clear();
-      this._persist();
-      this._setEngineStatus('MIDI 可视化已载入', 'ready');
-      if (!this.audio.hasAudio) {
-        this._toast(`MIDI 已载入 · ${midi.noteCount} 音符；请导入音频或播放 DEMO 作为时间轴`, 'info', 5200);
-      } else {
-        this._toast(`MIDI 可视化已载入 · ${midi.noteCount} 音符 / ${midi.trackCount} 轨`, 'success', 3800);
-      }
-    } catch (err) {
-      console.error(err);
-      if (token !== this._midiLoadToken) return;
-      this._setEngineStatus('MIDI 解析失败', 'error');
-      this._toast(err.message || 'MIDI 解析失败', 'error', 5200);
-    }
+    if (!file) return this._loadMidiFiles([]);
+    return this._loadMidiFiles([file]);
   }
 
-  _ensurePianoRoll() {
-    let mod = this.state.modules.find((m) => m.type === 'pianoRoll');
+  async _loadMidiFiles(files) {
+    if (!files?.length) return;
+    const token = (this._midiLoadToken = (this._midiLoadToken || 0) + 1);
+    this._setEngineStatus('解析 MIDI…', 'busy');
+    this._toast(`正在解析 ${files.length} 个 MIDI 可视化数据…`, '', 1800);
+    const loaded = [];
+    const failed = [];
+    for (const file of files) {
+      try {
+        const buf = await file.arrayBuffer();
+        if (token !== this._midiLoadToken) return;
+        const midi = parseMidi(buf);
+        midi.title = file.name.replace(/\.[^.]+$/, '');
+        loaded.push(midi);
+      } catch (err) {
+        failed.push(`${file.name}: ${err.message || '解析失败'}`);
+      }
+    }
+    if (token !== this._midiLoadToken) return;
+    for (const midi of loaded) {
+      const id = uid('midi');
+      const layer = { ...midi, id };
+      this.state.midiLayers.push(layer);
+      const placement = this._findPlacement(MODULE_DEFS.pianoRoll.w, MODULE_DEFS.pianoRoll.h);
+      const mod = createModule('pianoRoll', placement);
+      mod.title = midi.title.slice(0, 44);
+      mod.options = { ...(mod.options || {}), midiId: id };
+      this.state.modules.push(mod);
+      layer.moduleId = mod.id;
+      this.state.midi = layer;
+      if (loaded.indexOf(midi) === loaded.length - 1) this._syncSelectionUI(mod.id);
+    }
+    if (loaded.length) {
+      this.visualizer.syncOverlay();
+      this._renderLibrary();
+      this._syncCanvasMeta();
+      this._persist();
+      this._renderMidiBus();
+      const bus = this.subpanelState.midiBus;
+      if (bus?.hidden) {
+        bus.hidden = false;
+        bus.floating = true;
+        this._applySubpanelState();
+      }
+    }
+    this._setEngineStatus(loaded.length ? 'MIDI 可视化已载入' : 'MIDI 解析失败', loaded.length ? 'ready' : 'error');
+    if (!this.audio.hasAudio) {
+      this._toast(`${loaded.length} 个 MIDI 已载入 · 请导入音频或播放 DEMO 作为时间轴`, 'info', 5200);
+    } else if (loaded.length) {
+      this._toast(`${loaded.length} 个 MIDI 可视化已载入${failed.length ? ` · ${failed.length} 个失败` : ''}`, 'success', 3800);
+    }
+    if (failed.length) this._toast(failed[0], 'error', 5200);
+  }
+
+  _ensurePianoRoll(layer = null) {
+    let mod = this.state.modules.find((m) => m.type === 'pianoRoll' && (!layer || m.options?.midiId === layer.id));
     if (mod) {
       if (mod.hidden) {
         mod.hidden = false;
         this.visualizer.syncOverlay();
       }
+      if (layer && !mod.options?.midiId) mod.options = { ...(mod.options || {}), midiId: layer.id };
       return mod;
     }
     const placement = this._findPlacement(MODULE_DEFS.pianoRoll.w, MODULE_DEFS.pianoRoll.h);
     mod = createModule('pianoRoll', placement);
+    if (layer) {
+      mod.title = String(layer.title || 'MIDI').slice(0, 44);
+      mod.options = { ...(mod.options || {}), midiId: layer.id };
+    }
     this.state.modules.push(mod);
     this.visualizer.syncOverlay();
     this._renderLibrary();
@@ -4635,10 +4707,11 @@ class NeonScopeApp {
       const output = `${Math.round(Number(value))}${option.unit || ''}`;
       return `<div class="field-row module-option-range"><label class="field-label">${option.label} <output data-opt-output="${option.key}">${output}</output></label><input type="range" data-opt-key="${option.key}" min="${option.min}" max="${option.max}" step="${option.step}" value="${value}" /></div>`;
     }).join('') + (mod.type === 'pianoRoll' ? this._midiTrackOptions(mod) : '');
+    if (this.subpanelState.midiBus && !this.subpanelState.midiBus.hidden) this._renderMidiBus();
   }
 
   _midiTrackOptions(mod) {
-    const midi = this.state.midi;
+    const midi = (this.state.midiLayers || []).find((layer) => layer.id === mod.options?.midiId) || this.state.midi;
     const trackNames = Array.isArray(midi?.trackNames) ? midi.trackNames : [];
     const trackCount = Math.max(0, Number(midi?.trackCount) || trackNames.length);
     const tracks = Array.from({ length: trackCount }, (_, index) => ({
@@ -4670,6 +4743,171 @@ class NeonScopeApp {
       }).join('')}</div></div>`;
   }
 
+  _midiLayerModule(layer) {
+    return this.state.modules.find((m) => m.type === 'pianoRoll'
+      && (m.options?.midiId === layer.id || m.id === layer.moduleId)) || null;
+  }
+
+  _renderMidiBus() {
+    if (!this.dom.midiBusList) return;
+    const layers = this.state.midiLayers || [];
+    if (this.dom.midiBusCount) this.dom.midiBusCount.textContent = layers.length;
+    if (!layers.length) {
+      this.dom.midiBusList.innerHTML = '<div class="midi-bus-empty">还没有 MIDI 层。一次可以选择多个 .mid / .midi 文件，每个文件会生成独立钢琴卷帘模块。</div>';
+      return;
+    }
+    const escape = (value) => String(value).replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
+    const palette = [this.state.settings.accent || '#ff4f8b', '#68e8ff', '#a98bff', '#ffc46b', '#b9ff8a', '#ff8a6b'];
+    const fonts = [['Bahnschrift', 'Bahnschrift'], ['Segoe UI', 'Segoe UI'], ['Microsoft YaHei UI', '微软雅黑'], ['Georgia', 'Georgia'], ['Cascadia Code', 'Cascadia Code']];
+    this.dom.midiBusList.innerHTML = layers.map((layer, layerIndex) => {
+      const mod = this._midiLayerModule(layer);
+      const options = mod?.options || {};
+      const value = (key, fallback) => options[key] === undefined || options[key] === null || options[key] === '' ? fallback : options[key];
+      const trackCount = Math.max(0, Number(layer.trackCount) || layer.trackNames?.length || 0);
+      const trackNames = Array.isArray(layer.trackNames) ? layer.trackNames : [];
+      const colors = Array.isArray(options.trackColors) ? options.trackColors : [];
+      const depths = Array.isArray(options.trackDepths) ? options.trackDepths : [];
+      const mutes = Array.isArray(options.trackMutes) ? options.trackMutes : [];
+      const solos = Array.isArray(options.trackSolos) ? options.trackSolos : [];
+      const depthValue = Number(value('trackDepth', 55));
+      const defaultDepth = Number.isFinite(depthValue) ? depthValue : 55;
+      const checkbox = (key, label) => `<label class="check-row compact"><input type="checkbox" data-bus-layer="${layer.id}" data-bus-key="${key}" ${value(key, true) ? 'checked' : ''}/><span>${label}</span></label>`;
+      const colorControl = (key, label) => `<label class="module-option-field module-option-color"><span>${label}</span><input type="color" data-bus-layer="${layer.id}" data-bus-key="${key}" value="${/^#[0-9a-fA-F]{6}$/.test(String(value(key, '#C7F8FF'))) ? value(key, '#C7F8FF') : '#C7F8FF'}" /></label>`;
+      const selectControl = (key, label, opts) => `<label class="module-option-field"><span>${label}</span><select data-bus-layer="${layer.id}" data-bus-key="${key}">${opts.map(([v, t]) => `<option value="${v}" ${String(value(key, v)) === String(v) ? 'selected' : ''}>${t}</option>`).join('')}</select></label>`;
+      const rangeControl = (key, label, min, max, step, fallback, unit = '') => `<div class="field-row module-option-range"><label class="field-label">${label} <output data-bus-output="${layer.id}:${key}">${Math.round(Number(value(key, fallback)))}${unit}</output></label><input type="range" data-bus-layer="${layer.id}" data-bus-key="${key}" min="${min}" max="${max}" step="${step}" value="${value(key, fallback)}" /></div>`;
+      const trackRows = Array.from({ length: trackCount }, (_, index) => {
+        const color = /^#[0-9a-fA-F]{6}$/.test(colors[index] || '') ? colors[index] : palette[index % palette.length];
+        const depth = clamp(Number(depths[index] ?? defaultDepth) || 0, 0, 100);
+        const name = escape(trackNames[index] || `Track ${index + 1}`);
+        return `<div class="midi-track-row" data-bus-track="${index}">
+          <span class="midi-track-no">${String(index + 1).padStart(2, '0')}</span>
+          <span class="midi-track-name" title="${name}">${name}</span>
+          <button type="button" class="midi-track-ms ${mutes[index] ? 'active mute' : ''}" data-bus-mute="${index}" data-bus-layer="${layer.id}" title="静音">M</button>
+          <button type="button" class="midi-track-ms ${solos[index] ? 'active solo' : ''}" data-bus-solo="${index}" data-bus-layer="${layer.id}" title="独奏">S</button>
+          <input type="color" data-bus-color="${index}" data-bus-layer="${layer.id}" value="${color}" title="轨道颜色" />
+          <input type="range" data-bus-depth="${index}" data-bus-layer="${layer.id}" min="0" max="100" step="5" value="${depth}" title="视觉深度" />
+          <output data-bus-depth-out="${layer.id}:${index}">${Math.round(depth)}%</output>
+        </div>`;
+      }).join('');
+      return `<details class="midi-bus-layer" data-bus-card="${layer.id}" ${layerIndex === 0 ? 'open' : ''}>
+        <summary><span class="midi-bus-layer-name">${escape(layer.title || `MIDI ${layerIndex + 1}`)}</span><em>${layer.noteCount || 0} NOTES · ${trackCount} TRACKS</em><button type="button" class="mini-action" data-bus-select="${layer.id}">定位</button></summary>
+        ${mod ? `
+        <div class="midi-bus-grid">
+          ${selectControl('noteStyle', '音符样式', [['rect', '长方形'], ['rounded', '圆角长方形']])}
+          ${rangeControl('speed', '滚动速度', 50, 250, 5, 100, '%')}
+          ${selectControl('window', '时间窗口', [['4', '4 秒'], ['6', '6 秒'], ['10', '10 秒'], ['16', '16 秒'], ['20', '20 秒']])}
+          ${rangeControl('trackDepth', '默认深度', 0, 100, 5, 55, '%')}
+          ${checkbox('grid', '节拍网格')}${checkbox('labels', '音名标签')}
+          ${checkbox('showTitle', '显示标题')}${checkbox('showChords', '显示和弦')}
+          <label class="module-option-field"><span>标题文字</span><input type="text" data-bus-layer="${layer.id}" data-bus-key="title" value="${escape(value('title', ''))}" maxlength="80" placeholder="${escape(layer.title || 'MIDI')}" /></label>
+          ${selectControl('titlePosition', '标题位置', [['topLeft', '左上'], ['topCenter', '顶部居中'], ['topRight', '右上']])}
+          ${colorControl('titleColor', '标题颜色')}${colorControl('chordColor', '和弦颜色')}
+          ${rangeControl('titleSize', '标题字号', 12, 64, 1, 40, 'px')}
+          ${selectControl('titleFont', '标题字体', fonts)}
+          ${selectControl('titleAnimation', '标题动画', [['none', '无'], ['slide', '滑入'], ['fade', '淡入']])}
+        </div>
+        <div class="midi-bus-tracks">${trackRows}</div>` : `<div class="midi-bus-empty">此层没有关联模块。<button class="mini-action" data-bus-add-module="${layer.id}">创建钢琴卷帘模块</button></div>`}
+      </details>`;
+    }).join('');
+  }
+
+  _bindMidiBus() {
+    const list = this.dom.midiBusList;
+    if (!list) return;
+    list.addEventListener('input', (e) => {
+      const layerId = e.target.closest('[data-bus-layer]')?.dataset.busLayer;
+      const layer = (this.state.midiLayers || []).find((item) => item.id === layerId);
+      const mod = layer ? this._midiLayerModule(layer) : null;
+      if (!mod) return;
+      const colorIndex = e.target.closest('[data-bus-color]');
+      if (colorIndex) {
+        const index = Number(colorIndex.dataset.busColor);
+        const colors = Array.isArray(mod.options?.trackColors) ? mod.options.trackColors.slice() : [];
+        colors[index] = colorIndex.value;
+        mod.options = { ...(mod.options || {}), trackColors: colors };
+        this._persist();
+        return;
+      }
+      const depthIndex = e.target.closest('[data-bus-depth]');
+      if (depthIndex) {
+        const index = Number(depthIndex.dataset.busDepth);
+        const depths = Array.isArray(mod.options?.trackDepths) ? mod.options.trackDepths.slice() : [];
+        depths[index] = Number(depthIndex.value);
+        mod.options = { ...(mod.options || {}), trackDepths: depths };
+        const output = list.querySelector(`[data-bus-depth-out="${layer.id}:${index}"]`);
+        if (output) output.textContent = `${Math.round(depths[index])}%`;
+        this._persist();
+        return;
+      }
+      const key = e.target.closest('[data-bus-key]')?.dataset.busKey;
+      if (!key) return;
+      let value;
+      if (e.target.type === 'checkbox') value = !!e.target.checked;
+      else if (e.target.type === 'range') value = Number(e.target.value);
+      else value = e.target.value;
+      mod.options = { ...(mod.options || {}), [key]: value };
+      if (e.target.type === 'range') {
+        const output = list.querySelector(`[data-bus-output="${layer.id}:${key}"]`);
+        if (output) output.textContent = `${Math.round(value)}${key === 'titleSize' ? 'px' : key === 'speed' || key === 'trackDepth' ? '%' : ''}`;
+      }
+      this._persist();
+    });
+    list.addEventListener('click', (e) => {
+      const select = e.target.closest('[data-bus-select]');
+      if (select) {
+        const layer = (this.state.midiLayers || []).find((item) => item.id === select.dataset.busSelect);
+        const mod = layer ? this._midiLayerModule(layer) : null;
+        if (mod) this._syncSelectionUI(mod.id);
+        return;
+      }
+      const addModule = e.target.closest('[data-bus-add-module]');
+      if (addModule) {
+        const layer = (this.state.midiLayers || []).find((item) => item.id === addModule.dataset.busAddModule);
+        if (!layer) return;
+        const placement = this._findPlacement(MODULE_DEFS.pianoRoll.w, MODULE_DEFS.pianoRoll.h);
+        const mod = createModule('pianoRoll', placement);
+        mod.title = String(layer.title || 'MIDI').slice(0, 44);
+        mod.options = { ...(mod.options || {}), midiId: layer.id };
+        this.state.modules.push(mod);
+        layer.moduleId = mod.id;
+        this.visualizer.syncOverlay();
+        this._renderLibrary();
+        this._syncCanvasMeta();
+        this._persist();
+        this._renderMidiBus();
+        this._syncSelectionUI(mod.id);
+        return;
+      }
+      const mute = e.target.closest('[data-bus-mute]');
+      if (mute) {
+        const layer = (this.state.midiLayers || []).find((item) => item.id === mute.dataset.busLayer);
+        const mod = layer ? this._midiLayerModule(layer) : null;
+        if (!mod) return;
+        const index = Number(mute.dataset.busMute);
+        const mutes = Array.isArray(mod.options?.trackMutes) ? mod.options.trackMutes.slice() : [];
+        mutes[index] = !mutes[index];
+        mod.options = { ...(mod.options || {}), trackMutes: mutes };
+        mute.classList.toggle('active', mutes[index]);
+        mute.classList.toggle('mute', mutes[index]);
+        this._persist();
+        return;
+      }
+      const solo = e.target.closest('[data-bus-solo]');
+      if (solo) {
+        const layer = (this.state.midiLayers || []).find((item) => item.id === solo.dataset.busLayer);
+        const mod = layer ? this._midiLayerModule(layer) : null;
+        if (!mod) return;
+        const index = Number(solo.dataset.busSolo);
+        const solos = Array.isArray(mod.options?.trackSolos) ? mod.options.trackSolos.slice() : [];
+        solos[index] = !solos[index];
+        mod.options = { ...(mod.options || {}), trackSolos: solos };
+        solo.classList.toggle('active', solos[index]);
+        solo.classList.toggle('solo', solos[index]);
+        this._persist();
+      }
+    });
+  }
+
   _deleteSelected() {
     const mod = this._selected();
     if (!mod) return;
@@ -4682,6 +4920,7 @@ class NeonScopeApp {
     this._renderLibrary();
     this._syncCanvasMeta();
     this._persist();
+    this._renderMidiBus();
     this._toast(`已移除 ${MODULE_DEFS[mod.type].name}`);
     void index;
   }
@@ -5637,6 +5876,7 @@ class NeonScopeApp {
       timelineState: this.timelineState,
       info: this.state.info,
       midi: this.state.midi,
+      midiLayers: this.state.midiLayers,
       animationCues: this.state.animationCues,
       exportSettings: this.exportSettings,
     };

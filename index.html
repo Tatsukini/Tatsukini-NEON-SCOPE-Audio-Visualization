@@ -124,7 +124,7 @@
               <span>拖放音频或 MIDI 到窗口任意位置</span>
             </div>
             <input type="file" id="audioFile" accept="audio/*,.wav,.mp3,.flac,.ogg,.m4a,.aac" hidden />
-            <input type="file" id="midiFile" accept=".mid,.midi,audio/midi,audio/x-midi" hidden />
+            <input type="file" id="midiFile" accept=".mid,.midi,audio/midi,audio/x-midi" multiple hidden />
             <input type="file" id="bgFile" accept="image/*" hidden />
           </section>
 
@@ -184,6 +184,16 @@
               <span id="keyframeCount">0 个关键帧</span>
             </div>
             <div class="kf-list" id="keyframeList"></div>
+          </section>
+
+          <section class="panel-section extra-panel subpanel-hidden" id="midiBusPanel">
+            <div class="section-head"><span>MIDI 模块总线</span><em>MIDI BUS <b id="midiBusCount">0</b></em></div>
+            <p class="section-help">每个 MIDI 文件拥有独立钢琴卷帘模块；在这里统一管理各层轨道颜色、深度、M/S 与模块参数。</p>
+            <div class="midi-bus-toolbar">
+              <button class="mini-action" id="midiBusImportBtn">＋ 导入 MIDI</button>
+              <span>多层可视化</span>
+            </div>
+            <div class="midi-bus-list" id="midiBusList"></div>
           </section>
 
         </div>
