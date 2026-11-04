@@ -143,7 +143,8 @@ const MODULE_OPTIONS = {
     { key: 'barsVisible', label: '显示小节', type: 'select', default: '16', options: [['2', '2 小节'], ['4', '4 小节'], ['8', '8 小节'], ['16', '16 小节'], ['32', '32 小节']] },
     { key: 'window', label: '手动时间窗口', type: 'select', default: '10', options: [['4', '4 秒'], ['6', '6 秒'], ['10', '10 秒'], ['16', '16 秒'], ['20', '20 秒']] },
     { key: 'midiOffset', label: 'MIDI 偏移', type: 'range', min: -2000, max: 2000, step: 10, default: 0, unit: ' ms' },
-    { key: 'speed', label: '速度倍率', type: 'range', min: 50, max: 250, step: 5, default: 100, unit: '%' },
+    { key: 'midiZoom', label: 'MIDI 缩放', type: 'range', min: 50, max: 200, step: 5, default: 100, unit: '%' },
+    { key: 'speed', label: '滚动速度', type: 'range', min: 25, max: 200, step: 5, default: 100, unit: '%' },
     { key: 'noteStyle', label: '音符样式', type: 'select', default: 'rect', options: [['rect', '长方形'], ['rounded', '圆角长方形']] },
     { key: 'allTrackColor', label: '统一轨道颜色', type: 'toggle', default: false },
     { key: 'globalTrackColor', label: '统一颜色', type: 'color', default: '#ffc46b' },
@@ -5222,7 +5223,8 @@ class NeonScopeApp {
         ${checkbox('autoSpeed', '跟随 MIDI BPM')}
         ${checkbox('syncAudioLength', '按音频长度校准')}
         ${selectControl('barsVisible', '显示小节', [['2', '2 小节'], ['4', '4 小节'], ['8', '8 小节'], ['16', '16 小节'], ['32', '32 小节']], '16')}
-        ${rangeControl('speed', '速度倍率', 50, 250, 5, 100, '%')}
+        ${rangeControl('midiZoom', 'MIDI 缩放', 50, 200, 5, 100, '%')}
+        ${rangeControl('speed', '滚动速度', 25, 200, 5, 100, '%')}
         ${selectControl('window', '手动时间窗口', [['4', '4 秒'], ['6', '6 秒'], ['10', '10 秒'], ['16', '16 秒'], ['20', '20 秒']], '10')}
         ${rangeControl('trackDepth', '默认深度', 0, 100, 5, 55, '%')}
         ${rangeControl('noteThickness', '音符厚度', 50, 200, 5, 100, '%')}

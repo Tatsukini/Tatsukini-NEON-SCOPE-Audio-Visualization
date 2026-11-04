@@ -1735,7 +1735,8 @@ function drawPianoRoll(ctx, mod, body, frame, st, env) {
   const minPitch = st.minPitch, maxPitch = st.maxPitch;
   const pitchSpan = Math.max(12, maxPitch - minPitch + 1);
   const rowH = h / pitchSpan;
-  const speed = clamp(modNum(mod, 'speed', 100, 50, 250) / 100, 0.5, 2.5);
+  const scrollSpeed = clamp(modNum(mod, 'speed', 100, 25, 200) / 100, 0.25, 2);
+  const midiZoom = clamp(modNum(mod, 'midiZoom', 100, 50, 200) / 100, 0.5, 2);
   const autoSpeed = modOpt(mod, 'autoSpeed', true);
   const syncAudioLength = modOpt(mod, 'syncAudioLength', true);
   const barsVisible = modNum(mod, 'barsVisible', 16, 1, 32);
@@ -1748,11 +1749,11 @@ function drawPianoRoll(ctx, mod, body, frame, st, env) {
     : 0;
   const displayBpm = autoSpeed && syncAudioLength && durationBpm >= 40 && durationBpm <= 300 ? durationBpm : midiBpm;
   const manualWindow = modNum(mod, 'window', 10, 4, 20);
-  const windowSec = autoSpeed
-    ? Math.max(1, ((barsVisible * beatsPerBar * 60) / displayBpm) / speed)
-    : manualWindow / speed;
+  const windowSec = (autoSpeed
+    ? ((barsVisible * beatsPerBar * 60) / displayBpm)
+    : manualWindow) / midiZoom;
   const midiOffset = modNum(mod, 'midiOffset', 0, -2000, 2000) / 1000;
-  const midiTime = frame.time - midiOffset;
+  const midiTime = (frame.time - midiOffset) * scrollSpeed;
   const startT = Math.max(0, midiTime - 1.2);
   const endT = startT + windowSec;
   const palette = [accent, '#68e8ff', '#a98bff', '#ffc46b', '#b9ff8a', '#ff8a6b'];
