@@ -140,7 +140,7 @@ const MODULE_OPTIONS = {
   pianoRoll: [
     { key: 'autoSpeed', label: '跟随 MIDI BPM', type: 'toggle', default: true },
     { key: 'syncAudioLength', label: '按音频长度校准', type: 'toggle', default: true },
-    { key: 'barsVisible', label: '显示小节', type: 'select', default: '8', options: [['2', '2 小节'], ['4', '4 小节'], ['8', '8 小节'], ['16', '16 小节'], ['32', '32 小节']] },
+    { key: 'barsVisible', label: '显示小节', type: 'select', default: '16', options: [['2', '2 小节'], ['4', '4 小节'], ['8', '8 小节'], ['16', '16 小节'], ['32', '32 小节']] },
     { key: 'window', label: '手动时间窗口', type: 'select', default: '10', options: [['4', '4 秒'], ['6', '6 秒'], ['10', '10 秒'], ['16', '16 秒'], ['20', '20 秒']] },
     { key: 'midiOffset', label: 'MIDI 偏移', type: 'range', min: -2000, max: 2000, step: 10, default: 0, unit: ' ms' },
     { key: 'speed', label: '速度倍率', type: 'range', min: 50, max: 250, step: 5, default: 100, unit: '%' },
@@ -5188,7 +5188,7 @@ class NeonScopeApp {
     const defaultDepth = Number.isFinite(depthValue) ? depthValue : 55;
     const checkbox = (key, label) => `<label class="check-row compact"><input type="checkbox" data-bus-layer="${busId}" data-bus-key="${key}" ${value(key, true) ? 'checked' : ''}/><span>${label}</span></label>`;
     const colorControl = (key, label) => `<label class="module-option-field module-option-color"><span>${label}</span><input type="color" data-bus-layer="${busId}" data-bus-key="${key}" value="${/^#[0-9a-fA-F]{6}$/.test(String(value(key, '#C7F8FF'))) ? value(key, '#C7F8FF') : '#C7F8FF'}" /></label>`;
-    const selectControl = (key, label, opts) => `<label class="module-option-field"><span>${label}</span><select data-bus-layer="${busId}" data-bus-key="${key}">${opts.map(([v, t]) => `<option value="${v}" ${String(value(key, v)) === String(v) ? 'selected' : ''}>${t}</option>`).join('')}</select></label>`;
+    const selectControl = (key, label, opts, fallback = opts[0]?.[0]) => `<label class="module-option-field"><span>${label}</span><select data-bus-layer="${busId}" data-bus-key="${key}">${opts.map(([v, t]) => `<option value="${v}" ${String(value(key, fallback)) === String(v) ? 'selected' : ''}>${t}</option>`).join('')}</select></label>`;
     const rangeControl = (key, label, min, max, step, fallback, unit = '') => `<div class="field-row module-option-range"><label class="field-label">${label} <output data-bus-output="${busId}:${key}">${Math.round(Number(value(key, fallback)))}${unit}</output></label><input type="range" data-bus-layer="${busId}" data-bus-key="${key}" min="${min}" max="${max}" step="${step}" value="${value(key, fallback)}" /></div>`;
     const order = this._midiTrackOrder(mod, midi);
     const trackRows = order.map((trackIndex, orderIndex) => {
@@ -5218,12 +5218,12 @@ class NeonScopeApp {
     </div><details class="midi-bus-layer" data-bus-card="${busId}" open>
       <summary><span class="midi-bus-layer-name">MIDI 3D 合并层</span><em>${midi.noteCount || 0} NOTES · ${midi.trackCount} TRACKS · ${layers.length} FILES</em><button type="button" class="mini-action" data-bus-select="${busId}">定位</button></summary>
       <div class="midi-bus-grid">
-        ${selectControl('noteStyle', '音符样式', [['rect', '长方形'], ['rounded', '圆角长方形']])}
+        ${selectControl('noteStyle', '音符样式', [['rect', '长方形'], ['rounded', '圆角长方形']], 'rect')}
         ${checkbox('autoSpeed', '跟随 MIDI BPM')}
         ${checkbox('syncAudioLength', '按音频长度校准')}
-        ${selectControl('barsVisible', '显示小节', [['2', '2 小节'], ['4', '4 小节'], ['8', '8 小节'], ['16', '16 小节'], ['32', '32 小节']])}
+        ${selectControl('barsVisible', '显示小节', [['2', '2 小节'], ['4', '4 小节'], ['8', '8 小节'], ['16', '16 小节'], ['32', '32 小节']], '16')}
         ${rangeControl('speed', '速度倍率', 50, 250, 5, 100, '%')}
-        ${selectControl('window', '手动时间窗口', [['4', '4 秒'], ['6', '6 秒'], ['10', '10 秒'], ['16', '16 秒'], ['20', '20 秒']])}
+        ${selectControl('window', '手动时间窗口', [['4', '4 秒'], ['6', '6 秒'], ['10', '10 秒'], ['16', '16 秒'], ['20', '20 秒']], '10')}
         ${rangeControl('trackDepth', '默认深度', 0, 100, 5, 55, '%')}
         ${rangeControl('noteThickness', '音符厚度', 50, 200, 5, 100, '%')}
         ${rangeControl('centerY', '垂直中心', 0, 100, 5, 50, '%')}
@@ -5233,11 +5233,11 @@ class NeonScopeApp {
         ${checkbox('grid', '节拍网格')}${checkbox('labels', '音名标签')}
         ${checkbox('showTitle', '显示标题')}${checkbox('showChords', '显示和弦')}
         <label class="module-option-field"><span>标题文字</span><input type="text" data-bus-layer="${busId}" data-bus-key="title" value="${escape(value('title', ''))}" maxlength="80" placeholder="ALL MIDI" /></label>
-        ${selectControl('titlePosition', '标题位置', [['topLeft', '左上'], ['topCenter', '顶部居中'], ['topRight', '右上']])}
+        ${selectControl('titlePosition', '标题位置', [['topLeft', '左上'], ['topCenter', '顶部居中'], ['topRight', '右上']], 'topLeft')}
         ${colorControl('titleColor', '标题颜色')}${colorControl('chordColor', '和弦颜色')}
         ${rangeControl('titleSize', '标题字号', 12, 64, 1, 40, 'px')}
-        ${selectControl('titleFont', '标题字体', fonts)}
-        ${selectControl('titleAnimation', '标题动画', [['none', '无'], ['slide', '滑入'], ['fade', '淡入']])}
+        ${selectControl('titleFont', '标题字体', fonts, 'Bahnschrift')}
+        ${selectControl('titleAnimation', '标题动画', [['none', '无'], ['slide', '滑入'], ['fade', '淡入']], 'slide')}
       </div>
       <div class="midi-bus-tracks">${trackRows}</div>
     </details>`;

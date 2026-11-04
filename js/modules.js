@@ -1738,7 +1738,7 @@ function drawPianoRoll(ctx, mod, body, frame, st, env) {
   const speed = clamp(modNum(mod, 'speed', 100, 50, 250) / 100, 0.5, 2.5);
   const autoSpeed = modOpt(mod, 'autoSpeed', true);
   const syncAudioLength = modOpt(mod, 'syncAudioLength', true);
-  const barsVisible = modNum(mod, 'barsVisible', 8, 1, 32);
+  const barsVisible = modNum(mod, 'barsVisible', 16, 1, 32);
   const signature = midi.timeSignature || { numerator: 4, denominator: 4 };
   const beatsPerBar = Math.max(1, Number(signature.numerator) || 4) * (4 / Math.max(1, Number(signature.denominator) || 4));
   const midiBpm = Math.max(40, Number(midi.bpm) || 120);
