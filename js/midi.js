@@ -233,6 +233,7 @@ export function parseMidi(arrayBuffer) {
     noteCount: notes.length,
     trackCount: tracks.length,
     maxTick,
+    totalBeats: maxTick / Math.max(1, ppq),
     tickToSec,
   };
 }

@@ -139,6 +139,7 @@ const MODULE_OPTIONS = {
   ],
   pianoRoll: [
     { key: 'autoSpeed', label: '跟随 MIDI BPM', type: 'toggle', default: true },
+    { key: 'syncAudioLength', label: '按音频长度校准', type: 'toggle', default: true },
     { key: 'barsVisible', label: '显示小节', type: 'select', default: '8', options: [['2', '2 小节'], ['4', '4 小节'], ['8', '8 小节'], ['16', '16 小节'], ['32', '32 小节']] },
     { key: 'window', label: '手动时间窗口', type: 'select', default: '10', options: [['4', '4 秒'], ['6', '6 秒'], ['10', '10 秒'], ['16', '16 秒'], ['20', '20 秒']] },
     { key: 'midiOffset', label: 'MIDI 偏移', type: 'range', min: -2000, max: 2000, step: 10, default: 0, unit: ' ms' },
@@ -5009,6 +5010,7 @@ class NeonScopeApp {
     const notes = [];
     let duration = 0;
     let bpm = 0;
+    let totalBeats = 0;
     for (const layer of layers) {
       const count = Math.max(0, Number(layer.trackCount) || layer.trackNames?.length || 0);
       const names = Array.isArray(layer.trackNames) ? layer.trackNames : [];
@@ -5031,6 +5033,7 @@ class NeonScopeApp {
       }
       duration = Math.max(duration, Number(layer.duration) || 0);
       bpm = Math.max(bpm, Number(layer.bpm) || 0);
+      totalBeats = Math.max(totalBeats, Number(layer.totalBeats) || 0);
     }
     notes.sort((a, b) => a.start - b.start || a.pitch - b.pitch);
     this.state.midiMerged = {
@@ -5043,6 +5046,7 @@ class NeonScopeApp {
       noteCount: notes.length,
       duration,
       bpm,
+      totalBeats,
       timeSignature: layers.find((layer) => layer.timeSignature)?.timeSignature || { numerator: 4, denominator: 4 },
     };
     this.state.midi = this.state.midiMerged;
@@ -5216,6 +5220,7 @@ class NeonScopeApp {
       <div class="midi-bus-grid">
         ${selectControl('noteStyle', '音符样式', [['rect', '长方形'], ['rounded', '圆角长方形']])}
         ${checkbox('autoSpeed', '跟随 MIDI BPM')}
+        ${checkbox('syncAudioLength', '按音频长度校准')}
         ${selectControl('barsVisible', '显示小节', [['2', '2 小节'], ['4', '4 小节'], ['8', '8 小节'], ['16', '16 小节'], ['32', '32 小节']])}
         ${rangeControl('speed', '速度倍率', 50, 250, 5, 100, '%')}
         ${selectControl('window', '手动时间窗口', [['4', '4 秒'], ['6', '6 秒'], ['10', '10 秒'], ['16', '16 秒'], ['20', '20 秒']])}
