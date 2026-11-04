@@ -904,6 +904,12 @@ class NeonScopeApp {
       }
       if (raw.type === 'pianoRoll' && raw.options && typeof raw.options === 'object') {
         if (typeof raw.options.midiId === 'string') options.midiId = raw.options.midiId;
+        if (Array.isArray(raw.options.trackOrder)) {
+          const seen = new Set();
+          options.trackOrder = raw.options.trackOrder.slice(0, 32).map(Number)
+            .filter((v) => Number.isInteger(v) && v >= 0 && v < 32 && !seen.has(v) && seen.add(v))
+            .filter((v) => v !== false);
+        }
         if (Array.isArray(raw.options.trackColors)) {
           options.trackColors = raw.options.trackColors.slice(0, 16).map((v) => /^#[0-9a-fA-F]{6}$/.test(String(v)) ? String(v) : null);
         }
@@ -1240,6 +1246,19 @@ class NeonScopeApp {
     d.moduleOptions.addEventListener('click', (e) => {
       const mod = this._selected();
       if (!mod) return;
+      const midi = (this.state.midiLayers || []).find((layer) => layer.id === mod.options?.midiId) || this.state.midi;
+      const up = e.target.closest('[data-midi-up]');
+      if (up) {
+        this._moveMidiTrack(mod, midi, Number(up.dataset.midiUp), -1);
+        this._syncModuleOptions(mod);
+        return;
+      }
+      const down = e.target.closest('[data-midi-down]');
+      if (down) {
+        this._moveMidiTrack(mod, midi, Number(down.dataset.midiDown), 1);
+        this._syncModuleOptions(mod);
+        return;
+      }
       const mute = e.target.closest('[data-midi-mute]');
       if (mute) {
         const index = Number(mute.dataset.midiMute);
@@ -4686,9 +4705,11 @@ class NeonScopeApp {
     const schema = MODULE_OPTIONS[mod.type] || [];
     const def = MODULE_DEFS[mod.type];
     d.moduleOptionsType.textContent = (def?.code || mod.type).toUpperCase();
-    d.moduleOptionsHelp.textContent = schema.length
-      ? '这类模块的独立参数；与布局一起自动保存。'
-      : '这个模块暂时没有额外参数。';
+    d.moduleOptionsHelp.textContent = mod.type === 'pianoRoll'
+      ? '所有 MIDI 轨道在同一 3D 场景中滚动；列表顺序决定纵深（上远下近），近大远小、近快远慢。'
+      : schema.length
+        ? '这类模块的独立参数；与布局一起自动保存。'
+        : '这个模块暂时没有额外参数。';
     d.moduleOptions.innerHTML = schema.map((option) => {
       const value = this._moduleOptionValue(mod, option);
       if (option.type === 'toggle') {
@@ -4726,19 +4747,23 @@ class NeonScopeApp {
     const mutes = Array.isArray(mod.options?.trackMutes) ? mod.options.trackMutes : [];
     const solos = Array.isArray(mod.options?.trackSolos) ? mod.options.trackSolos : [];
     const defaultDepth = Number(this._moduleOptionValue(mod, { key: 'trackDepth', default: 55 })) || 55;
-    return `<div class="midi-track-options"><div class="midi-track-head"><span>轨道 / TRACKS</span><em>颜色 · 深度 · M/S</em></div>
-      <div class="midi-track-list">${tracks.slice(0, 16).map((track, index) => {
-        const color = /^#[0-9a-fA-F]{6}$/.test(colors[index] || '') ? colors[index] : fallback[index % fallback.length];
-        const depth = clamp(Number(depths[index] ?? defaultDepth) || 0, 0, 100);
-        const name = String(track.name || `Track ${index + 1}`).replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
-        return `<div class="midi-track-row" data-midi-track="${index}">
-          <span class="midi-track-no">${String(index + 1).padStart(2, '0')}</span>
+    const order = this._midiTrackOrder(mod, midi);
+    return `<div class="midi-track-options"><div class="midi-track-head"><span>轨道 / TRACKS</span><em>顺序控制纵深 · 上远下近</em></div>
+      <div class="midi-track-list">${order.slice(0, 16).map((trackIndex, orderIndex) => {
+        const track = tracks[trackIndex] || { name: `Track ${trackIndex + 1}` };
+        const color = /^#[0-9a-fA-F]{6}$/.test(colors[trackIndex] || '') ? colors[trackIndex] : fallback[trackIndex % fallback.length];
+        const depth = clamp(Number(depths[trackIndex] ?? defaultDepth) || 0, 0, 100);
+        const name = String(track.name || `Track ${trackIndex + 1}`).replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
+        return `<div class="midi-track-row" data-midi-track="${trackIndex}">
+          <span class="midi-track-no">${String(orderIndex + 1).padStart(2, '0')}</span>
           <span class="midi-track-name" title="${name}">${name}</span>
-          <button type="button" class="midi-track-ms ${mutes[index] ? 'active mute' : ''}" data-midi-mute="${index}" title="静音">M</button>
-          <button type="button" class="midi-track-ms ${solos[index] ? 'active solo' : ''}" data-midi-solo="${index}" title="独奏">S</button>
-          <input type="color" data-midi-color="${index}" value="${color}" title="轨道颜色" />
-          <input type="range" data-midi-depth="${index}" min="0" max="100" step="5" value="${depth}" title="视觉深度" />
-          <output data-midi-depth-out="${index}">${Math.round(depth)}%</output>
+          <button type="button" class="midi-track-ms midi-track-move" data-midi-up="${trackIndex}" title="上移（更远）">↑</button>
+          <button type="button" class="midi-track-ms midi-track-move" data-midi-down="${trackIndex}" title="下移（更近）">↓</button>
+          <button type="button" class="midi-track-ms ${mutes[trackIndex] ? 'active mute' : ''}" data-midi-mute="${trackIndex}" title="静音">M</button>
+          <button type="button" class="midi-track-ms ${solos[trackIndex] ? 'active solo' : ''}" data-midi-solo="${trackIndex}" title="独奏">S</button>
+          <input type="color" data-midi-color="${trackIndex}" value="${color}" title="轨道颜色" />
+          <input type="range" data-midi-depth="${trackIndex}" min="0" max="100" step="5" value="${depth}" title="额外深度偏移" />
+          <output data-midi-depth-out="${trackIndex}">${Math.round(depth)}%</output>
         </div>`;
       }).join('')}</div></div>`;
   }
@@ -4746,6 +4771,34 @@ class NeonScopeApp {
   _midiLayerModule(layer) {
     return this.state.modules.find((m) => m.type === 'pianoRoll'
       && (m.options?.midiId === layer.id || m.id === layer.moduleId)) || null;
+  }
+
+  _midiTrackOrder(mod, midi) {
+    const count = Math.max(0, Number(midi?.trackCount) || 0);
+    const order = [];
+    const seen = new Set();
+    for (const value of (Array.isArray(mod.options?.trackOrder) ? mod.options.trackOrder : [])) {
+      const index = Number(value);
+      if (Number.isInteger(index) && index >= 0 && index < count && !seen.has(index)) {
+        seen.add(index);
+        order.push(index);
+      }
+    }
+    for (let index = 0; index < count; index++) {
+      if (!seen.has(index)) order.push(index);
+    }
+    return order;
+  }
+
+  _moveMidiTrack(mod, midi, trackIndex, delta) {
+    const order = this._midiTrackOrder(mod, midi);
+    const position = order.indexOf(trackIndex);
+    const target = clamp(position + delta, 0, order.length - 1);
+    if (position < 0 || target === position) return;
+    order.splice(position, 1);
+    order.splice(target, 0, trackIndex);
+    mod.options = { ...(mod.options || {}), trackOrder: order };
+    this._persist();
   }
 
   _renderMidiBus() {
@@ -4775,18 +4828,21 @@ class NeonScopeApp {
       const colorControl = (key, label) => `<label class="module-option-field module-option-color"><span>${label}</span><input type="color" data-bus-layer="${layer.id}" data-bus-key="${key}" value="${/^#[0-9a-fA-F]{6}$/.test(String(value(key, '#C7F8FF'))) ? value(key, '#C7F8FF') : '#C7F8FF'}" /></label>`;
       const selectControl = (key, label, opts) => `<label class="module-option-field"><span>${label}</span><select data-bus-layer="${layer.id}" data-bus-key="${key}">${opts.map(([v, t]) => `<option value="${v}" ${String(value(key, v)) === String(v) ? 'selected' : ''}>${t}</option>`).join('')}</select></label>`;
       const rangeControl = (key, label, min, max, step, fallback, unit = '') => `<div class="field-row module-option-range"><label class="field-label">${label} <output data-bus-output="${layer.id}:${key}">${Math.round(Number(value(key, fallback)))}${unit}</output></label><input type="range" data-bus-layer="${layer.id}" data-bus-key="${key}" min="${min}" max="${max}" step="${step}" value="${value(key, fallback)}" /></div>`;
-      const trackRows = Array.from({ length: trackCount }, (_, index) => {
-        const color = /^#[0-9a-fA-F]{6}$/.test(colors[index] || '') ? colors[index] : palette[index % palette.length];
-        const depth = clamp(Number(depths[index] ?? defaultDepth) || 0, 0, 100);
-        const name = escape(trackNames[index] || `Track ${index + 1}`);
-        return `<div class="midi-track-row" data-bus-track="${index}">
-          <span class="midi-track-no">${String(index + 1).padStart(2, '0')}</span>
+      const order = this._midiTrackOrder(mod, layer);
+      const trackRows = order.map((trackIndex, orderIndex) => {
+        const color = /^#[0-9a-fA-F]{6}$/.test(colors[trackIndex] || '') ? colors[trackIndex] : palette[trackIndex % palette.length];
+        const depth = clamp(Number(depths[trackIndex] ?? defaultDepth) || 0, 0, 100);
+        const name = escape(trackNames[trackIndex] || `Track ${trackIndex + 1}`);
+        return `<div class="midi-track-row" data-bus-track="${trackIndex}">
+          <span class="midi-track-no">${String(orderIndex + 1).padStart(2, '0')}</span>
           <span class="midi-track-name" title="${name}">${name}</span>
-          <button type="button" class="midi-track-ms ${mutes[index] ? 'active mute' : ''}" data-bus-mute="${index}" data-bus-layer="${layer.id}" title="静音">M</button>
-          <button type="button" class="midi-track-ms ${solos[index] ? 'active solo' : ''}" data-bus-solo="${index}" data-bus-layer="${layer.id}" title="独奏">S</button>
-          <input type="color" data-bus-color="${index}" data-bus-layer="${layer.id}" value="${color}" title="轨道颜色" />
-          <input type="range" data-bus-depth="${index}" data-bus-layer="${layer.id}" min="0" max="100" step="5" value="${depth}" title="视觉深度" />
-          <output data-bus-depth-out="${layer.id}:${index}">${Math.round(depth)}%</output>
+          <button type="button" class="midi-track-ms midi-track-move" data-bus-up="${trackIndex}" data-bus-layer="${layer.id}" title="上移（更远）">↑</button>
+          <button type="button" class="midi-track-ms midi-track-move" data-bus-down="${trackIndex}" data-bus-layer="${layer.id}" title="下移（更近）">↓</button>
+          <button type="button" class="midi-track-ms ${mutes[trackIndex] ? 'active mute' : ''}" data-bus-mute="${trackIndex}" data-bus-layer="${layer.id}" title="静音">M</button>
+          <button type="button" class="midi-track-ms ${solos[trackIndex] ? 'active solo' : ''}" data-bus-solo="${trackIndex}" data-bus-layer="${layer.id}" title="独奏">S</button>
+          <input type="color" data-bus-color="${trackIndex}" data-bus-layer="${layer.id}" value="${color}" title="轨道颜色" />
+          <input type="range" data-bus-depth="${trackIndex}" data-bus-layer="${layer.id}" min="0" max="100" step="5" value="${depth}" title="额外深度偏移" />
+          <output data-bus-depth-out="${layer.id}:${trackIndex}">${Math.round(depth)}%</output>
         </div>`;
       }).join('');
       return `<details class="midi-bus-layer" data-bus-card="${layer.id}" ${layerIndex === 0 ? 'open' : ''}>
@@ -4876,6 +4932,24 @@ class NeonScopeApp {
         this._persist();
         this._renderMidiBus();
         this._syncSelectionUI(mod.id);
+        return;
+      }
+      const up = e.target.closest('[data-bus-up]');
+      if (up) {
+        const layer = (this.state.midiLayers || []).find((item) => item.id === up.dataset.busLayer);
+        const mod = layer ? this._midiLayerModule(layer) : null;
+        if (!mod) return;
+        this._moveMidiTrack(mod, layer, Number(up.dataset.busUp), -1);
+        this._renderMidiBus();
+        return;
+      }
+      const down = e.target.closest('[data-bus-down]');
+      if (down) {
+        const layer = (this.state.midiLayers || []).find((item) => item.id === down.dataset.busLayer);
+        const mod = layer ? this._midiLayerModule(layer) : null;
+        if (!mod) return;
+        this._moveMidiTrack(mod, layer, Number(down.dataset.busDown), 1);
+        this._renderMidiBus();
         return;
       }
       const mute = e.target.closest('[data-bus-mute]');

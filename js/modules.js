@@ -1747,6 +1747,23 @@ function drawPianoRoll(ctx, mod, body, frame, st, env) {
   const trackMutes = Array.isArray(mod.options?.trackMutes) ? mod.options.trackMutes : [];
   const trackSolos = Array.isArray(mod.options?.trackSolos) ? mod.options.trackSolos : [];
   const soloActive = trackSolos.some(Boolean);
+  const trackCount = Math.max(1, Number(midi.trackCount) || 1);
+  const rawOrder = Array.isArray(mod.options?.trackOrder) ? mod.options.trackOrder : [];
+  const trackOrder = [];
+  const seenTracks = new Set();
+  for (const value of rawOrder) {
+    const index = Number(value);
+    if (Number.isInteger(index) && index >= 0 && index < trackCount && !seenTracks.has(index)) {
+      seenTracks.add(index);
+      trackOrder.push(index);
+    }
+  }
+  for (let index = 0; index < trackCount; index++) {
+    if (!seenTracks.has(index)) trackOrder.push(index);
+  }
+  const orderPosition = new Map(trackOrder.map((track, index) => [track, index]));
+  const horizonX = x + w * 0.10;
+  const horizonY = y + h * 0.10;
 
   // Pitch rows and keyboard.
   for (let pitch = minPitch; pitch <= maxPitch; pitch++) {
@@ -1795,6 +1812,7 @@ function drawPianoRoll(ctx, mod, body, frame, st, env) {
   ctx.beginPath();
   ctx.rect(x, y, w, h);
   ctx.clip();
+  const visible = [];
   let count = 0;
   for (const note of midi.notes) {
     if (note.end < startT || note.start > endT) continue;
@@ -1802,26 +1820,39 @@ function drawPianoRoll(ctx, mod, body, frame, st, env) {
     if (trackMutes[trackIndex]) continue;
     if (soloActive && !trackSolos[trackIndex]) continue;
     if (count++ > 5000) break;
+    const orderIndex = orderPosition.get(trackIndex) ?? trackIndex;
+    const orderDepth = orderPosition.size > 1 ? orderIndex / (orderPosition.size - 1) : 0.5;
+    const bias = (clamp(Number(trackDepths[trackIndex] ?? defaultDepth * 100) || 0, 0, 100) / 100 - 0.5) * 0.22;
+    const z = clamp(orderDepth + bias, 0, 1);
+    const scale = 0.62 + z * 0.95;
+    const laneOffset = (z - 0.5) * h * 0.28;
     const nx = x + ((note.start - startT) / windowSec) * w;
     const nw = Math.max(1.5, ((note.end - note.start) / windowSec) * w);
     const ny = y + h - ((note.pitch - minPitch + 1) / pitchSpan) * h;
-    const depth = clamp(Number(trackDepths[trackIndex] ?? defaultDepth * 100) || 0, 0, 100) / 100;
+    const px = horizonX + (nx - horizonX) * scale;
+    const py = horizonY + (ny - horizonY) * scale + laneOffset;
+    const pw = nw * scale;
     const color = /^#[0-9a-fA-F]{6}$/.test(trackColors[trackIndex] || '') ? trackColors[trackIndex] : palette[trackIndex % palette.length];
     const active = frame.time >= note.start && frame.time <= note.end;
-    const depthAlpha = 0.38 + depth * 0.62;
-    ctx.globalAlpha = (mod.opacity ?? 1) * depthAlpha * (active ? 1 : (0.32 + (note.velocity / 127) * 0.5));
+    const nh = Math.max(1.1, rowH * (0.65 + z * 0.50) - 0.7) * scale;
+    visible.push({ note, trackIndex, z, scale, px, py, pw, nh, color, active });
+  }
+  visible.sort((a, b) => a.z - b.z || a.note.start - b.note.start);
+  for (const item of visible) {
+    const { note, z, scale, px, py, pw, nh, color, active } = item;
+    const depthAlpha = 0.30 + z * 0.70;
+    ctx.globalAlpha = (mod.opacity ?? 1) * depthAlpha * (active ? 1 : (0.30 + (note.velocity / 127) * 0.52));
     ctx.fillStyle = color;
     if (active) {
       ctx.shadowColor = color;
-      ctx.shadowBlur = 4 + depth * 7;
+      ctx.shadowBlur = (3 + z * 8) * scale;
     }
-    const nh = Math.max(1.1, rowH * (0.58 + depth * 0.38) - 0.7);
-    const noteY = ny + 0.35 + (0.5 - depth) * rowH * 0.12;
+    const noteY = py + 0.35 + (0.5 - z) * rowH * 0.08;
     if (noteStyle === 'rounded') {
-      roundRect(ctx, nx, noteY, nw, nh, Math.min(nh / 2, 4));
+      roundRect(ctx, px, noteY, pw, nh, Math.min(nh / 2, 4 * scale));
       ctx.fill();
     } else {
-      ctx.fillRect(nx, noteY, nw, nh);
+      ctx.fillRect(px, noteY, pw, nh);
     }
     ctx.shadowBlur = 0;
   }
