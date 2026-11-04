@@ -4996,12 +4996,12 @@ class NeonScopeApp {
     if (!silent) this._toast(`布局已切换 · ${preset.label}`);
   }
 
-  _syncRangeTrackColor() {
+  _syncRangeTrackColor(bgHex = null) {
     const style = getComputedStyle(document.body);
     const raw = style.backgroundColor || '';
     const match = raw.match(/rgba?\(([^)]+)\)/i);
-    let rgb = null;
-    if (match) {
+    let rgb = /^#[0-9a-fA-F]{6}$/.test(bgHex || '') ? [1, 3, 5].map((i) => parseInt(bgHex.slice(i, i + 2), 16)) : null;
+    if (!rgb && match) {
       const parts = match[1].split(',').map((part) => Number(part.trim()));
       if (parts.length >= 3 && parts.every((n) => Number.isFinite(n))) rgb = parts.slice(0, 3);
     }
@@ -5124,6 +5124,7 @@ class NeonScopeApp {
     if (this.dom.themeText) this.dom.themeText.value = colors.text;
     if (this.dom.themeChart) this.dom.themeChart.value = s.themeChart;
     if (this.dom.themeChartFollow) this.dom.themeChartFollow.value = s.themeChartFollow;
+    this._syncRangeTrackColor(colors.bg);
     this.visualizer?.applyBackgroundSettings();
     if (!noPersist) this._persist();
     if (!silent) this._toast('界面四色已更新', 'info', 1600);
