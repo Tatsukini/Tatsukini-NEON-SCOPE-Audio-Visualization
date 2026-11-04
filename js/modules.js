@@ -2054,7 +2054,7 @@ function drawBasicInfo(ctx, mod, body, frame, st, env) {
   const titleSize = 50 * k;
   ctx.fillStyle = ink;
   ctx.font = `700 ${titleSize}px ${SANS}`;
-  ctx.fillText(`{${title}}`, tx, y + p + titleSize + tiny * 2, tw);
+  ctx.fillText(String(title), tx, y + p + titleSize + tiny * 2, tw);
   ctx.fillStyle = pink;
   ctx.fillRect(tx, y + p + titleSize + tiny * 4, Math.min(tw * 0.54, 190), 2);
 
