@@ -1736,7 +1736,15 @@ function drawPianoRoll(ctx, mod, body, frame, st, env) {
   const pitchSpan = Math.max(12, maxPitch - minPitch + 1);
   const rowH = h / pitchSpan;
   const speed = clamp(modNum(mod, 'speed', 100, 50, 250) / 100, 0.5, 2.5);
-  const windowSec = modNum(mod, 'window', 10, 4, 20) / speed;
+  const autoSpeed = modOpt(mod, 'autoSpeed', true);
+  const barsVisible = modNum(mod, 'barsVisible', 8, 1, 32);
+  const signature = midi.timeSignature || { numerator: 4, denominator: 4 };
+  const beatsPerBar = Math.max(1, Number(signature.numerator) || 4) * (4 / Math.max(1, Number(signature.denominator) || 4));
+  const midiBpm = Math.max(40, Number(midi.bpm) || 120);
+  const manualWindow = modNum(mod, 'window', 10, 4, 20);
+  const windowSec = autoSpeed
+    ? Math.max(1, ((barsVisible * beatsPerBar * 60) / midiBpm) / speed)
+    : manualWindow / speed;
   const midiOffset = modNum(mod, 'midiOffset', 0, -2000, 2000) / 1000;
   const midiTime = frame.time - midiOffset;
   const startT = Math.max(0, midiTime - 1.2);
@@ -1930,7 +1938,7 @@ function drawPianoRoll(ctx, mod, body, frame, st, env) {
   ctx.fillText(`${midi.trackCount} TRACKS · ${midi.noteCount} NOTES`, x, y + h + 9);
   ctx.textAlign = 'right';
   ctx.fillStyle = rgba(accent, 0.62);
-  ctx.fillText(`BPM ${Math.round(midi.bpm)}`, x + w, y + h + 9);
+  ctx.fillText(`BPM ${Math.round(midiBpm)} · ${signature.numerator}/${signature.denominator}`, x + w, y + h + 9);
 }
 
 // ── Export dispatcher ───────────────────────────────────────────────────────

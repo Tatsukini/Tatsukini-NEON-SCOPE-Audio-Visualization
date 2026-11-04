@@ -460,7 +460,8 @@ export class Visualizer {
       }
       return;
     }
-    const delay = Math.max(0, 1000 / fps);
+    const elapsed = this._lastDrawTs ? performance.now() - this._lastDrawTs : 0;
+    const delay = Math.max(0, 1000 / fps - elapsed);
     this._previewTimer = setTimeout(() => {
       this._previewTimer = 0;
       this._loop(performance.now());
