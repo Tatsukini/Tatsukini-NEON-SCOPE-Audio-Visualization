@@ -55,6 +55,8 @@
 
 项目根目录下同时提供 `NEON-SCOPE-win64.zip` 作为压缩分发版本（内含 EXE、使用说明与可替换的 `assets` 示例素材）。
 
+Windows 构建使用 [SignPath Foundation](https://signpath.org/) 作为开源项目可信代码签名方案；签名由 SignPath Foundation 证书完成。
+
 ### EXE 的数据位置
 
 优先使用：
@@ -234,10 +236,34 @@ powershell -ExecutionPolicy Bypass -File .\build-native.ps1
 
 脚本会在 `dist\` 生成新的 `NEON-SCOPE.exe` 并打包 `NEON-SCOPE-win64.zip`。
 
+### GitHub Actions
+
+仓库包含 [`.github/workflows/build-windows.yml`](.github/workflows/build-windows.yml)。推送 `V*` 标签或手动触发 workflow 时，会在 `windows-latest` 上构建并上传未签名产物：
+
+```text
+NEON-SCOPE-win64-unsigned
+```
+
+### Code signing / 代码签名
+
+NEON//SCOPE 使用 [SignPath Foundation](https://signpath.org/) 为开源 Windows 构建提供可信代码签名支持。签名后的发布产物由 SignPath Foundation 证书签名，而不是由个人证书签名。
+
+For the SignPath Foundation program, this project is built automatically from the public repository by GitHub Actions and publishes Windows artifacts through GitHub Releases.
+
+## License / 许可证
+
+源代码使用 MIT License，见 [LICENSE](LICENSE)。
+
+`assets/` 下的示例音频、MIDI、字体和图片仍归各自作者所有，不包含在 MIT 许可范围内。
+
+## Privacy / 隐私
+
+见 [PRIVACY.md](PRIVACY.md)。应用本地运行，不上传音频、MIDI、工程文件或个人信息；插件可能按其自身逻辑联网，请只安装可信插件。
+
 ## 已知限制
 
 - 画布固定 16:9（逻辑分辨率 1920×1080），所有导出分辨率均为 16:9。
 - 视频导出为实时录制，不支持后台静默渲染；4K/60FPS 对性能要求较高，建议先用 1080P。
 - MIDI 只作为钢琴卷帘可视化数据，不参与音频分析或合成；请使用导入音频或 DEMO 作为播放时间轴。
-- EXE 未做代码签名，SmartScreen 可能提示；这不影响功能。
+- Windows 构建正在接入 SignPath Foundation 可信签名；在签名正式启用前，SmartScreen 仍可能提示“未知发布者”。
 - 如果系统没有 WebView2 Runtime，需要先安装（Windows 10/11 通常已经自带）。

@@ -1,0 +1,45 @@
+name: Build Windows
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "V*"
+  pull_request:
+    paths:
+      - "native/**"
+      - "js/**"
+      - "index.html"
+      - "styles.css"
+      - "assets/**"
+      - "build-native.ps1"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Build portable Windows package
+        shell: pwsh
+        run: ./build-native.ps1
+
+      - name: Upload unsigned artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: NEON-SCOPE-win64-unsigned
+          path: |
+            NEON-SCOPE-win64.zip
+            dist/NEON-SCOPE.exe
+          if-no-files-found: error
+          retention-days: 14
