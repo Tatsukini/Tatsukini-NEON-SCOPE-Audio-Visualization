@@ -725,7 +725,8 @@ function drawLissajous(ctx, mod, body, frame, st, env) {
   }
 
   let peak = 0.02;
-  for (let i = 0; i < 8192; i += 4) {
+  const tdLength = frame.tdL?.length || 0;
+  for (let i = 0; i < tdLength; i += 4) {
     const a = Math.max(Math.abs(frame.tdL[i]), Math.abs(frame.tdR[i]));
     if (a > peak) peak = a;
   }
@@ -742,9 +743,9 @@ function drawLissajous(ctx, mod, body, frame, st, env) {
   lc.globalCompositeOperation = 'lighter';
   const scale = 1.5;
   const r = hexToRgb(accent);
-  const step = Math.max(1, Math.floor(8192 / 1400));
+  const step = Math.max(1, Math.floor(tdLength / 1400));
   lc.beginPath();
-  for (let i = 0; i < 8192; i += step) {
+  for (let i = 0; i < tdLength; i += step) {
     const l = clamp(frame.tdL[i] * gain, -1.2, 1.2);
     const rr = clamp(frame.tdR[i] * gain, -1.2, 1.2);
     const px = layer.canvas.width / 2 + l * radius * scale * 1.2;
@@ -755,7 +756,7 @@ function drawLissajous(ctx, mod, body, frame, st, env) {
   lc.lineWidth = Math.max(0.8, dotSize * scale);
   lc.stroke();
   lc.fillStyle = `rgba(255,235,246,${0.24 + frame.energy * 0.22})`;
-  for (let i = 0; i < 8192; i += step * 2) {
+  for (let i = 0; i < tdLength; i += step * 2) {
     const l = clamp(frame.tdL[i] * gain, -1.2, 1.2);
     const rr = clamp(frame.tdR[i] * gain, -1.2, 1.2);
     const mag = Math.abs(l) + Math.abs(rr);
@@ -791,7 +792,7 @@ function drawLissajous(ctx, mod, body, frame, st, env) {
 function barValues(frame, count, fMin = 24, fMax = 20000) {
   const out = new Float32Array(count);
   const nyquist = frame.sampleRate / 2;
-  const binHz = frame.sampleRate / 8192;
+  const binHz = frame.sampleRate / Math.max(2, frame.binCount * 2);
   for (let i = 0; i < count; i++) {
     const f0 = fMin * Math.pow(fMax / fMin, i / count);
     const f1 = fMin * Math.pow(fMax / fMin, (i + 1) / count);
@@ -935,7 +936,7 @@ function drawSpectrogram(ctx, mod, body, frame, st, env) {
     const rgb = hexToRgb(accent);
     const img = tc.createImageData(columns, TH);
     const ptr = img.data;
-    const binHz = frame.sampleRate / 8192;
+    const binHz = frame.sampleRate / Math.max(2, frame.binCount * 2);
     for (let cx = 0; cx < columns; cx++) {
       for (let yy = 0; yy < TH; yy++) {
         const t = 1 - yy / (TH - 1);
@@ -1219,8 +1220,9 @@ function drawStereometer(ctx, mod, body, frame, st, env) {
   lc.globalCompositeOperation = 'lighter';
   const scale = 1.5;
   const rgb = hexToRgb(accent);
-  const step = Math.max(1, Math.floor(8192 / 550));
-  for (let i = 0; i < 8192; i += step) {
+  const tdLength = frame.tdL?.length || 0;
+  const step = Math.max(1, Math.floor(tdLength / 550));
+  for (let i = 0; i < tdLength; i += step) {
     const l = frame.tdL[i], r = frame.tdR[i];
     const mid = (l + r) * 0.7071;
     const side = (r - l) * 0.7071;
@@ -1286,9 +1288,10 @@ function drawStereoField(ctx, mod, body, frame, st, env) {
   const density = modNum(mod, 'density', 100, 20, 100) / 100;
   const hist = stateArray(st, 'hist', bins);
   hist.fill(0);
-  const step = Math.max(1, Math.floor(8192 / (300 + density * 600)));
+  const tdLength = frame.tdL?.length || 0;
+  const step = Math.max(1, Math.floor(tdLength / (300 + density * 600)));
   ctx.fillStyle = rgba(accent, 0.22);
-  for (let i = 0; i < 8192; i += step) {
+  for (let i = 0; i < tdLength; i += step) {
     const l = frame.tdL[i], r = frame.tdR[i];
     const mag = (Math.abs(l) + Math.abs(r)) * 0.5;
     if (mag < 0.004) continue;
@@ -2109,6 +2112,182 @@ function drawBasicInfo(ctx, mod, body, frame, st, env) {
   ctx.restore();
 }
 
+function drawBandRings(ctx, mod, body, frame, st, env) {
+  const accent = body.accent;
+  const p = 10;
+  const x = body.x + p, y = body.y + p + 1;
+  const w = body.w - p * 2, h = body.h - p * 2 - 10;
+  const gain = clamp(modNum(mod, 'bandGain', 100, 50, 200) / 100, 0.5, 2);
+  const values = [frame.low, frame.mid, frame.high].map((v) => clamp((v || 0) * gain, 0, 1));
+  const labels = ['LOW', 'MID', 'HIGH'];
+  const colors = [accent, '#68e8ff', '#ffc46b'];
+  const style = modOpt(mod, 'bandStyle', 'rings');
+  const showLabels = modOpt(mod, 'bandLabels', true);
+  if (style === 'bars') {
+    const bw = w / 3;
+    for (let i = 0; i < 3; i++) {
+      const bh = Math.max(2, values[i] * h * 0.82);
+      const bx = x + i * bw + bw * 0.18;
+      const by = y + h - bh;
+      ctx.fillStyle = 'rgba(255,255,255,.045)';
+      ctx.fillRect(bx, y + h * 0.12, bw * 0.64, h * 0.88);
+      ctx.fillStyle = colors[i];
+      ctx.globalAlpha = (mod.opacity ?? 1) * (0.35 + values[i] * 0.65);
+      ctx.fillRect(bx, by, bw * 0.64, bh);
+      ctx.globalAlpha = mod.opacity ?? 1;
+      if (showLabels) {
+        mono(ctx, 6, '500'); ctx.fillStyle = colors[i]; ctx.textAlign = 'center';
+        ctx.fillText(labels[i], bx + bw * 0.32, y + h + 7);
+      }
+    }
+    return;
+  }
+  const cx = x + w / 2, cy = y + h / 2;
+  const radius = Math.max(18, Math.min(w, h) * 0.34);
+  for (let i = 0; i < 3; i++) {
+    const rr = radius * (1 - i * 0.22);
+    ctx.strokeStyle = 'rgba(255,255,255,.08)';
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.arc(cx, cy, rr, 0, Math.PI * 2); ctx.stroke();
+    ctx.strokeStyle = colors[i];
+    ctx.lineWidth = 3 + values[i] * 8;
+    ctx.lineCap = 'round';
+    ctx.globalAlpha = (mod.opacity ?? 1) * (0.30 + values[i] * 0.70);
+    ctx.beginPath();
+    ctx.arc(cx, cy, rr, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * Math.max(0.02, values[i]));
+    ctx.stroke();
+    ctx.globalAlpha = mod.opacity ?? 1;
+  }
+  if (showLabels) {
+    mono(ctx, 6, '500'); ctx.textAlign = 'left';
+    for (let i = 0; i < 3; i++) {
+      ctx.fillStyle = colors[i];
+      ctx.fillText(`${labels[i]} ${Math.round(values[i] * 100)}`, x + 2, y + 9 + i * 10);
+    }
+  }
+  ctx.fillStyle = rgba(accent, 0.55);
+  mono(ctx, 5.5, '400'); ctx.textAlign = 'center';
+  ctx.fillText('BAND ENERGY', cx, cy + 3);
+}
+
+function drawPeakSpectrum(ctx, mod, body, frame, st, env) {
+  const accent = body.accent;
+  const p = 9;
+  const x = body.x + p, y = body.y + p + 1;
+  const w = body.w - p * 2, h = body.h - p * 2 - 12;
+  const barsOpt = modOpt(mod, 'bars', 'auto');
+  const bars = barsOpt === 'auto' ? Math.max(28, Math.min(72, Math.floor(w / 5.6))) : clamp(Number(barsOpt) || 48, 24, 96);
+  const tilt = modNum(mod, 'tilt', 35, 0, 100) / 100;
+  const values = barValues(frame, bars);
+  if (!st.values || st.values.length !== bars) st.values = new Float32Array(bars);
+  if (!st.peaks || st.peaks.length !== bars) st.peaks = new Float32Array(bars);
+  const floor = y + h;
+  for (let i = 0; i < bars; i++) {
+    const v = clamp(values[i] * (1 - tilt * (i / Math.max(1, bars - 1)) * 0.35), 0, 1);
+    st.values[i] = st.values[i] * 0.62 + v * 0.38;
+    st.peaks[i] = Math.max(st.peaks[i] * 0.985, st.values[i]);
+    const bw = w / bars;
+    const bx = x + i * bw;
+    const bh = Math.max(1, st.values[i] * h * 0.86);
+    ctx.fillStyle = i > bars * 0.66 ? '#ffc46b' : (i > bars * 0.33 ? '#68e8ff' : accent);
+    ctx.globalAlpha = (mod.opacity ?? 1) * (0.35 + st.values[i] * 0.65);
+    ctx.fillRect(bx + bw * 0.18, floor - bh, Math.max(1, bw * 0.64), bh);
+    ctx.globalAlpha = mod.opacity ?? 1;
+    if (modOpt(mod, 'peakHold', true) && st.peaks[i] > 0.02) {
+      ctx.fillStyle = rgba(accent, 0.85);
+      ctx.fillRect(bx + bw * 0.12, floor - st.peaks[i] * h * 0.86 - 1, Math.max(1, bw * 0.76), 1.5);
+    }
+  }
+  mono(ctx, 5.5, '400');
+  ctx.fillStyle = 'rgba(255,255,255,.25)'; ctx.textAlign = 'left';
+  ctx.fillText(`${bars} BANDS · PEAK HOLD`, x, y + h + 8);
+  ctx.textAlign = 'right'; ctx.fillStyle = rgba(accent, 0.6);
+  ctx.fillText(`${Math.round(frame.centroid || 0)} Hz`, x + w, y + h + 8);
+}
+
+function drawBeatPulse(ctx, mod, body, frame, st, env) {
+  const accent = body.accent;
+  const p = 9;
+  const x = body.x + p, y = body.y + p + 1;
+  const w = body.w - p * 2, h = body.h - p * 2 - 10;
+  const cx = x + w / 2, cy = y + h / 2;
+  const base = Math.min(w, h) * 0.26;
+  const sensitivity = clamp(modNum(mod, 'pulseSensitivity', 100, 50, 200) / 100, 0.5, 2);
+  const maxRings = Math.round(modNum(mod, 'pulseRings', 6, 3, 10));
+  const now = frame.time || 0;
+  if (!st.rings) st.rings = [];
+  if (!st.lastTime) st.lastTime = now;
+  const dt = Math.max(0, Math.min(0.1, now - st.lastTime));
+  st.lastTime = now;
+  const pulse = clamp((frame.beatPulse || 0) * sensitivity, 0, 1);
+  if (pulse > 0.62 && now - (st.lastBeat || -10) > 0.18) {
+    st.lastBeat = now;
+    st.rings.push({ r: base * 0.35, a: 0.55 });
+  }
+  st.rings = st.rings.filter((ring) => {
+    ring.r += dt * base * 1.4;
+    ring.a -= dt * 0.7;
+    return ring.a > 0.02 && ring.r < Math.max(w, h) * 0.75;
+  });
+  if (st.rings.length > maxRings) st.rings.splice(0, st.rings.length - maxRings);
+  for (const ring of st.rings) {
+    ctx.strokeStyle = rgba(accent, ring.a);
+    ctx.lineWidth = 1.2 + pulse * 2;
+    ctx.beginPath(); ctx.arc(cx, cy, ring.r, 0, Math.PI * 2); ctx.stroke();
+  }
+  ctx.fillStyle = rgba(accent, 0.12 + pulse * 0.30);
+  ctx.beginPath(); ctx.arc(cx, cy, base * (0.7 + pulse * 0.6), 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = accent; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.arc(cx, cy, base * 0.72, 0, Math.PI * 2); ctx.stroke();
+  ctx.strokeStyle = rgba(accent, 0.28); ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.arc(cx, cy, base * 0.9, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * clamp(frame.beatPhase || 0, 0, 1)); ctx.stroke();
+  if (modOpt(mod, 'showBpm', true)) {
+    ctx.fillStyle = rgba(accent, 0.75); ctx.textAlign = 'center';
+    mono(ctx, 7, '500');
+    ctx.fillText(`${Math.round(frame.bpm || 0)} BPM`, cx, cy + 3);
+    mono(ctx, 5, '400'); ctx.fillStyle = 'rgba(255,255,255,.28)';
+    ctx.fillText(`BEAT ${Math.round(clamp(frame.beatPhase || 0, 0, 1) * 100)}%`, cx, cy + 13);
+  }
+}
+
+function drawCircularScope(ctx, mod, body, frame, st, env) {
+  const accent = body.accent;
+  const p = 10;
+  const x = body.x + p, y = body.y + p + 1;
+  const w = body.w - p * 2, h = body.h - p * 2 - 10;
+  const cx = x + w / 2, cy = y + h / 2;
+  const radius = Math.min(w, h) * 0.36;
+  const samples = clamp(Number(modOpt(mod, 'scopeSamples', 256)) || 256, 64, 1024);
+  const width = modNum(mod, 'scopeWidth', 1.5, 1, 4);
+  const glow = modOpt(mod, 'scopeGlow', true);
+  const left = frame.tdL || new Float32Array(1024);
+  const right = frame.tdR || left;
+  const step = Math.max(1, Math.floor(left.length / samples));
+  ctx.save();
+  ctx.lineWidth = width;
+  if (glow) { ctx.shadowBlur = 8; ctx.shadowColor = accent; }
+  for (let ch = 0; ch < 2; ch++) {
+    const data = ch === 0 ? left : right;
+    ctx.strokeStyle = ch === 0 ? accent : '#68e8ff';
+    ctx.globalAlpha = (mod.opacity ?? 1) * (ch === 0 ? 0.9 : 0.55);
+    ctx.beginPath();
+    for (let i = 0; i <= samples; i++) {
+      const value = clamp(data[Math.min(data.length - 1, i * step)] || 0, -1, 1);
+      const angle = -Math.PI / 2 + (i / samples) * Math.PI * 2;
+      const rr = radius + value * radius * 0.42 * (ch === 0 ? 1 : -1);
+      const px = cx + Math.cos(angle) * rr;
+      const py = cy + Math.sin(angle) * rr;
+      if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+    }
+    ctx.closePath(); ctx.stroke();
+  }
+  ctx.restore();
+  ctx.strokeStyle = 'rgba(255,255,255,.07)'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.arc(cx, cy, radius, 0, Math.PI * 2); ctx.stroke();
+  mono(ctx, 5.5, '400'); ctx.fillStyle = 'rgba(255,255,255,.25)'; ctx.textAlign = 'center';
+  ctx.fillText('CIRCULAR SCOPE', cx, y + h + 8);
+}
+
 const DRAWERS = {
   levels: drawLevels,
   loudness: drawLoudness,
@@ -2125,8 +2304,20 @@ const DRAWERS = {
   pianoRoll: drawPianoRoll,
   peakSlope: drawPeakSlope,
   stereoField: drawStereoField,
+  bandRings: drawBandRings,
+  peakSpectrum: drawPeakSpectrum,
+  beatPulse: drawBeatPulse,
+  circularScope: drawCircularScope,
   basicInfo: drawBasicInfo,
 };
+
+export function registerPluginDrawer(id, drawer) {
+  if (typeof id === 'string' && id && typeof drawer === 'function') DRAWERS[id] = drawer;
+}
+
+export function unregisterPluginDrawer(id) {
+  if (typeof id === 'string') delete DRAWERS[id];
+}
 
 export function drawVisualModule(ctx, mod, accent, env) {
   if (!MODULE_DEFS[mod.type] || mod.hidden) return;

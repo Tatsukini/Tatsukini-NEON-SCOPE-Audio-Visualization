@@ -11,11 +11,15 @@ import { putPendingArchive, takePendingArchive } from './archive-store.js';
 import { parseMidi } from './midi.js';
 import { Visualizer } from './visualizer.js';
 import { VideoExporter, downloadBlob, checkFfmpeg, sanitizeFilename } from './exporter.js';
+import { registerPluginDrawer, unregisterPluginDrawer } from './modules.js';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 const STORAGE_KEY = 'neon-scope.project.v1';
 const LAYOUT_SLOTS_KEY = 'neon-scope.layout-slots.v1';
+const HW_STATS_KEY = 'neon-scope.hw-stats.v1';
+const PLUGINS_KEY = 'neon-scope.plugins.v1';
+const PLUGIN_PREFIX = 'tatsukini-neon-';
 const SETTINGS_SYNC_KEY = 'neon-scope.settings-sync.v1';
 const BG_PREVIEW_KEY = 'neon-scope.bg-preview.v1';
 const BG_IMAGE_KEY = 'neon-scope.bg-image.v1';
@@ -176,6 +180,26 @@ const MODULE_OPTIONS = {
     { key: 'density', label: '散点密度', type: 'range', min: 30, max: 100, step: 10, default: 100, unit: '%' },
     { key: 'histogram', label: '声像分布柱', type: 'toggle', default: true },
     { key: 'balanceLine', label: '声像平衡线', type: 'toggle', default: true },
+  ],
+  bandRings: [
+    { key: 'bandStyle', label: '显示样式', type: 'select', default: 'rings', options: [['rings', '同心环'], ['bars', '三段柱']] },
+    { key: 'bandGain', label: '响应增益', type: 'range', min: 50, max: 200, step: 5, default: 100, unit: '%' },
+    { key: 'bandLabels', label: '显示频段标签', type: 'toggle', default: true },
+  ],
+  peakSpectrum: [
+    { key: 'bars', label: '频谱柱数', type: 'select', default: 'auto', options: [['auto', '自动'], ['32', '32'], ['48', '48'], ['64', '64'], ['96', '96']] },
+    { key: 'peakHold', label: '峰值保持', type: 'toggle', default: true },
+    { key: 'tilt', label: '高频倾斜', type: 'range', min: 0, max: 100, step: 5, default: 35, unit: '%' },
+  ],
+  beatPulse: [
+    { key: 'pulseSensitivity', label: '节拍灵敏度', type: 'range', min: 50, max: 200, step: 5, default: 100, unit: '%' },
+    { key: 'pulseRings', label: '脉冲环数量', type: 'range', min: 3, max: 10, step: 1, default: 6, unit: '' },
+    { key: 'showBpm', label: '显示 BPM', type: 'toggle', default: true },
+  ],
+  circularScope: [
+    { key: 'scopeSamples', label: '采样点数', type: 'select', default: '256', options: [['128', '128'], ['256', '256'], ['512', '512']] },
+    { key: 'scopeWidth', label: '线宽', type: 'range', min: 1, max: 4, step: 0.5, default: 1.5, unit: 'px' },
+    { key: 'scopeGlow', label: '辉光', type: 'toggle', default: true },
   ],
   basicInfo: [
     { key: 'primaryColor', label: '主字体颜色', type: 'color', default: '#101a3b' },
@@ -341,6 +365,7 @@ class NeonScopeApp {
     this._applySettingsToState();
     this.audio.setVolume(this.state.settings.volume / 100);
     this.audio.setSmoothing(this.state.settings.smoothing);
+    this.audio.setFftSize(this.state.settings.fftSize);
     this.audio.onState = (s) => this._onAudioState(s);
     this._initVisualizer();
     this._bindUI();
@@ -584,6 +609,13 @@ class NeonScopeApp {
       s.bgEnergy = clamp(s.bgEnergy, 0, 150);
       s.sensitivity = clamp(s.sensitivity, 40, 200);
       s.smoothing = clamp(s.smoothing, 0, 96);
+      s.fftSize = [1024, 2048, 4096, 8192, 16384].includes(Number(s.fftSize)) ? Number(s.fftSize) : 8192;
+      s.previewScale = clamp(Number(s.previewScale) || 100, 50, 120);
+      s.hardwareAuto = s.hardwareAuto !== false;
+      s.cpuBudget = clamp(Number(s.cpuBudget) || 100, 25, 100);
+      s.gpuBudget = clamp(Number(s.gpuBudget) || 100, 25, 100);
+      s.memBudget = clamp(Number(s.memBudget) || 80, 25, 100);
+      s.vramBudget = clamp(Number(s.vramBudget) || 80, 25, 100);
       this.state.settings = s;
       this._applySettingsToState();
       this.audio.setVolume(s.volume / 100);
@@ -665,7 +697,15 @@ class NeonScopeApp {
       bgDim: $('#bgDim'), dimOut: $('#dimOut'), bgBlur: $('#bgBlur'), blurOut: $('#blurOut'),
       bgContain: $('#bgContain'), removeBgBtn: $('#removeBgBtn'), bgEnergy: $('#bgEnergy'), bgEnergyOut: $('#bgEnergyOut'),
       rendererMode: $('#rendererMode'), sensitivity: $('#sensitivity'), sensitivityOut: $('#sensitivityOut'),
-      smoothing: $('#smoothing'), smoothingOut: $('#smoothingOut'), watermarkToggle: $('#watermarkToggle'),
+      smoothing: $('#smoothing'), smoothingOut: $('#smoothingOut'), fftSize: $('#fftSize'), previewScale: $('#previewScale'), previewScaleOut: $('#previewScaleOut'), watermarkToggle: $('#watermarkToggle'),
+      hardwareAuto: $('#hardwareAuto'), hardwareInfo: $('#hardwareInfo'), hwFpsValue: $('#hwFpsValue'), hwFrameValue: $('#hwFrameValue'),
+      hwHeapValue: $('#hwHeapValue'), hwResValue: $('#hwResValue'), hwCpuValue: $('#hwCpuValue'), hwGpuValue: $('#hwGpuValue'),
+      hwVramValue: $('#hwVramValue'), hwFpsChart: $('#hwFpsChart'), hwFrameChart: $('#hwFrameChart'),
+      hwHeapChart: $('#hwHeapChart'), hwResChart: $('#hwResChart'), hwCpuChart: $('#hwCpuChart'),
+      hwGpuChart: $('#hwGpuChart'), hwVramChart: $('#hwVramChart'),
+      cpuBudget: $('#cpuBudget'), cpuBudgetOut: $('#cpuBudgetOut'), gpuBudget: $('#gpuBudget'), gpuBudgetOut: $('#gpuBudgetOut'),
+      memBudget: $('#memBudget'), memBudgetOut: $('#memBudgetOut'), vramBudget: $('#vramBudget'), vramBudgetOut: $('#vramBudgetOut'),
+      hardwareOptimizeBtn: $('#hardwareOptimizeBtn'), hardwareResetBtn: $('#hardwareResetBtn'),
       scanlineToggle: $('#scanlineToggle'), resetLayoutBtn: $('#resetLayoutBtn'),
       uiScale: $('#uiScale'), uiScaleOut: $('#uiScaleOut'), uiFont: $('#uiFont'), uiFontReset: $('#uiFontReset'),
       bgMotion: $('#bgMotion'), bgMotionAmount: $('#bgMotionAmount'), bgMotionAmountOut: $('#bgMotionAmountOut'),
@@ -694,6 +734,8 @@ class NeonScopeApp {
       layoutSlotSelect: $('#layoutSlotSelect'), layoutSaveBtn: $('#layoutSaveBtn'), layoutLoadBtn: $('#layoutLoadBtn'),
       layoutExportBtn: $('#layoutExportBtn'), layoutImportBtn: $('#layoutImportBtn'), layoutFile: $('#layoutFile'),
       layoutSlotInfo: $('#layoutSlotInfo'),
+      pluginSourceInput: $('#pluginSourceInput'), pluginInstallGithub: $('#pluginInstallGithub'), pluginInstallPnpm: $('#pluginInstallPnpm'),
+      pluginReloadAll: $('#pluginReloadAll'), pluginStatus: $('#pluginStatus'), pluginList: $('#pluginList'),
       archiveFile: $('#archiveFile'), fileAnimExportBtn: $('#fileAnimExportBtn'), fileAnimImportBtn: $('#fileAnimImportBtn'),
       savePathInput: $('#savePathInput'), exportPathInput: $('#exportPathInput'),
       savePathBrowse: $('#savePathBrowse'), exportPathBrowse: $('#exportPathBrowse'),
@@ -783,6 +825,13 @@ class NeonScopeApp {
       s.bgEnergy = clamp(s.bgEnergy, 0, 150);
       s.sensitivity = clamp(s.sensitivity, 40, 200);
       s.smoothing = clamp(s.smoothing, 0, 96);
+      s.fftSize = [1024, 2048, 4096, 8192, 16384].includes(Number(s.fftSize)) ? Number(s.fftSize) : 8192;
+      s.previewScale = clamp(Number(s.previewScale) || 100, 50, 120);
+      s.hardwareAuto = s.hardwareAuto !== false;
+      s.cpuBudget = clamp(Number(s.cpuBudget) || 100, 25, 100);
+      s.gpuBudget = clamp(Number(s.gpuBudget) || 100, 25, 100);
+      s.memBudget = clamp(Number(s.memBudget) || 80, 25, 100);
+      s.vramBudget = clamp(Number(s.vramBudget) || 80, 25, 100);
       s.uiScale = clamp(Number(s.uiScale) || 100, 70, 150);
       s.previewFps = [0, 10, 15, 20, 24, 30, 45, 60, 90, 120, 144, 165, 240].includes(Number(s.previewFps)) ? Number(s.previewFps) : 60;
       s.previewVsync = s.previewVsync !== false;
@@ -990,6 +1039,8 @@ class NeonScopeApp {
     this.state.modules.forEach((m) => { m.color = m.color || null; });
     document.body.classList.toggle('editing', s.editing);
     this.audio.setLoop(s.loop);
+    this.audio.setFftSize(s.fftSize);
+    this.visualizer?._applyPreviewResolution?.();
   }
 
   _initVisualizer() {
@@ -1009,7 +1060,10 @@ class NeonScopeApp {
         onPreviewResize: ({ width, height }) => {
           this.dom.previewQuality.textContent = `${width} × ${height}`;
         },
-        onFps: (fps) => { this.dom.fpsRead.textContent = `${Math.round(fps)} FPS`; },
+        onFps: (fps) => {
+          this.dom.fpsRead.textContent = `${Math.round(fps)} FPS`;
+          this._broadcastHardwareStats(fps);
+        },
         onTick: (frame, fps, dt) => this._onTick(frame, fps, dt),
         onEnded: () => this._onTrackEnded(),
         onModuleMenu: (id, x, y) => this._openModuleMenu(id, x, y),
@@ -1017,6 +1071,7 @@ class NeonScopeApp {
     });
     this.visualizer.applyBackgroundSettings();
     this.visualizer.syncOverlay();
+    this._applyHardwareAuto({ persist: false });
   }
 
   _bindUI() {
@@ -1225,6 +1280,52 @@ class NeonScopeApp {
       this.state.settings.smoothing = Number(d.smoothing.value);
       d.smoothingOut.textContent = `${d.smoothing.value}%`;
       this.audio.setSmoothing(this.state.settings.smoothing);
+      this._persist();
+    });
+    d.hardwareAuto.addEventListener('change', () => {
+      this.state.settings.hardwareAuto = d.hardwareAuto.checked;
+      this._applyHardwareAuto({ persist: true });
+      this._toast(`硬件资源分配 · ${d.hardwareAuto.checked ? '自动' : '手动'}`, 'info', 1800);
+    });
+    d.hardwareOptimizeBtn.addEventListener('click', () => this._optimizeHardware());
+    d.hardwareResetBtn.addEventListener('click', () => this._resetHardwareSettings());
+    for (const [key, input, output] of [
+      ['cpuBudget', d.cpuBudget, d.cpuBudgetOut],
+      ['gpuBudget', d.gpuBudget, d.gpuBudgetOut],
+      ['memBudget', d.memBudget, d.memBudgetOut],
+      ['vramBudget', d.vramBudget, d.vramBudgetOut],
+    ]) {
+      input.addEventListener('input', () => {
+        this.state.settings[key] = Number(input.value);
+        output.textContent = `${input.value}%`;
+        if (this.state.settings.hardwareAuto) this._applyHardwareAuto({ persist: false });
+        this._persist();
+      });
+    }
+    d.fftSize.addEventListener('change', () => {
+      const next = Number(d.fftSize.value);
+      if (this.state.settings.hardwareAuto) {
+        this.state.settings.hardwareAuto = false;
+        d.hardwareAuto.checked = false;
+        this._applyHardwareAuto({ persist: false });
+      }
+      this.state.settings.fftSize = next;
+      d.fftSize.value = String(next);
+      this.audio.setFftSize(next);
+      this._persist();
+      this._toast(`FFT 解算精度 · ${next}`, 'info', 1800);
+    });
+    d.previewScale.addEventListener('input', () => {
+      const next = Number(d.previewScale.value);
+      if (this.state.settings.hardwareAuto) {
+        this.state.settings.hardwareAuto = false;
+        d.hardwareAuto.checked = false;
+        this._applyHardwareAuto({ persist: false });
+      }
+      this.state.settings.previewScale = next;
+      d.previewScale.value = String(next);
+      d.previewScaleOut.textContent = `${next}%`;
+      this.visualizer._applyPreviewResolution();
       this._persist();
     });
     d.watermarkToggle.addEventListener('change', () => {
@@ -1499,6 +1600,25 @@ class NeonScopeApp {
       if (file) this._importLayoutFile(file);
     });
     this._renderLayoutSlotInfo();
+    this.dom.pluginInstallGithub?.addEventListener('click', () => this._installPlugin('github'));
+    this.dom.pluginInstallPnpm?.addEventListener('click', () => this._installPlugin('pnpm'));
+    this.dom.pluginReloadAll?.addEventListener('click', async () => {
+      this.dom.pluginStatus.textContent = '正在重新加载已启用插件…';
+      await this._loadEnabledPlugins();
+      this.dom.pluginStatus.textContent = '插件已重新加载';
+    });
+    this.dom.pluginList?.addEventListener('click', (e) => {
+      const button = e.target.closest('[data-plugin-action]');
+      if (!button) return;
+      const id = button.dataset.pluginId;
+      if (button.dataset.pluginAction === 'remove') this._removePlugin(id);
+      else if (button.dataset.pluginAction === 'toggle') this._togglePlugin(id);
+      else if (button.dataset.pluginAction === 'reload') {
+        const record = this._pluginRecords().find((p) => p.id === id);
+        if (record) this._activatePlugin(record).then(() => this._renderPluginManager());
+      }
+    });
+    this._renderPluginManager();
     this.dom.savePathInput.addEventListener('change', () => {
       this.state.settings.savePath = this.dom.savePathInput.value.trim();
       this._notifyNativePaths();
@@ -2533,6 +2653,267 @@ class NeonScopeApp {
     } catch (err) {
       this._toast(`存档导入失败：${err.message}`, 'error', 5200);
     }
+  }
+
+  _pluginRecords() {
+    try {
+      const parsed = JSON.parse(safeRead(PLUGINS_KEY) || '[]');
+      return Array.isArray(parsed) ? parsed.filter((p) => p && p.id) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  _savePluginRecords(records) {
+    safeStore(PLUGINS_KEY, JSON.stringify(records));
+  }
+
+  _validPluginName(name) {
+    const id = String(name || '').trim().toLowerCase();
+    return id.startsWith(PLUGIN_PREFIX) && id.length > PLUGIN_PREFIX.length;
+  }
+
+  _esc(value) {
+    return String(value ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+
+  _renderPluginManager() {
+    if (!this.dom.pluginList) return;
+    const records = this._pluginRecords();
+    if (!records.length) {
+      this.dom.pluginList.innerHTML = '<div class="plugin-empty">还没有安装插件 · 从 GitHub 或 PNPM 安装</div>';
+      return;
+    }
+    this.dom.pluginList.innerHTML = records.map((plugin) => `
+      <div class="plugin-card">
+        <div class="plugin-card-main">
+          <div class="plugin-card-name">${this._esc(plugin.name)} <em>v${this._esc(plugin.version)}</em> <em>${plugin.enabled ? 'ENABLED' : 'DISABLED'}</em></div>
+          <div class="plugin-card-meta" title="${this._esc(plugin.source)}">${this._esc(plugin.source)}</div>
+          <div class="plugin-card-meta">${this._esc(plugin.lastError || `${plugin.moduleCount || 0} 个模块`)}</div>
+        </div>
+        <div class="plugin-card-actions">
+          <button class="mini-action" data-plugin-action="toggle" data-plugin-id="${this._esc(plugin.id)}">${plugin.enabled ? '停用' : '启用'}</button>
+          <button class="mini-action" data-plugin-action="reload" data-plugin-id="${this._esc(plugin.id)}">重载</button>
+          <button class="mini-action" data-plugin-action="remove" data-plugin-id="${this._esc(plugin.id)}">卸载</button>
+        </div>
+      </div>`).join('');
+  }
+
+  async _fetchPluginText(url) {
+    const response = await fetch(url, { cache: 'no-store', headers: { Accept: 'text/plain, application/json, */*' } });
+    if (!response.ok) throw new Error(`下载失败 HTTP ${response.status}`);
+    return response.text();
+  }
+
+  _validatePluginManifest(manifest, fallbackName) {
+    if (!manifest || typeof manifest !== 'object') throw new Error('缺少 plugin.json');
+    if (Number(manifest.apiVersion) !== 1) throw new Error('仅支持 apiVersion: 1');
+    const name = manifest.name || fallbackName;
+    if (!this._validPluginName(name)) throw new Error(`插件名必须以 ${PLUGIN_PREFIX} 开头`);
+    const entry = String(manifest.entry || 'index.js');
+    if (entry.includes('..') || entry.startsWith('/') || entry.startsWith('\\')) throw new Error('entry 必须位于插件根目录');
+    return { ...manifest, name, entry };
+  }
+
+  async _fetchGithubPlugin(raw) {
+    let text = String(raw || '').trim().replace(/^github:/i, '');
+    const match = text.match(/github\.com\/([^/]+)\/([^/#?]+)/i);
+    if (match) text = `${match[1]}/${match[2]}`;
+    text = text.replace(/\.git$/i, '').replace(/\/+$/, '');
+    if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(text)) throw new Error('请输入 owner/repo 或 GitHub 仓库地址');
+    const [owner, repo] = text.split('/');
+    if (!this._validPluginName(repo)) throw new Error(`仓库名必须以 ${PLUGIN_PREFIX} 开头`);
+    const info = await fetch(`https://api.github.com/repos/${owner}/${repo}`, { cache: 'no-store' }).then(async (res) => {
+      if (!res.ok) throw new Error(`GitHub 仓库不存在或不可访问 HTTP ${res.status}`);
+      return res.json();
+    });
+    if (!this._validPluginName(info.name)) throw new Error(`仓库名必须以 ${PLUGIN_PREFIX} 开头`);
+    const branch = info.default_branch || 'main';
+    const base = `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/`;
+    const manifest = this._validatePluginManifest(JSON.parse(await this._fetchPluginText(`${base}plugin.json`)), info.name);
+    if (!manifest.repository) manifest.repository = info.html_url;
+    const code = await this._fetchPluginText(`${base}${manifest.entry}`);
+    return { manifest, code, source: `github:${owner}/${repo}`, version: manifest.version || info.default_branch || '0.0.0' };
+  }
+
+  async _fetchPnpmPlugin(raw) {
+    const pkg = String(raw || '').trim().replace(/^(pnpm|npm):/i, '');
+    if (!pkg || pkg.startsWith('@')) throw new Error('暂只支持无 scope 的 PNPM 包名');
+    if (!this._validPluginName(pkg)) throw new Error(`包名必须以 ${PLUGIN_PREFIX} 开头`);
+    const meta = await fetch(`https://registry.npmjs.org/${encodeURIComponent(pkg)}/latest`, { cache: 'no-store' }).then(async (res) => {
+      if (!res.ok) throw new Error(`PNPM 包不存在或不可访问 HTTP ${res.status}`);
+      return res.json();
+    });
+    if (!this._validPluginName(meta.name)) throw new Error(`包名必须以 ${PLUGIN_PREFIX} 开头`);
+    const version = meta.version || '0.0.0';
+    const base = `https://unpkg.com/${encodeURIComponent(pkg)}@${encodeURIComponent(version)}/`;
+    const manifest = this._validatePluginManifest(JSON.parse(await this._fetchPluginText(`${base}plugin.json`)), meta.name);
+    const code = await this._fetchPluginText(`${base}${manifest.entry}`);
+    return { manifest, code, source: `pnpm:${pkg}`, version };
+  }
+
+  async _installPlugin(kind) {
+    const raw = this.dom.pluginSourceInput?.value || '';
+    try {
+      this.dom.pluginStatus.textContent = '正在下载并校验插件…';
+      const data = kind === 'github' ? await this._fetchGithubPlugin(raw) : await this._fetchPnpmPlugin(raw);
+      const records = this._pluginRecords().filter((p) => p.id !== (data.manifest.id || data.manifest.name.toLowerCase()));
+      const record = {
+        id: String(data.manifest.id || data.manifest.name.toLowerCase()),
+        name: data.manifest.name,
+        version: data.version,
+        source: data.source,
+        entry: data.manifest.entry,
+        manifest: data.manifest,
+        code: data.code,
+        enabled: true,
+        installedAt: new Date().toISOString(),
+        lastError: '',
+      };
+      records.push(record);
+      this._savePluginRecords(records);
+      const loaded = await this._activatePlugin(record);
+      this._renderPluginManager();
+      this.dom.pluginStatus.textContent = loaded ? `已安装并启用 ${record.name}` : `已安装 ${record.name}，但激活失败`;
+      if (loaded) this._toast(`插件已安装 · ${record.name}`, 'success', 2800);
+    } catch (err) {
+      this.dom.pluginStatus.textContent = `插件安装失败：${err.message}`;
+      this._toast(`插件安装失败：${err.message}`, 'error', 5200);
+    }
+  }
+
+  async _activatePlugin(record) {
+    try {
+      if (record._deactivate) { try { await record._deactivate(); } catch { /* ignore */ } }
+      const blob = new Blob([record.code], { type: 'text/javascript' });
+      const url = URL.createObjectURL(blob);
+      let module;
+      try { module = await import(url); } finally { URL.revokeObjectURL(url); }
+      if (typeof module.activate !== 'function') throw new Error('插件必须导出 activate(context)');
+      const registered = [];
+      const context = {
+        apiVersion: 1,
+        app: 'NEON//SCOPE',
+        plugin: { id: record.id, name: record.name, version: record.version },
+        registerModule: (spec) => this._registerPluginModule(record, spec, registered),
+        log: (...args) => console.log(`[plugin:${record.id}]`, ...args),
+        toast: (message, tone = 'info') => this._toast(String(message), tone, 3000),
+      };
+      await module.activate(context);
+      record._deactivate = typeof module.deactivate === 'function' ? module.deactivate : null;
+      record._modules = registered;
+      record.moduleCount = registered.length;
+      record.lastError = '';
+      record.enabled = true;
+      const records = this._pluginRecords();
+      const index = records.findIndex((p) => p.id === record.id);
+      if (index >= 0) records[index] = { ...records[index], enabled: true, moduleCount: registered.length, lastError: '' };
+      else records.push({ ...record });
+      this._savePluginRecords(records);
+      this._renderLibrary();
+      this.visualizer?.syncOverlay();
+      return true;
+    } catch (err) {
+      record.lastError = err.message;
+      record.enabled = false;
+      const records = this._pluginRecords();
+      const index = records.findIndex((p) => p.id === record.id);
+      if (index >= 0) records[index] = { ...records[index], enabled: false, lastError: err.message };
+      this._savePluginRecords(records);
+      console.error(`[NEON//SCOPE] Plugin "${record.id}" failed:`, err);
+      return false;
+    }
+  }
+
+  _registerPluginModule(plugin, spec, registered) {
+    if (!spec || typeof spec !== 'object') throw new Error('registerModule 需要模块描述对象');
+    if (typeof spec.draw !== 'function') throw new Error('模块缺少 draw 函数');
+    const localId = String(spec.id || '').replace(/[^a-z0-9_-]/gi, '-').toLowerCase();
+    if (!localId) throw new Error('模块缺少 id');
+    const type = `${plugin.id}:${localId}`;
+    MODULE_DEFS[type] = {
+      name: String(spec.name || localId),
+      code: String(spec.code || 'PLUGIN MODULE'),
+      glyph: String(spec.glyph || '◆').slice(0, 2),
+      about: String(spec.about || `Plugin module from ${plugin.name}`),
+      w: clamp(Number(spec.w) || 360, 180, 1200),
+      h: clamp(Number(spec.h) || 220, 120, 800),
+      category: String(spec.category || 'PLUGIN'),
+      plugin: plugin.id,
+    };
+    if (!MODULE_ORDER.includes(type)) MODULE_ORDER.push(type);
+    MODULE_OPTIONS[type] = Array.isArray(spec.options) ? spec.options.filter((o) => o && o.key) : [];
+    registerPluginDrawer(type, spec.draw);
+    registered.push(type);
+  }
+
+  async _loadEnabledPlugins() {
+    const records = this._pluginRecords();
+    for (const record of records) {
+      if (!record.enabled) continue;
+      await this._activatePlugin(record);
+    }
+    this._restorePluginModulesFromStorage();
+    this._renderPluginManager();
+  }
+
+  _restorePluginModulesFromStorage() {
+    try {
+      const raw = JSON.parse(safeRead(STORAGE_KEY) || '{}');
+      if (!Array.isArray(raw.modules)) return;
+      const existing = new Set((this.state.modules || []).map((m) => m.id));
+      const missing = raw.modules.filter((m) => m && MODULE_DEFS[m.type] && !existing.has(m.id));
+      if (!missing.length) return;
+      const restored = this._sanitizeModules(missing);
+      this.state.modules = [...(this.state.modules || []), ...restored];
+      this.visualizer?.syncOverlay();
+      this._renderLibrary();
+      this._persist();
+    } catch { /* ignore corrupt legacy state */ }
+  }
+
+  _removePluginModules(record) {
+    for (const type of record._modules || []) {
+      delete MODULE_DEFS[type];
+      delete MODULE_OPTIONS[type];
+      unregisterPluginDrawer(type);
+      const index = MODULE_ORDER.indexOf(type);
+      if (index >= 0) MODULE_ORDER.splice(index, 1);
+    }
+    this.state.modules = (this.state.modules || []).filter((m) => !String(m.type).startsWith(`${record.id}:`));
+    record._modules = [];
+  }
+
+  async _removePlugin(id) {
+    const records = this._pluginRecords();
+    const record = records.find((p) => p.id === id);
+    if (!record) return;
+    if (record._deactivate) { try { await record._deactivate(); } catch { /* ignore */ } }
+    this._removePluginModules(record);
+    this._savePluginRecords(records.filter((p) => p.id !== id));
+    this._renderPluginManager();
+    this._renderLibrary();
+    this.visualizer?.syncOverlay();
+    this._persist();
+    this._toast(`插件已卸载 · ${record.name}`, 'info', 2400);
+  }
+
+  async _togglePlugin(id) {
+    const records = this._pluginRecords();
+    const record = records.find((p) => p.id === id);
+    if (!record) return;
+    if (record.enabled) {
+      if (record._deactivate) { try { await record._deactivate(); } catch { /* ignore */ } }
+      this._removePluginModules(record);
+      record.enabled = false;
+      this._savePluginRecords(records);
+    } else {
+      await this._activatePlugin(record);
+    }
+    this._renderPluginManager();
+    this._renderLibrary();
+    this.visualizer?.syncOverlay();
+    this._persist();
   }
 
   _layoutSlots() {
@@ -4186,6 +4567,13 @@ class NeonScopeApp {
       panel.classList.toggle('hidden', panel.dataset.settingsPanel !== this._settingsTab);
     });
     if (this._settingsTab === 'background') this._refreshBgPreview(true);
+    if (this._settingsTab === 'plugins') this._renderPluginManager();
+    if (this._settingsTab === 'engine') {
+      this._applyHardwareAuto({ persist: false });
+      this._startHardwareMonitor();
+    } else {
+      this._stopHardwareMonitor();
+    }
   }
 
   _bindSettingsKeybindLabels() {
@@ -4710,6 +5098,7 @@ class NeonScopeApp {
 
   async _boot() {
     try {
+      if (!this._standaloneSettings) await this._loadEnabledPlugins();
       const restored = await this._restorePendingArchive();
       if (!restored) await this._loadDemo(false);
     } catch (err) {
@@ -6115,6 +6504,212 @@ class NeonScopeApp {
     }
   }
 
+  _broadcastHardwareStats(fps) {
+    if (this._standaloneSettings) return;
+    const canvas = this.visualizer?.canvas;
+    const width = canvas?.width || 0;
+    const height = canvas?.height || 0;
+    const heap = performance.memory?.usedJSHeapSize || 0;
+    const heapLimit = performance.memory?.jsHeapSizeLimit || 0;
+    const target = Math.max(10, Number(this.state.settings.previewFps) || 60);
+    const cpu = clamp((Number(this.visualizer?.frameMs) || 0) / (1000 / target) * 100, 0, 100);
+    const gpu = clamp((width * height * Math.max(1, fps)) / (1280 * 720 * 60) * 100, 0, 100);
+    const vram = (width * height * 4 * 2.2) / 1048576;
+    const vramLimit = 4096;
+    safeStore(HW_STATS_KEY, JSON.stringify({
+      fps, frame: Number(this.visualizer?.frameMs) || 0, heap, heapLimit,
+      ram: heapLimit ? heap / heapLimit * 100 : 0,
+      cpu, gpu, vram, vramPercent: vram / vramLimit * 100,
+      width, height, at: Date.now(),
+    }));
+  }
+
+  _hardwareStats() {
+    if (this._standaloneSettings) {
+      try { return JSON.parse(safeRead(HW_STATS_KEY) || 'null'); } catch { return null; }
+    }
+    return null;
+  }
+
+  _hardwareProfile() {
+    const cores = Math.max(1, Number(navigator.hardwareConcurrency) || 4);
+    const memory = Math.max(1, Number(navigator.deviceMemory) || 8);
+    let gpu = 'Unknown GPU';
+    try {
+      const gl = this.visualizer?.background?.gl;
+      if (gl) {
+        const ext = gl.getExtension('WEBGL_debug_renderer_info');
+        gpu = ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : (gl.getParameter(gl.RENDERER) || 'WebGL');
+      }
+    } catch { /* optional */ }
+    return { cores, memory, gpu: String(gpu).replace(/^ANGLE \(/, '').replace(/\)$/, '').slice(0, 60) };
+  }
+
+  _applyHardwareAuto({ persist = false } = {}) {
+    const profile = this._hardwareProfile();
+    const auto = this.state.settings.hardwareAuto !== false;
+    if (auto) {
+      let scale = 60;
+      let fft = 2048;
+      if (profile.cores >= 12 && profile.memory >= 16) { scale = 100; fft = 8192; }
+      else if (profile.cores >= 8 && profile.memory >= 8) { scale = 85; fft = 4096; }
+      else if (profile.cores >= 4) { scale = 70; fft = 2048; }
+      const cpuBudget = clamp(Number(this.state.settings.cpuBudget) || 100, 25, 100);
+      const gpuBudget = clamp(Number(this.state.settings.gpuBudget) || 100, 25, 100);
+      const vramBudget = clamp(Number(this.state.settings.vramBudget) || 80, 25, 100);
+      if (cpuBudget <= 40) fft = Math.min(fft, 2048);
+      else if (cpuBudget <= 60) fft = Math.min(fft, 4096);
+      scale = Math.round(scale * (0.55 + gpuBudget / 100 * 0.45) * (0.7 + vramBudget / 100 * 0.3));
+      this.state.settings.previewScale = clamp(scale, 50, 120);
+      this.state.settings.fftSize = fft;
+      this.audio.setFftSize(fft);
+      this.visualizer?._applyPreviewResolution?.();
+    }
+    if (this.dom.hardwareInfo) {
+      const remote = this._hardwareStats();
+      const size = remote ? { width: remote.width, height: remote.height } : this.visualizer?.canvas;
+      this.dom.hardwareInfo.textContent = `CPU ${profile.cores} 线程 · RAM ${profile.memory} GB · ${profile.gpu}${size ? ` · ${size.width}×${size.height}` : ''}${auto ? ' · 自动分配' : ' · 手动配置'}`;
+    }
+    this._syncQualityInputs();
+    if (persist) this._persist();
+    return auto;
+  }
+
+  _syncQualityInputs() {
+    const s = this.state.settings;
+    if (this.dom.fftSize) this.dom.fftSize.value = String(s.fftSize ?? 8192);
+    if (this.dom.previewScale) {
+      this.dom.previewScale.value = String(s.previewScale ?? 100);
+      if (this.dom.previewScaleOut) this.dom.previewScaleOut.textContent = `${s.previewScale ?? 100}%`;
+    }
+  }
+
+  _startHardwareMonitor() {
+    if (this._hwTimer) return;
+    this._hwData = { fps: [], frame: [], heap: [], res: [], cpu: [], gpu: [], vram: [] };
+    const tick = () => {
+      const visualizer = this.visualizer;
+      const canvas = visualizer?.canvas;
+      const remote = this._hardwareStats();
+      const fps = Math.max(0, Number(remote?.fps ?? visualizer?.fps) || 0);
+      const frame = Math.max(0, Number(remote?.frame ?? visualizer?.frameMs) || 0);
+      const memory = remote?.heap ? remote.heap / 1048576 : (performance.memory?.usedJSHeapSize ? performance.memory.usedJSHeapSize / 1048576 : null);
+      const width = Number(remote?.width ?? canvas?.width) || 0;
+      const height = Number(remote?.height ?? canvas?.height) || 0;
+      const targetFps = Math.max(10, Number(this.state.settings.previewFps) || 60);
+      const cpu = remote ? clamp(Number(remote.cpu) || 0, 0, 100) : clamp(frame / (1000 / targetFps) * 100, 0, 100);
+      const gpu = remote ? clamp(Number(remote.gpu) || 0, 0, 100) : clamp((width * height * Math.max(1, fps)) / (1280 * 720 * 60) * 100, 0, 100);
+      const vram = Number(remote?.vram) || (width * height * 4 * 2.2) / 1048576;
+      this._hwData.fps.push(fps);
+      this._hwData.frame.push(frame);
+      this._hwData.heap.push(memory == null ? 0 : memory);
+      this._hwData.res.push(width);
+      this._hwData.cpu.push(cpu);
+      this._hwData.gpu.push(gpu);
+      this._hwData.vram.push(vram);
+      for (const key of Object.keys(this._hwData)) {
+        if (this._hwData[key].length > 80) this._hwData[key].shift();
+      }
+      if (this.dom.hwFpsValue) this.dom.hwFpsValue.textContent = `${Math.round(fps)}`;
+      if (this.dom.hwFrameValue) this.dom.hwFrameValue.textContent = `${frame.toFixed(1)} ms`;
+      if (this.dom.hwHeapValue) this.dom.hwHeapValue.textContent = memory == null ? '—' : `${memory.toFixed(0)} MB`;
+      if (this.dom.hwCpuValue) this.dom.hwCpuValue.textContent = `${Math.round(cpu)}%`;
+      if (this.dom.hwGpuValue) this.dom.hwGpuValue.textContent = `${Math.round(gpu)}%`;
+      if (this.dom.hwVramValue) this.dom.hwVramValue.textContent = `${Math.round(vram)} MB`;
+      if (this.dom.hwResValue) this.dom.hwResValue.textContent = width ? `${width} × ${height}` : '—';
+      this._drawHwChart(this.dom.hwFpsChart, this._hwData.fps, 0, Math.max(60, fps * 1.2 || 60), '#68e8ff');
+      this._drawHwChart(this.dom.hwFrameChart, this._hwData.frame, 0, Math.max(20, frame * 1.5 || 20), '#ffc46b');
+      this._drawHwChart(this.dom.hwCpuChart, this._hwData.cpu, 0, 100, '#ff7dba');
+      this._drawHwChart(this.dom.hwGpuChart, this._hwData.gpu, 0, 100, '#a98bff');
+      this._drawHwChart(this.dom.hwHeapChart, this._hwData.heap, 0, Math.max(64, ...this._hwData.heap) * 1.15, '#b9ff8a');
+      this._drawHwChart(this.dom.hwVramChart, this._hwData.vram, 0, Math.max(64, ...this._hwData.vram) * 1.15, '#ffc46b');
+      this._drawHwChart(this.dom.hwResChart, this._hwData.res, 0, 1920, '#68e8ff');
+    };
+    tick();
+    this._hwTimer = setInterval(tick, 250);
+  }
+
+  _stopHardwareMonitor() {
+    if (this._hwTimer) clearInterval(this._hwTimer);
+    this._hwTimer = 0;
+  }
+
+  _drawHwChart(canvas, data, min, max, color) {
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const w = canvas.width, h = canvas.height;
+    ctx.clearRect(0, 0, w, h);
+    ctx.strokeStyle = 'rgba(255,255,255,.055)';
+    ctx.lineWidth = 1;
+    for (let i = 0; i <= 3; i++) {
+      const y = Math.round((h / 3) * i) + 0.5;
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
+    }
+    if (!data?.length) return;
+    const span = Math.max(1, max - min);
+    ctx.beginPath();
+    data.forEach((value, index) => {
+      const x = (index / Math.max(1, data.length - 1)) * w;
+      const y = h - clamp((value - min) / span, 0, 1) * (h - 3) - 1;
+      if (index === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    });
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.lineTo(w, h); ctx.lineTo(0, h); ctx.closePath();
+    ctx.fillStyle = color.startsWith('#') ? `${color}22` : 'rgba(255,255,255,.08)';
+    ctx.fill();
+  }
+
+  _optimizeHardware() {
+    const s = this.state.settings;
+    s.hardwareAuto = false;
+    if (this.dom.hardwareAuto) this.dom.hardwareAuto.checked = false;
+    s.previewScale = Math.max(50, (Number(s.previewScale) || 100) - 10);
+    const tiers = [1024, 2048, 4096, 8192, 16384];
+    const index = tiers.indexOf(Number(s.fftSize));
+    s.fftSize = tiers[Math.max(0, index - 1)];
+    this.audio.setFftSize(s.fftSize);
+    this.visualizer.states.clear();
+    if (this.visualizer.background) {
+      this.visualizer.background.imageCache = null;
+      this.visualizer.background.imageCacheKey = '';
+    }
+    this.visualizer._applyPreviewResolution();
+    this._hwData = { fps: [], frame: [], heap: [], res: [], cpu: [], gpu: [], vram: [] };
+    try { window.gc?.(); } catch { /* optional */ }
+    this._syncSettingsUI();
+    this._persist();
+    this._toast('已降低解算精度并释放模块 / 背景缓存', 'success', 3200);
+  }
+
+  async _resetHardwareSettings() {
+    const confirmed = await this._showConfirm('恢复默认硬件设置？当前 FFT、渲染缩放、资源配额与背景模式会重置。', {
+      title: '恢复硬件默认', confirmText: '恢复', cancelText: '取消',
+    });
+    if (!confirmed) return;
+    const s = this.state.settings;
+    s.hardwareAuto = true;
+    s.fftSize = 8192;
+    s.previewScale = 100;
+    s.sensitivity = 100;
+    s.smoothing = 78;
+    s.rendererMode = 'gpu';
+    s.cpuBudget = 100;
+    s.gpuBudget = 100;
+    s.memBudget = 80;
+    s.vramBudget = 80;
+    this.audio.setFftSize(8192);
+    this.audio.setSensitivity(100);
+    this.audio.setSmoothing(78);
+    this._applyHardwareAuto({ persist: false });
+    this._syncSettingsUI();
+    this.visualizer.applyBackgroundSettings();
+    this.visualizer._applyPreviewResolution();
+    this._persist();
+    this._toast('硬件设置已恢复默认', 'success', 2600);
+  }
+
   _syncSettingsUI() {
     const s = this.state.settings;
     const d = this.dom;
@@ -6138,6 +6733,21 @@ class NeonScopeApp {
     d.sensitivityOut.textContent = `${s.sensitivity}%`;
     d.smoothing.value = s.smoothing;
     d.smoothingOut.textContent = `${s.smoothing}%`;
+    if (d.hardwareAuto) d.hardwareAuto.checked = s.hardwareAuto !== false;
+    for (const [key, input, output] of [
+      ['cpuBudget', d.cpuBudget, d.cpuBudgetOut],
+      ['gpuBudget', d.gpuBudget, d.gpuBudgetOut],
+      ['memBudget', d.memBudget, d.memBudgetOut],
+      ['vramBudget', d.vramBudget, d.vramBudgetOut],
+    ]) {
+      if (input) input.value = String(s[key] ?? (key === 'cpuBudget' || key === 'gpuBudget' ? 100 : 80));
+      if (output) output.textContent = `${s[key] ?? (key === 'cpuBudget' || key === 'gpuBudget' ? 100 : 80)}%`;
+    }
+    if (d.fftSize) d.fftSize.value = String(s.fftSize ?? 8192);
+    if (d.previewScale) {
+      d.previewScale.value = String(s.previewScale ?? 100);
+      d.previewScaleOut.textContent = `${s.previewScale ?? 100}%`;
+    }
     d.watermarkToggle.checked = s.watermark;
     d.scanlineToggle.checked = s.scanlines;
     d.autoSave.checked = s.autoSave;
@@ -6477,6 +7087,7 @@ class NeonScopeApp {
 
   _closeModal(name) {
     if (!name) return;
+    if (name === 'settings') this._stopHardwareMonitor();
     if (name === 'keyframeEditor') this._closeKeyframeMenu();
     if (name === 'export' && this.state.exporting) return;
     if (name === 'shortcuts' && this._keyCapture) this._cancelKeyCapture();

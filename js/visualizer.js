@@ -26,6 +26,7 @@ export class Visualizer {
     this.animClock = 0;
     this.lastTs = 0;
     this.fps = 0;
+    this.frameMs = 0;
     this._fpsAccum = 0;
     this._fpsFrames = 0;
     this._fpsTimer = 0;
@@ -92,7 +93,8 @@ export class Visualizer {
   _applyPreviewResolution() {
     const rect = this.stage.getBoundingClientRect();
     const dpr = Math.min(1.5, window.devicePixelRatio || 1);
-    const width = clamp(Math.round(rect.width * dpr), 960, 1600);
+    const quality = clamp(Number(this.state.settings.previewScale) || 100, 50, 120) / 100;
+    const width = clamp(Math.round(rect.width * dpr * quality), 640, 1920);
     const height = Math.round(width * 9 / 16);
     if (this.canvas.width !== width || this.canvas.height !== height) {
       this.canvas.width = width;
@@ -494,10 +496,13 @@ export class Visualizer {
       this.callbacks.onFps?.(this.fps);
     }
 
+    const drawStarted = performance.now();
     const frame = this.engine.analyze(dt);
     this.engine.onEnded = this.engine.onEnded || null;
     this._draw(frame, dt);
     this.callbacks.onTick?.(frame, this.fps, dt);
+    const drawMs = performance.now() - drawStarted;
+    this.frameMs = this.frameMs ? this.frameMs * 0.88 + drawMs * 0.12 : drawMs;
     this._scheduleNext();
   }
 

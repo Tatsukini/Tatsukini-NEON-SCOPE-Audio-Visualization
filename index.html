@@ -597,9 +597,10 @@
           <button class="settings-nav-btn" data-settings-tab="background"><span>02</span>背景</button>
           <button class="settings-nav-btn" data-settings-tab="interface"><span>03</span>界面</button>
           <button class="settings-nav-btn" data-settings-tab="motion"><span>04</span>动效</button>
-          <button class="settings-nav-btn" data-settings-tab="engine"><span>05</span>分析引擎</button>
-          <button class="settings-nav-btn" data-settings-tab="files"><span>06</span>文件</button>
-          <button class="settings-nav-btn" data-settings-tab="about"><span>07</span>关于</button>
+          <button class="settings-nav-btn" data-settings-tab="engine"><span>05</span>硬件</button>
+          <button class="settings-nav-btn" data-settings-tab="plugins"><span>06</span>插件</button>
+          <button class="settings-nav-btn" data-settings-tab="files"><span>07</span>文件</button>
+          <button class="settings-nav-btn" data-settings-tab="about"><span>08</span>关于</button>
           <div class="settings-nav-spacer"></div>
           <button class="settings-nav-btn accent" id="openShortcutsBtn"><span>⌘</span>快捷键</button>
         </nav>
@@ -854,15 +855,37 @@
 
           <section class="settings-panel hidden" data-settings-panel="engine">
             <div class="settings-panel-head">
-              <span class="eyebrow">ANALYSIS</span>
-              <h3>分析引擎</h3>
-              <p>GPU 背景着色器与音频响应参数。</p>
+              <span class="eyebrow">HARDWARE</span>
+              <h3>硬件设置</h3>
+              <p>按机器能力分配渲染精度、FFT 解算与预览帧率。</p>
             </div>
+            <label class="check-row"><input type="checkbox" id="hardwareAuto" checked /><span>自动分配硬件资源</span></label>
+            <p class="section-help" id="hardwareInfo">正在检测 CPU / 内存 / GPU…</p>
             <div class="segmented" id="rendererMode">
               <button class="active" data-renderer="gpu">GPU 加速</button>
               <button data-renderer="cpu">CPU 兼容</button>
             </div>
             <p class="section-help">GPU 模式使用 WebGL 着色器绘制背景等离子；示波器与频谱仍由高精度 Canvas2D 叠加。</p>
+            <div class="setting-block">
+              <div class="setting-block-head"><span>资源配额</span><em>SAFE BUDGETS</em></div>
+              <div class="field-row">
+                <label class="field-label">CPU 配额 <output id="cpuBudgetOut">100%</output></label>
+                <input id="cpuBudget" type="range" min="25" max="100" step="5" value="100" />
+              </div>
+              <div class="field-row">
+                <label class="field-label">GPU 配额 <output id="gpuBudgetOut">100%</output></label>
+                <input id="gpuBudget" type="range" min="25" max="100" step="5" value="100" />
+              </div>
+              <div class="field-row">
+                <label class="field-label">内存配额 <output id="memBudgetOut">80%</output></label>
+                <input id="memBudget" type="range" min="25" max="100" step="5" value="80" />
+              </div>
+              <div class="field-row">
+                <label class="field-label">显存配额 <output id="vramBudgetOut">80%</output></label>
+                <input id="vramBudget" type="range" min="25" max="100" step="5" value="80" />
+              </div>
+              <p class="section-help">自动分配会按这些安全上限计算 FFT 与渲染缩放；图表中的 CPU / GPU / 显存为运行时估算值。</p>
+            </div>
             <div class="field-row">
               <label class="field-label">响应灵敏度 <output id="sensitivityOut">100%</output></label>
               <input id="sensitivity" type="range" min="40" max="200" value="100" />
@@ -871,6 +894,72 @@
               <label class="field-label">频谱平滑 <output id="smoothingOut">78%</output></label>
               <input id="smoothing" type="range" min="0" max="96" value="78" />
             </div>
+            <label class="module-option-field"><span>FFT 解算精度</span>
+              <select id="fftSize">
+                <option value="1024">1024 · 省电</option>
+                <option value="2048">2048</option>
+                <option value="4096">4096</option>
+                <option value="8192" selected>8192 · 默认</option>
+                <option value="16384">16384 · 高精度</option>
+              </select>
+            </label>
+            <div class="field-row">
+              <label class="field-label">预览渲染缩放 <output id="previewScaleOut">100%</output></label>
+              <input id="previewScale" type="range" min="50" max="120" step="5" value="100" />
+            </div>
+            <p class="section-help">降低 FFT 或渲染缩放可显著提高帧率；导出仍使用完整分辨率。</p>
+            <div class="hw-monitor" id="hwMonitor">
+              <div class="hw-meter">
+                <div class="hw-meter-head"><span>FPS</span><b id="hwFpsValue">0</b></div>
+                <canvas id="hwFpsChart" width="220" height="46"></canvas>
+              </div>
+              <div class="hw-meter">
+                <div class="hw-meter-head"><span>FRAME TIME</span><b id="hwFrameValue">0 ms</b></div>
+                <canvas id="hwFrameChart" width="220" height="46"></canvas>
+              </div>
+              <div class="hw-meter">
+                <div class="hw-meter-head"><span>CPU LOAD</span><b id="hwCpuValue">0%</b></div>
+                <canvas id="hwCpuChart" width="220" height="46"></canvas>
+              </div>
+              <div class="hw-meter">
+                <div class="hw-meter-head"><span>GPU LOAD</span><b id="hwGpuValue">0%</b></div>
+                <canvas id="hwGpuChart" width="220" height="46"></canvas>
+              </div>
+              <div class="hw-meter">
+                <div class="hw-meter-head"><span>RAM</span><b id="hwHeapValue">—</b></div>
+                <canvas id="hwHeapChart" width="220" height="46"></canvas>
+              </div>
+              <div class="hw-meter">
+                <div class="hw-meter-head"><span>VRAM · EST</span><b id="hwVramValue">—</b></div>
+                <canvas id="hwVramChart" width="220" height="46"></canvas>
+              </div>
+              <div class="hw-meter">
+                <div class="hw-meter-head"><span>RENDER TARGET</span><b id="hwResValue">—</b></div>
+                <canvas id="hwResChart" width="220" height="46"></canvas>
+              </div>
+            </div>
+            <div class="archive-actions hw-actions">
+              <button class="btn ghost" id="hardwareOptimizeBtn">性能优化 · 释放资源</button>
+              <button class="btn ghost" id="hardwareResetBtn">恢复默认硬件设置</button>
+            </div>
+          </section>
+          <section class="settings-panel hidden" data-settings-panel="plugins">
+            <div class="settings-panel-head">
+              <span class="eyebrow">PLUGINS</span>
+              <h3>插件管理器</h3>
+              <p>从 GitHub 仓库或 PNPM 包安装第三方可视化模块。插件名必须以 Tatsukini-Neon- 开头。</p>
+            </div>
+            <label class="module-option-field"><span>GitHub 仓库 / PNPM 包名</span>
+              <input id="pluginSourceInput" type="text" placeholder="Tatsukini-Neon-Spectrum-Pack 或 owner/repo" spellcheck="false" />
+            </label>
+            <div class="archive-actions">
+              <button class="btn primary" id="pluginInstallGithub">从 GitHub 安装</button>
+              <button class="btn ghost" id="pluginInstallPnpm">从 PNPM 安装</button>
+              <button class="mini-action" id="pluginReloadAll">重新加载插件</button>
+            </div>
+            <p class="section-help" id="pluginStatus">插件以单文件 ESM 运行，安装前请确认来源可信。</p>
+            <div class="plugin-list" id="pluginList"></div>
+            <p class="section-help">命令规范：仓库名或包名需匹配 <code>Tatsukini-Neon-*</code>；插件清单、生命周期与模块注册规范见仓库根目录 <code>PLUGIN_SPEC.md</code>。</p>
           </section>
           <section class="settings-panel hidden" data-settings-panel="files">
             <div class="settings-panel-head">

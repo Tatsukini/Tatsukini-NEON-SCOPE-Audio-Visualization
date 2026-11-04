@@ -109,6 +109,18 @@ export class AudioEngine {
 
   setLoop(v) { this.loop = !!v; }
 
+  setFftSize(v) {
+    const size = [1024, 2048, 4096, 8192, 16384].includes(Number(v)) ? Number(v) : 8192;
+    if (this.analyserL.fftSize === size) return;
+    for (const analyser of [this.analyserL, this.analyserR]) analyser.fftSize = size;
+    this.tdL = new Float32Array(size);
+    this.tdR = new Float32Array(size);
+    this.freqL = new Float32Array(size / 2);
+    this.freqR = new Float32Array(size / 2);
+    this.freqNorm = new Float32Array(size / 2);
+    this.binCount = size / 2;
+  }
+
   setSmoothing(v) {
     const s = clamp(Number(v) / 100, 0, 0.96);
     this.analyserL.smoothingTimeConstant = s;
@@ -428,7 +440,7 @@ export class AudioEngine {
     for (let i = 0; i < bars; i++) {
       const t = i / (bars - 1);
       const hz = 30 * Math.pow(600, t);
-      const bin = clamp(Math.round(hz / (this.ctx.sampleRate / 8192)), 0, this.binCount - 1);
+      const bin = clamp(Math.round(hz / (this.ctx.sampleRate / this.analyserL.fftSize)), 0, this.binCount - 1);
       out[i] = f.freq[bin] || 0;
     }
     return out;

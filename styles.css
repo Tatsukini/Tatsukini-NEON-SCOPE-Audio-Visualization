@@ -2670,3 +2670,23 @@ body.editing .module-box { outline: none; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .001ms !important; transition-duration: .001ms !important; }
 }
+
+/* ── Hardware monitor ───────────────────────────────── */
+.hw-monitor { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 13px; }
+.hw-meter { padding: 7px 8px 5px; border: 1px solid rgba(255,255,255,.09); border-radius: 5px; background: rgba(255,255,255,.018); min-width: 0; }
+.hw-meter-head { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; margin-bottom: 4px; font: 6px var(--mono); letter-spacing: .06em; color: var(--dim); }
+.hw-meter-head b { font: 8px var(--mono); font-weight: 500; color: var(--accent-solid); }
+.hw-meter canvas { display: block; width: 100%; height: 46px; border-radius: 3px; background: rgba(0,0,0,.16); }
+body[data-ui-mode="light"] .hw-meter, body[data-ui-theme="catbot"] .hw-meter { background: var(--paper-card); border-color: var(--paper-line); }
+body[data-ui-mode="light"] .hw-meter canvas, body[data-ui-theme="catbot"] .hw-meter canvas { background: #f5f2fa; }
+.hw-actions { margin-top: 10px; }
+/* ── Plugin manager ─────────────────────────────────── */
+.plugin-list { display: grid; gap: 7px; margin-top: 11px; }
+.plugin-card { display: grid; grid-template-columns: 1fr auto; gap: 8px; padding: 9px 10px; border: 1px solid rgba(255,255,255,.09); border-radius: 5px; background: rgba(255,255,255,.018); }
+.plugin-card-main { min-width: 0; }
+.plugin-card-name { display: flex; align-items: baseline; gap: 7px; font: 8px var(--mono); color: var(--text); }
+.plugin-card-name em { font: 6px var(--mono); font-style: normal; color: var(--dim); }
+.plugin-card-meta { margin-top: 3px; font: 6px var(--mono); color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.plugin-card-actions { display: flex; align-items: center; gap: 5px; }
+.plugin-card-actions button { font: 6px var(--mono); }
+.plugin-empty { padding: 16px 8px; border: 1px dashed rgba(255,255,255,.12); border-radius: 5px; text-align: center; color: var(--dim); font: 6px var(--mono); }

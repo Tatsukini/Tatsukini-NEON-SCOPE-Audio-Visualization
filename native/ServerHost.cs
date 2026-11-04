@@ -250,8 +250,18 @@ internal sealed class ServerHost : IAsyncDisposable
             Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
             await using var source = assembly.GetManifestResourceStream(resourceName);
             if (source == null) continue;
-            await using var target = new FileStream(destination, FileMode.Create, FileAccess.Write, FileShare.Read);
-            await source.CopyToAsync(target);
+            try
+            {
+                if (File.Exists(destination)) File.SetAttributes(destination, FileAttributes.Normal);
+                await using var target = new FileStream(destination, FileMode.Create, FileAccess.Write, FileShare.Read);
+                await source.CopyToAsync(target);
+            }
+            catch (Exception ex) when ((ex is IOException || ex is UnauthorizedAccessException) && File.Exists(destination))
+            {
+                // A previous WebView2 process may still be serving the old file.
+                // Keep the existing asset and continue starting the app.
+                AppPaths.Log($"Web asset update skipped ({relative}): {ex.Message}");
+            }
         }
 
         // Portable ZIP assets override the embedded copies. This keeps the
@@ -265,8 +275,16 @@ internal sealed class ServerHost : IAsyncDisposable
             {
                 var relative = Path.GetRelativePath(externalAssets, file);
                 var destination = Path.Combine(targetAssets, relative);
-                Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
-                File.Copy(file, destination, true);
+                try
+                {
+                    Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+                    if (File.Exists(destination)) File.SetAttributes(destination, FileAttributes.Normal);
+                    File.Copy(file, destination, true);
+                }
+                catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
+                {
+                    AppPaths.Log($"External asset update skipped ({relative}): {ex.Message}");
+                }
             }
         }
     }

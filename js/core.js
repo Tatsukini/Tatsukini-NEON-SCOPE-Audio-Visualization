@@ -114,12 +114,41 @@ export const MODULE_DEFS = {
     about: '曲绘、歌曲名、作曲、风格、BPM、曲序、采样率与时长的一体化信息卡。',
     w: 900, h: 300, category: 'OVERVIEW',
   },
+  bandRings: {
+    name: '三段能量环',
+    code: 'BAND ENERGY',
+    glyph: '◉',
+    about: '低 / 中 / 高频三层同心能量环，适合放在舞台中央或作为背景强调。',
+    w: 360, h: 260, category: 'FREQUENCY',
+  },
+  peakSpectrum: {
+    name: '峰值频谱',
+    code: 'PEAK SPECTRUM',
+    glyph: '▥',
+    about: '带峰值保持和衰减的频谱柱，突出瞬态与持续能量。',
+    w: 600, h: 220, category: 'FREQUENCY',
+  },
+  beatPulse: {
+    name: '节拍脉冲',
+    code: 'BEAT PULSE',
+    glyph: '◎',
+    about: '跟随节拍检测扩散的脉冲环，带 BPM 与拍内相位显示。',
+    w: 320, h: 260, category: 'RHYTHM',
+  },
+  circularScope: {
+    name: '环形示波器',
+    code: 'CIRCULAR SCOPE',
+    glyph: '◯',
+    about: '把左右声道波形卷成圆形声场，适合做中心视觉。',
+    w: 340, h: 340, category: 'TIME DOMAIN',
+  },
 };
 
 export const MODULE_ORDER = [
   'levels', 'loudness', 'dial', 'scope', 'lissajous', 'spectrum',
   'phase', 'rhythm', 'dynamics', 'spectrogram', 'stereometer',
-  'waveform', 'pianoRoll', 'peakSlope', 'stereoField', 'basicInfo',
+  'waveform', 'pianoRoll', 'peakSlope', 'stereoField',
+  'bandRings', 'peakSpectrum', 'beatPulse', 'circularScope', 'basicInfo',
 ];
 
 let _id = 0;
@@ -454,6 +483,13 @@ export const DEFAULT_SETTINGS = {
   uiScale: 100,
   previewFps: 60,
   previewVsync: true,
+  fftSize: 8192,
+  previewScale: 100,
+  hardwareAuto: true,
+  cpuBudget: 100,
+  gpuBudget: 100,
+  memBudget: 80,
+  vramBudget: 80,
   exportFadeIn: 0,
   exportFadeOut: 0,
   exportPulse: 0,
