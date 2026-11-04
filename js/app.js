@@ -1240,6 +1240,18 @@ class NeonScopeApp {
       const mod = this._selected();
       if (!mod) return;
       const midi = (this.state.midiLayers || []).find((layer) => layer.id === mod.options?.midiId) || this.state.midi;
+      const deleteTrack = e.target.closest('[data-midi-delete]');
+      if (deleteTrack) {
+        this._deleteMidiTrack(mod, midi, Number(deleteTrack.dataset.midiDelete));
+        return;
+      }
+      if (e.ctrlKey && e.shiftKey && !e.target.closest('input, button, select')) {
+        const row = e.target.closest('[data-midi-track]');
+        if (row) {
+          this._deleteMidiTrack(mod, midi, Number(row.dataset.midiTrack));
+          return;
+        }
+      }
       const up = e.target.closest('[data-midi-up]');
       if (up) {
         this._moveMidiTrack(mod, midi, Number(up.dataset.midiUp), -1);
@@ -4751,6 +4763,7 @@ class NeonScopeApp {
           <input type="color" data-midi-color="${trackIndex}" value="${color}" title="轨道颜色" />
           <input type="range" data-midi-depth="${trackIndex}" min="0" max="100" step="5" value="${depth}" title="额外深度偏移" />
           <output data-midi-depth-out="${trackIndex}">${Math.round(depth)}%</output>
+          <button type="button" class="midi-track-ms midi-track-delete" data-midi-delete="${trackIndex}" title="删除轨道（也可 Ctrl+Shift+左键）">×</button>
         </div>`;
       }).join('')}</div></div>`;
   }
@@ -4882,6 +4895,41 @@ class NeonScopeApp {
     this._persist();
   }
 
+  _deleteMidiTrack(mod, midi, trackIndex) {
+    const info = midi?.tracks?.[trackIndex];
+    if (!info) return;
+    const layer = (this.state.midiLayers || []).find((item) => item.id === info.layerId);
+    if (!layer) return;
+    const local = info.localTrack;
+    layer.notes = (layer.notes || [])
+      .filter((note) => note.track !== local)
+      .map((note) => ({ ...note, track: note.track > local ? note.track - 1 : note.track }));
+    if (Array.isArray(layer.trackNames)) layer.trackNames.splice(local, 1);
+    layer.trackCount = Math.max(0, (layer.trackCount || 0) - 1);
+    layer.noteCount = layer.notes.length;
+    const drop = (array) => {
+      if (!Array.isArray(array)) return array;
+      if (trackIndex < array.length) array.splice(trackIndex, 1);
+      return array;
+    };
+    if (mod?.options) {
+      drop(mod.options.trackColors);
+      drop(mod.options.trackDepths);
+      drop(mod.options.trackMutes);
+      drop(mod.options.trackSolos);
+      if (Array.isArray(mod.options.trackOrder)) {
+        mod.options.trackOrder = mod.options.trackOrder
+          .filter((value) => value !== trackIndex)
+          .map((value) => value > trackIndex ? value - 1 : value);
+      }
+    }
+    this._rebuildMidiMerged();
+    if (this.state.selectedId === mod.id) this._syncSelectionUI(mod.id);
+    this._renderMidiBus();
+    this._persist();
+    this._toast(`已删除 MIDI 轨道 · ${info.trackName || info.name || trackIndex + 1}`, 'info', 2400);
+  }
+
   _renderMidiBus() {
     if (!this.dom.midiBusList) return;
     const layers = this.state.midiLayers || [];
@@ -4914,7 +4962,7 @@ class NeonScopeApp {
       const color = /^#[0-9a-fA-F]{6}$/.test(colors[trackIndex] || '') ? colors[trackIndex] : palette[trackIndex % palette.length];
       const depth = clamp(Number(depths[trackIndex] ?? defaultDepth) || 0, 0, 100);
       const name = escape(track.name || `Track ${trackIndex + 1}`);
-      return `<div class="midi-track-row" data-bus-track="${trackIndex}">
+      return `<div class="midi-track-row" data-bus-track="${trackIndex}" data-bus-layer="${busId}">
         <span class="midi-track-no">${String(orderIndex + 1).padStart(2, '0')}</span>
         <span class="midi-track-name" title="${name}">${name}</span>
         <button type="button" class="midi-track-ms midi-track-move" data-bus-up="${trackIndex}" data-bus-layer="${busId}" title="上移（更远）">↑</button>
@@ -4924,6 +4972,7 @@ class NeonScopeApp {
         <input type="color" data-bus-color="${trackIndex}" data-bus-layer="${busId}" value="${color}" title="轨道颜色" />
         <input type="range" data-bus-depth="${trackIndex}" data-bus-layer="${busId}" min="0" max="100" step="5" value="${depth}" title="额外深度偏移" />
         <output data-bus-depth-out="${busId}:${trackIndex}">${Math.round(depth)}%</output>
+        <button type="button" class="midi-track-ms midi-track-delete" data-bus-delete="${trackIndex}" data-bus-layer="${busId}" title="删除轨道（也可 Ctrl+Shift+左键）">×</button>
       </div>`;
     }).join('');
     this.dom.midiBusList.innerHTML = `<details class="midi-bus-layer" data-bus-card="${busId}" open>
@@ -4998,6 +5047,23 @@ class NeonScopeApp {
       this._persist();
     });
     list.addEventListener('click', (e) => {
+      const deleteTrack = e.target.closest('[data-bus-delete]');
+      if (deleteTrack) {
+        const mod = this._busMidiModule(deleteTrack.dataset.busLayer);
+        if (!mod) return;
+        this._deleteMidiTrack(mod, this.state.midiMerged, Number(deleteTrack.dataset.busDelete));
+        return;
+      }
+      if (e.ctrlKey && e.shiftKey && !e.target.closest('input, button, select')) {
+        const row = e.target.closest('[data-bus-track]');
+        if (row) {
+          const mod = this._busMidiModule(row.closest('[data-bus-layer]')?.dataset.busLayer);
+          if (mod) {
+            this._deleteMidiTrack(mod, this.state.midiMerged, Number(row.dataset.busTrack));
+            return;
+          }
+        }
+      }
       const select = e.target.closest('[data-bus-select]');
       if (select) {
         const mod = this._busMidiModule(select.dataset.busSelect);
