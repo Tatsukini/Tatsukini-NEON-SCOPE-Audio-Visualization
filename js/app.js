@@ -568,6 +568,8 @@ class NeonScopeApp {
       s.exportFadeOut = clamp(s.exportFadeOut, 0, 3);
       s.exportPulse = clamp(s.exportPulse, 0, 100);
       s.uiScale = clamp(Number(s.uiScale) || 100, 70, 150);
+      s.previewFps = [0, 10, 15, 20, 24, 30, 45, 60, 90, 120, 144, 165, 240].includes(Number(s.previewFps)) ? Number(s.previewFps) : 60;
+      s.previewVsync = s.previewVsync !== false;
       s.volume = clamp(s.volume, 0, 100);
       s.glow = clamp(s.glow, 0, 100);
       s.bgDim = clamp(s.bgDim, 0, 90);
@@ -661,6 +663,7 @@ class NeonScopeApp {
       uiScale: $('#uiScale'), uiScaleOut: $('#uiScaleOut'), uiFont: $('#uiFont'), uiFontReset: $('#uiFontReset'),
       bgMotion: $('#bgMotion'), bgMotionAmount: $('#bgMotionAmount'), bgMotionAmountOut: $('#bgMotionAmountOut'),
       bgMotionSpeed: $('#bgMotionSpeed'), bgMotionSpeedOut: $('#bgMotionSpeedOut'), bgMotionDirection: $('#bgMotionDirection'),
+      previewFps: $('#previewFps'), previewVsync: $('#previewVsync'),
       exportFadeIn: $('#exportFadeIn'), exportFadeInOut: $('#exportFadeInOut'),
       exportFadeOut: $('#exportFadeOut'), exportFadeOutOut: $('#exportFadeOutOut'),
       exportPulse: $('#exportPulse'), exportPulseOut: $('#exportPulseOut'),
@@ -771,6 +774,8 @@ class NeonScopeApp {
       s.sensitivity = clamp(s.sensitivity, 40, 200);
       s.smoothing = clamp(s.smoothing, 0, 96);
       s.uiScale = clamp(Number(s.uiScale) || 100, 70, 150);
+      s.previewFps = [0, 10, 15, 20, 24, 30, 45, 60, 90, 120, 144, 165, 240].includes(Number(s.previewFps)) ? Number(s.previewFps) : 60;
+      s.previewVsync = s.previewVsync !== false;
       this.state.settings = s;
     }
     if (data.keybinds && typeof data.keybinds === 'object') {
@@ -1130,6 +1135,16 @@ class NeonScopeApp {
       this.state.settings.bgEnergy = Number(d.bgEnergy.value);
       d.bgEnergyOut.textContent = `${d.bgEnergy.value}%`;
       this._persist();
+    });
+    d.previewFps.addEventListener('change', () => {
+      this.state.settings.previewFps = Number(d.previewFps.value);
+      this._persist();
+      this._toast(`预览帧率 · ${this.state.settings.previewFps ? `${this.state.settings.previewFps} FPS` : '无限制'}`, 'info', 1600);
+    });
+    d.previewVsync.addEventListener('change', () => {
+      this.state.settings.previewVsync = d.previewVsync.checked;
+      this._persist();
+      this._toast(`垂直同步 · ${d.previewVsync.checked ? '开启' : '关闭'}`, 'info', 1600);
     });
     d.bgMotion.addEventListener('change', () => {
       this.state.settings.bgMotion = d.bgMotion.value;
@@ -5942,6 +5957,8 @@ class NeonScopeApp {
     d.bgMotionAmountOut.textContent = `${s.bgMotionAmount}%`;
     d.bgMotionSpeed.value = s.bgMotionSpeed;
     d.bgMotionSpeedOut.textContent = `${s.bgMotionSpeed}%`;
+    if (d.previewFps) d.previewFps.value = String(s.previewFps ?? 60);
+    if (d.previewVsync) d.previewVsync.checked = s.previewVsync !== false;
     d.exportFadeIn.value = s.exportFadeIn;
     d.exportFadeInOut.textContent = `${Number(s.exportFadeIn).toFixed(1)}s`;
     d.exportFadeOut.value = s.exportFadeOut;

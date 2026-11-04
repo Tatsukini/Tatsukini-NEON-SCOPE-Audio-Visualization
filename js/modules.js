@@ -2056,14 +2056,14 @@ function drawBasicInfo(ctx, mod, body, frame, st, env) {
     ctx.fillText(String(values[i]), cx, rowY + label + 12 * k, colW - 8);
   }
 
-  const metaY = y + h - p - 28 * k;
+  const metaY = y + h - p - 46 * k;
   ctx.fillStyle = soft;
   ctx.font = `500 ${tiny}px ${MONO}`;
   const meta = `GENRE ${genre}    BPM ${bpm}    SAMPLE ${sampleRate}    DURATION ${duration}`;
   ctx.fillText(meta, tx, metaY, tw);
 
   // Waveform preview.
-  const waveY = y + h - p - 12 * k;
+  const waveY = y + h - p - 14 * k;
   const waveW = Math.max(30, tw);
   const minArr = engine.overviewMin;
   const maxArr = engine.overviewMax;
@@ -2089,7 +2089,7 @@ function drawBasicInfo(ctx, mod, body, frame, st, env) {
   ctx.stroke();
   ctx.fillStyle = pink;
   ctx.font = `500 ${tiny}px ${MONO}`;
-  ctx.fillText('WAVEFORM PREVIEW', tx, waveY - 12 * k);
+  ctx.fillText('WAVEFORM PREVIEW', tx, waveY - 13 * k);
   ctx.restore();
 }
 

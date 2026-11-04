@@ -782,6 +782,28 @@
               <p>为图片背景加入电影感动效，并控制导出视频的渐入、渐出和节拍闪光。</p>
             </div>
             <div class="setting-block">
+              <div class="setting-block-head"><span>预览帧率</span><em>PREVIEW PERFORMANCE</em></div>
+              <label class="module-option-field"><span>目标帧率</span>
+                <select id="previewFps">
+                  <option value="10">10 FPS</option>
+                  <option value="15">15 FPS</option>
+                  <option value="20">20 FPS</option>
+                  <option value="24">24 FPS</option>
+                  <option value="30">30 FPS</option>
+                  <option value="45">45 FPS</option>
+                  <option value="60" selected>60 FPS</option>
+                  <option value="90">90 FPS</option>
+                  <option value="120">120 FPS</option>
+                  <option value="144">144 FPS</option>
+                  <option value="165">165 FPS</option>
+                  <option value="240">240 FPS</option>
+                  <option value="0">UNLIMITED · 无限制</option>
+                </select>
+              </label>
+              <label class="check-row"><input type="checkbox" id="previewVsync" checked /><span>垂直同步（VSync）</span></label>
+              <p class="section-help">VSync 开启时跟随显示器刷新；关闭后按目标帧率定时渲染。无限制模式会尽可能快地渲染，可能占用较高 CPU / GPU。</p>
+            </div>
+            <div class="setting-block">
               <div class="setting-block-head"><span>背景图片动效</span><em>IMAGE MOTION</em></div>
               <label class="module-option-field"><span>动效类型</span>
                 <select id="bgMotion">

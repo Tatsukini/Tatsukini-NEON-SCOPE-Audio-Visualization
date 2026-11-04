@@ -31,6 +31,8 @@ export class Visualizer {
     this._fpsTimer = 0;
     this._previewW = 1280;
     this._previewH = 720;
+    this._previewTimer = 0;
+    this._lastDrawTs = 0;
     this.drag = null;
     this._guideTimer = 0;
     this._particles = Array.from({ length: 46 }, (_, i) => ({
@@ -55,12 +57,15 @@ export class Visualizer {
     if (this.running) return;
     this.running = true;
     this.lastTs = 0;
-    this._raf = requestAnimationFrame(this._boundLoop);
+    this._lastDrawTs = 0;
+    this._scheduleNext();
   }
 
   stop() {
     this.running = false;
     if (this._raf) cancelAnimationFrame(this._raf);
+    if (this._previewTimer) clearTimeout(this._previewTimer);
+    this._previewTimer = 0;
   }
 
   destroy() {
@@ -434,12 +439,48 @@ export class Visualizer {
     this.background.setImageSettings(this.state.settings.bgDim, this.state.settings.bgBlur, this.state.settings.bgContain);
   }
 
+  _previewTargetFps() {
+    if (this.exportMode) return Math.max(1, Number(this._exportFps) || 60);
+    const value = Number(this.state.settings.previewFps);
+    return Number.isFinite(value) && value > 0 ? value : 0;
+  }
+
+  _scheduleNext() {
+    if (!this.running) return;
+    const vsync = this.exportMode || this.state.settings.previewVsync !== false;
+    const fps = this._previewTargetFps();
+    if (vsync || fps === 0) {
+      if (fps === 0 && !vsync) {
+        this._previewTimer = setTimeout(() => {
+          this._previewTimer = 0;
+          this._loop(performance.now());
+        }, 0);
+      } else {
+        this._raf = requestAnimationFrame(this._boundLoop);
+      }
+      return;
+    }
+    const delay = Math.max(0, 1000 / fps);
+    this._previewTimer = setTimeout(() => {
+      this._previewTimer = 0;
+      this._loop(performance.now());
+    }, delay);
+  }
+
   _loop(ts) {
     if (!this.running) return;
+    const target = this._previewTargetFps();
+    const vsync = this.exportMode || this.state.settings.previewVsync !== false;
+    const interval = target ? 1000 / target : 0;
+    if (interval && this._lastDrawTs && ts - this._lastDrawTs < interval - 1) {
+      this._scheduleNext();
+      return;
+    }
     if (!this.lastTs) this.lastTs = ts;
     let dt = (ts - this.lastTs) / 1000;
     this.lastTs = ts;
     if (dt > 0.1) dt = 0.1;
+    this._lastDrawTs = ts;
     this.animClock += dt;
     this._fpsAccum += dt;
     this._fpsFrames += 1;
@@ -456,7 +497,7 @@ export class Visualizer {
     this.engine.onEnded = this.engine.onEnded || null;
     this._draw(frame, dt);
     this.callbacks.onTick?.(frame, this.fps, dt);
-    this._raf = requestAnimationFrame(this._boundLoop);
+    this._scheduleNext();
   }
 
   _basePalette() {

@@ -452,6 +452,8 @@ export const DEFAULT_SETTINGS = {
   bgMotionSpeed: 100,
   bgMotionDirection: 'auto',
   uiScale: 100,
+  previewFps: 60,
+  previewVsync: true,
   exportFadeIn: 0,
   exportFadeOut: 0,
   exportPulse: 0,
