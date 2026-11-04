@@ -1167,8 +1167,10 @@ input[type="number"]:focus, .select:focus, .module-option-field select:focus {
   background:
     linear-gradient(135deg, transparent 0 48%, rgba(255,255,255,.28) 49% 53%, transparent 54% 60%, rgba(255,255,255,.48) 61% 65%, transparent 66% 72%, rgba(255,255,255,.72) 73% 77%, transparent 78%);
 }
-.panel-floating > .panel-resizer, .subpanel-floating > .subpanel-resizer { display: block; }
-.panel-resizer:hover, .subpanel-resizer:hover { background-color: rgba(var(--accent-rgb), .14); }
+.panel-floating > .panel-resizer, .subpanel-floating > .subpanel-resizer { display: block; opacity: 0; transition: opacity .15s ease; }
+.panel-floating:hover > .panel-resizer, .subpanel-floating:hover > .subpanel-resizer,
+.panel-floating:focus-within > .panel-resizer, .subpanel-floating:focus-within > .subpanel-resizer { opacity: 1; }
+.panel-resizer:hover, .subpanel-resizer:hover { background-color: rgba(var(--accent-rgb), .14); opacity: 1; }
 body[data-ui-theme="catbot"] .panel-resizer, body[data-ui-theme="catbot"] .subpanel-resizer {
   background:
     linear-gradient(135deg, transparent 0 48%, rgba(38,29,61,.35) 49% 53%, transparent 54% 60%, rgba(38,29,61,.55) 61% 65%, transparent 66% 72%, rgba(38,29,61,.8) 73% 77%, transparent 78%);
@@ -1469,7 +1471,7 @@ body[data-ui-mode="light"] .alpha-layer .alpha-card, body[data-ui-theme="catbot"
 
 .midi-bus-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 7px 0 6px; }
 .midi-bus-toolbar span { font: 6px var(--mono); color: var(--dim); letter-spacing: .05em; }
-.midi-bus-list { display: flex; flex-direction: column; gap: 5px; max-height: 430px; overflow: auto; padding-right: 2px; }
+.midi-bus-list { display: flex; flex-direction: column; gap: 5px; max-height: none; overflow: visible; padding-right: 2px; }
 .midi-bus-empty { padding: 10px; border: 1px dashed rgba(255,255,255,.12); border-radius: 4px; font: 7px/1.65 var(--mono); color: var(--dim); }
 .midi-bus-layer { border: 1px solid rgba(255,255,255,.08); border-radius: 4px; background: rgba(255,255,255,.018); }
 .midi-bus-layer > summary { display: flex; align-items: center; gap: 6px; min-height: 27px; padding: 0 7px; cursor: pointer; list-style: none; }
