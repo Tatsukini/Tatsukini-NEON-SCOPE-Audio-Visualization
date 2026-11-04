@@ -142,13 +142,20 @@ export const MODULE_DEFS = {
     about: '把左右声道波形卷成圆形声场，适合做中心视觉。',
     w: 340, h: 340, category: 'TIME DOMAIN',
   },
+  chladni: {
+    name: '克拉尼图形',
+    code: 'CHLADNI FIGURE',
+    glyph: '◈',
+    about: '用近似克拉尼方程模拟方形板上的沙粒驻波图形，随振幅与节拍扰动。',
+    w: 420, h: 420, category: 'PHYSICS',
+  },
 };
 
 export const MODULE_ORDER = [
   'levels', 'loudness', 'dial', 'scope', 'lissajous', 'spectrum',
   'phase', 'rhythm', 'dynamics', 'spectrogram', 'stereometer',
   'waveform', 'pianoRoll', 'peakSlope', 'stereoField',
-  'bandRings', 'peakSpectrum', 'beatPulse', 'circularScope', 'basicInfo',
+  'bandRings', 'peakSpectrum', 'beatPulse', 'circularScope', 'chladni', 'basicInfo',
 ];
 
 let _id = 0;
@@ -486,6 +493,9 @@ export const DEFAULT_SETTINGS = {
   fftSize: 8192,
   previewScale: 100,
   hardwareAuto: true,
+  renderArchitecture: 'adaptive',
+  computeArchitecture: 'deferred',
+  dynamicResolution: true,
   cpuBudget: 100,
   gpuBudget: 100,
   memBudget: 80,

@@ -201,6 +201,14 @@ const MODULE_OPTIONS = {
     { key: 'scopeWidth', label: '线宽', type: 'range', min: 1, max: 4, step: 0.5, default: 1.5, unit: 'px' },
     { key: 'scopeGlow', label: '辉光', type: 'toggle', default: true },
   ],
+  chladni: [
+    { key: 'chladniMode', label: '振动模态', type: 'select', default: '3,4', options: [['2,3', '2 × 3'], ['3,4', '3 × 4'], ['4,5', '4 × 5'], ['5,6', '5 × 6'], ['2,5', '2 × 5']] },
+    { key: 'sandCount', label: '沙子数量', type: 'range', min: 1000, max: 12000, step: 500, default: 4500, unit: '' },
+    { key: 'vibration', label: '振动幅度', type: 'range', min: 0, max: 100, step: 5, default: 45, unit: '%' },
+    { key: 'sampling', label: '采样精度', type: 'range', min: 8, max: 32, step: 2, default: 16, unit: '' },
+    { key: 'grainResponse', label: '沙粒响应', type: 'range', min: 10, max: 100, step: 5, default: 70, unit: '%' },
+    { key: 'showField', label: '显示驻波场', type: 'toggle', default: true },
+  ],
   basicInfo: [
     { key: 'primaryColor', label: '主字体颜色', type: 'color', default: '#101a3b' },
     { key: 'secondaryColor', label: '次字体颜色', type: 'color', default: '#6d6782' },
@@ -616,6 +624,9 @@ class NeonScopeApp {
       s.gpuBudget = clamp(Number(s.gpuBudget) || 100, 25, 100);
       s.memBudget = clamp(Number(s.memBudget) || 80, 25, 100);
       s.vramBudget = clamp(Number(s.vramBudget) || 80, 25, 100);
+      s.computeArchitecture = ['deferred', 'quality', 'main'].includes(s.computeArchitecture) ? s.computeArchitecture : 'deferred';
+      s.renderArchitecture = ['adaptive', 'performance', 'direct'].includes(s.renderArchitecture) ? s.renderArchitecture : 'adaptive';
+      s.dynamicResolution = s.dynamicResolution !== false;
       this.state.settings = s;
       this._applySettingsToState();
       this.audio.setVolume(s.volume / 100);
@@ -634,6 +645,9 @@ class NeonScopeApp {
       this._renderLibrary();
       this._syncExportUI();
       this._persist();
+    }
+    if (data.layoutPreset && LAYOUT_PRESETS[data.layoutPreset]) {
+      this._applyPreset(data.layoutPreset, true);
     }
     if (data.keybinds && typeof data.keybinds === 'object') {
       const kb = { ...DEFAULT_KEYBINDS };
@@ -698,7 +712,8 @@ class NeonScopeApp {
       bgContain: $('#bgContain'), removeBgBtn: $('#removeBgBtn'), bgEnergy: $('#bgEnergy'), bgEnergyOut: $('#bgEnergyOut'),
       rendererMode: $('#rendererMode'), sensitivity: $('#sensitivity'), sensitivityOut: $('#sensitivityOut'),
       smoothing: $('#smoothing'), smoothingOut: $('#smoothingOut'), fftSize: $('#fftSize'), previewScale: $('#previewScale'), previewScaleOut: $('#previewScaleOut'), watermarkToggle: $('#watermarkToggle'),
-      hardwareAuto: $('#hardwareAuto'), hardwareInfo: $('#hardwareInfo'), hwFpsValue: $('#hwFpsValue'), hwFrameValue: $('#hwFrameValue'),
+      hardwareAuto: $('#hardwareAuto'), hardwareInfo: $('#hardwareInfo'), computeArchitecture: $('#computeArchitecture'), renderArchitecture: $('#renderArchitecture'), dynamicResolution: $('#dynamicResolution'),
+      hwFpsValue: $('#hwFpsValue'), hwFrameValue: $('#hwFrameValue'),
       hwHeapValue: $('#hwHeapValue'), hwResValue: $('#hwResValue'), hwCpuValue: $('#hwCpuValue'), hwGpuValue: $('#hwGpuValue'),
       hwVramValue: $('#hwVramValue'), hwFpsChart: $('#hwFpsChart'), hwFrameChart: $('#hwFrameChart'),
       hwHeapChart: $('#hwHeapChart'), hwResChart: $('#hwResChart'), hwCpuChart: $('#hwCpuChart'),
@@ -707,7 +722,7 @@ class NeonScopeApp {
       memBudget: $('#memBudget'), memBudgetOut: $('#memBudgetOut'), vramBudget: $('#vramBudget'), vramBudgetOut: $('#vramBudgetOut'),
       hardwareOptimizeBtn: $('#hardwareOptimizeBtn'), hardwareResetBtn: $('#hardwareResetBtn'),
       scanlineToggle: $('#scanlineToggle'), resetLayoutBtn: $('#resetLayoutBtn'),
-      uiScale: $('#uiScale'), uiScaleOut: $('#uiScaleOut'), uiFont: $('#uiFont'), uiFontReset: $('#uiFontReset'),
+      uiScale: $('#uiScale'), uiScaleOut: $('#uiScaleOut'), footerUiScale: $('#footerUiScale'), settingsZoom: $('#settingsZoom'), uiFont: $('#uiFont'), uiFontReset: $('#uiFontReset'),
       bgMotion: $('#bgMotion'), bgMotionAmount: $('#bgMotionAmount'), bgMotionAmountOut: $('#bgMotionAmountOut'),
       bgMotionSpeed: $('#bgMotionSpeed'), bgMotionSpeedOut: $('#bgMotionSpeedOut'), bgMotionDirection: $('#bgMotionDirection'),
       previewFps: $('#previewFps'), previewVsync: $('#previewVsync'),
@@ -735,6 +750,7 @@ class NeonScopeApp {
       layoutExportBtn: $('#layoutExportBtn'), layoutImportBtn: $('#layoutImportBtn'), layoutFile: $('#layoutFile'),
       layoutSlotInfo: $('#layoutSlotInfo'),
       pluginSourceInput: $('#pluginSourceInput'), pluginInstallGithub: $('#pluginInstallGithub'), pluginInstallPnpm: $('#pluginInstallPnpm'),
+      pluginImportLocal: $('#pluginImportLocal'), pluginFolder: $('#pluginFolder'),
       pluginReloadAll: $('#pluginReloadAll'), pluginStatus: $('#pluginStatus'), pluginList: $('#pluginList'),
       archiveFile: $('#archiveFile'), fileAnimExportBtn: $('#fileAnimExportBtn'), fileAnimImportBtn: $('#fileAnimImportBtn'),
       savePathInput: $('#savePathInput'), exportPathInput: $('#exportPathInput'),
@@ -832,6 +848,9 @@ class NeonScopeApp {
       s.gpuBudget = clamp(Number(s.gpuBudget) || 100, 25, 100);
       s.memBudget = clamp(Number(s.memBudget) || 80, 25, 100);
       s.vramBudget = clamp(Number(s.vramBudget) || 80, 25, 100);
+      s.computeArchitecture = ['deferred', 'quality', 'main'].includes(s.computeArchitecture) ? s.computeArchitecture : 'deferred';
+      s.renderArchitecture = ['adaptive', 'performance', 'direct'].includes(s.renderArchitecture) ? s.renderArchitecture : 'adaptive';
+      s.dynamicResolution = s.dynamicResolution !== false;
       s.uiScale = clamp(Number(s.uiScale) || 100, 70, 150);
       s.previewFps = [0, 10, 15, 20, 24, 30, 45, 60, 90, 120, 144, 165, 240].includes(Number(s.previewFps)) ? Number(s.previewFps) : 60;
       s.previewVsync = s.previewVsync !== false;
@@ -1060,6 +1079,11 @@ class NeonScopeApp {
         onPreviewResize: ({ width, height }) => {
           this.dom.previewQuality.textContent = `${width} × ${height}`;
         },
+        onPreviewScale: (scale) => {
+          if (this.dom.previewScale) this.dom.previewScale.value = String(scale);
+          if (this.dom.previewScaleOut) this.dom.previewScaleOut.textContent = `${scale}%`;
+          this._persist();
+        },
         onFps: (fps) => {
           this.dom.fpsRead.textContent = `${Math.round(fps)} FPS`;
           this._broadcastHardwareStats(fps);
@@ -1076,6 +1100,21 @@ class NeonScopeApp {
 
   _bindUI() {
     const d = this.dom;
+    window.addEventListener('resize', () => this._syncSubpanelResizers());
+    window.addEventListener('wheel', (e) => {
+      if (!e.ctrlKey || e.altKey || e.metaKey) return;
+      if (e.target.closest?.('#timelinePanel')) return;
+      e.preventDefault();
+      const step = e.deltaY < 0 ? 5 : -5;
+      this._setUiScale((this.state.settings.uiScale || 100) + step, { silent: true });
+    }, { passive: false });
+    window.addEventListener('keydown', (e) => {
+      if (!e.ctrlKey || e.altKey || e.metaKey) return;
+      if (!['+', '=', '-', '_', '0'].includes(e.key)) return;
+      e.preventDefault();
+      if (e.key === '0') this._setUiScale(100, { silent: true });
+      else this._setUiScale((this.state.settings.uiScale || 100) + (e.key === '+' || e.key === '=' ? 5 : -5), { silent: true });
+    });
     d.playBtn.addEventListener('click', () => this._togglePlay());
     d.startPlayBtn.addEventListener('click', () => this._togglePlay());
     d.stopBtn.addEventListener('click', () => {
@@ -1289,6 +1328,23 @@ class NeonScopeApp {
     });
     d.hardwareOptimizeBtn.addEventListener('click', () => this._optimizeHardware());
     d.hardwareResetBtn.addEventListener('click', () => this._resetHardwareSettings());
+    d.dynamicResolution.addEventListener('change', () => {
+      this.state.settings.dynamicResolution = d.dynamicResolution.checked;
+      this._persist();
+    });
+    for (const [key, select] of [['computeArchitecture', d.computeArchitecture], ['renderArchitecture', d.renderArchitecture]]) {
+      select.addEventListener('change', () => {
+        this.state.settings[key] = select.value;
+        if (this.state.settings.hardwareAuto) {
+          this.state.settings.hardwareAuto = false;
+          d.hardwareAuto.checked = false;
+          this._applyHardwareAuto({ persist: false });
+        }
+        if (key === 'renderArchitecture') this.visualizer._applyPreviewResolution();
+        this._persist();
+        this._toast(`${key === 'computeArchitecture' ? '计算架构' : '渲染架构'} · ${select.options[select.selectedIndex].textContent}`, 'info', 2200);
+      });
+    }
     for (const [key, input, output] of [
       ['cpuBudget', d.cpuBudget, d.cpuBudgetOut],
       ['gpuBudget', d.gpuBudget, d.gpuBudgetOut],
@@ -1602,6 +1658,12 @@ class NeonScopeApp {
     this._renderLayoutSlotInfo();
     this.dom.pluginInstallGithub?.addEventListener('click', () => this._installPlugin('github'));
     this.dom.pluginInstallPnpm?.addEventListener('click', () => this._installPlugin('pnpm'));
+    this.dom.pluginImportLocal?.addEventListener('click', () => this.dom.pluginFolder?.click());
+    this.dom.pluginFolder?.addEventListener('change', () => {
+      const files = Array.from(this.dom.pluginFolder.files || []);
+      this.dom.pluginFolder.value = '';
+      if (files.length) this._installLocalPluginFiles(files);
+    });
     this.dom.pluginReloadAll?.addEventListener('click', async () => {
       this.dom.pluginStatus.textContent = '正在重新加载已启用插件…';
       await this._loadEnabledPlugins();
@@ -2779,6 +2841,49 @@ class NeonScopeApp {
     } catch (err) {
       this.dom.pluginStatus.textContent = `插件安装失败：${err.message}`;
       this._toast(`插件安装失败：${err.message}`, 'error', 5200);
+    }
+  }
+
+  async _installLocalPluginFiles(fileList) {
+    try {
+      const files = Array.from(fileList || []);
+      if (!files.length) return;
+      const normalized = (file) => String(file.webkitRelativePath || file.name || '').replace(/\\/g, '/');
+      const manifests = files.filter((file) => normalized(file).toLowerCase().endsWith('/plugin.json') || normalized(file).toLowerCase() === 'plugin.json');
+      manifests.sort((a, b) => normalized(a).split('/').length - normalized(b).split('/').length);
+      if (!manifests.length) throw new Error('文件夹根目录缺少 plugin.json');
+      const manifestFile = manifests[0];
+      const manifestPath = normalized(manifestFile);
+      const root = manifestPath.split('/').slice(0, -1).join('/');
+      const folderName = root.split('/').filter(Boolean).pop() || '';
+      const manifest = this._validatePluginManifest(JSON.parse(await manifestFile.text()), folderName);
+      const entryPath = (root ? `${root}/` : '') + manifest.entry.replace(/^\.\//, '');
+      const entryFile = files.find((file) => normalized(file) === entryPath);
+      if (!entryFile) throw new Error(`文件夹中缺少入口文件：${manifest.entry}`);
+      const code = await entryFile.text();
+      const id = String(manifest.id || manifest.name.toLowerCase());
+      const records = this._pluginRecords().filter((p) => p.id !== id);
+      const record = {
+        id,
+        name: manifest.name,
+        version: manifest.version || '0.0.0',
+        source: `local:${folderName || manifest.name}`,
+        entry: manifest.entry,
+        manifest,
+        code,
+        enabled: true,
+        installedAt: new Date().toISOString(),
+        lastError: '',
+      };
+      records.push(record);
+      this._savePluginRecords(records);
+      const loaded = await this._activatePlugin(record);
+      this._renderPluginManager();
+      this.dom.pluginStatus.textContent = loaded ? `已导入本地插件 ${record.name}` : `已导入 ${record.name}，但激活失败`;
+      if (loaded) this._toast(`本地插件已导入 · ${record.name}`, 'success', 2800);
+    } catch (err) {
+      this.dom.pluginStatus.textContent = `本地插件导入失败：${err.message}`;
+      this._toast(`本地插件导入失败：${err.message}`, 'error', 5200);
     }
   }
 
@@ -4258,15 +4363,16 @@ class NeonScopeApp {
         head.appendChild(tools);
         head.dataset.subpanelDrag = spec.id;
       }
-      if (!spec.el.querySelector('.subpanel-resizer')) {
-        const grip = document.createElement('div');
+      let grip = spec.el.querySelector('.subpanel-resizer');
+      if (!grip) {
+        grip = document.createElement('div');
         grip.className = 'subpanel-resizer';
         grip.dataset.resizeSubpanel = spec.id;
         grip.title = '拖动调整板块大小';
         spec.el.appendChild(grip);
       }
       this._subpanels[spec.id] = {
-        spec, el: spec.el, head, index,
+        spec, el: spec.el, head, index, grip,
         parent: spec.el.parentNode,
         placeholder: null,
         z: 80,
@@ -4365,6 +4471,9 @@ class NeonScopeApp {
         rec.el.style.width = `${st.w}px`;
         rec.el.style.height = `${st.h}px`;
         rec.el.style.zIndex = String(rec.z || 80);
+        if (rec.grip && rec.grip.parentNode !== layer) layer.appendChild(rec.grip);
+        rec.grip?.classList.add('subpanel-resizer-overlay');
+        if (rec.grip) rec.grip.style.display = 'block';
       } else {
         rec.el.classList.remove('subpanel-floating');
         if (rec.placeholder) {
@@ -4379,6 +4488,9 @@ class NeonScopeApp {
         rec.el.style.width = '';
         rec.el.style.height = '';
         rec.el.style.zIndex = '';
+        if (rec.grip && rec.grip.parentNode === layer) rec.el.appendChild(rec.grip);
+        rec.grip?.classList.remove('subpanel-resizer-overlay');
+        if (rec.grip) rec.grip.style.display = '';
       }
       for (const btn of $$(`[data-subpanel-float="${spec.id}"]`)) {
         btn.title = floating ? '停靠此板块' : '浮动此板块';
@@ -4386,8 +4498,23 @@ class NeonScopeApp {
         if (use) use.setAttribute('href', floating ? '#i-dock' : '#i-window');
       }
     }
+    this._syncSubpanelResizers();
     this._renderSubpanelMenu();
     this._savePanelState();
+  }
+
+  _syncSubpanelResizers() {
+    if (!this._subpanels) return;
+    for (const rec of Object.values(this._subpanels)) {
+      const el = rec?.el;
+      if (!el?.classList.contains('subpanel-floating')) continue;
+      const grip = rec.grip;
+      const st = this.subpanelState[rec.spec.id];
+      if (!grip || !st) continue;
+      grip.style.left = `${Math.round(st.x + st.w - 17)}px`;
+      grip.style.top = `${Math.round(st.y + st.h - 17)}px`;
+      grip.style.display = 'block';
+    }
   }
 
   _bindResizeHandles() {
@@ -4419,6 +4546,7 @@ class NeonScopeApp {
         st.h = h;
         el.style.width = `${w}px`;
         el.style.height = `${h}px`;
+        if (!primary) this._syncSubpanelResizers();
       };
       const up = (ev) => {
         document.removeEventListener('pointermove', move);
@@ -4467,6 +4595,7 @@ class NeonScopeApp {
         st.y = Math.round(clamp(start.top + (ev.clientY - start.y) / vp.scale, 4, vp.h - el.offsetHeight - 4));
         el.style.left = `${st.x}px`;
         el.style.top = `${st.y}px`;
+        this._syncSubpanelResizers();
       };
       const up = () => {
         document.removeEventListener('pointermove', move);
@@ -6034,6 +6163,20 @@ class NeonScopeApp {
       btn.classList.toggle('active', btn.dataset.preset === name);
     });
     this._persist();
+    if (this._standaloneSettings) {
+      try {
+        const payload = { version: 1, settings: this.state.settings, keybinds: this.keybinds, layoutPreset: name };
+        safeStore(SETTINGS_SYNC_KEY, JSON.stringify(payload));
+        if (this._isNative) {
+          window.chrome.webview.postMessage({
+            action: 'settings-updated',
+            settings: this.state.settings,
+            keybinds: this.keybinds,
+            layoutPreset: name,
+          });
+        }
+      } catch { /* settings bridge is optional */ }
+    }
     if (!silent) this._toast(`布局已切换 · ${preset.label}`);
   }
 
@@ -6234,8 +6377,13 @@ class NeonScopeApp {
     }
     if (this.dom.uiScale) this.dom.uiScale.value = String(scale);
     if (this.dom.uiScaleOut) this.dom.uiScaleOut.textContent = `${scale}%`;
+    if (this.dom.footerUiScale) this.dom.footerUiScale.textContent = `${scale}%`;
+    if (this.dom.settingsZoom) this.dom.settingsZoom.textContent = `UI ${scale}%`;
     this._applyResponsiveUI();
-    setTimeout(() => this.visualizer?._resize(), 30);
+    setTimeout(() => {
+      this.visualizer?._resize();
+      this._syncSubpanelResizers?.();
+    }, 30);
     if (!noPersist) this._persist();
     if (!silent) this._toast(`界面缩放 · ${scale}%`);
   }
@@ -6562,6 +6710,8 @@ class NeonScopeApp {
       scale = Math.round(scale * (0.55 + gpuBudget / 100 * 0.45) * (0.7 + vramBudget / 100 * 0.3));
       this.state.settings.previewScale = clamp(scale, 50, 120);
       this.state.settings.fftSize = fft;
+      this.state.settings.computeArchitecture = 'deferred';
+      this.state.settings.renderArchitecture = profile.cores <= 6 ? 'performance' : 'adaptive';
       this.audio.setFftSize(fft);
       this.visualizer?._applyPreviewResolution?.();
     }
@@ -6582,6 +6732,9 @@ class NeonScopeApp {
       this.dom.previewScale.value = String(s.previewScale ?? 100);
       if (this.dom.previewScaleOut) this.dom.previewScaleOut.textContent = `${s.previewScale ?? 100}%`;
     }
+    if (this.dom.computeArchitecture) this.dom.computeArchitecture.value = s.computeArchitecture || 'deferred';
+    if (this.dom.renderArchitecture) this.dom.renderArchitecture.value = s.renderArchitecture || 'adaptive';
+    if (this.dom.dynamicResolution) this.dom.dynamicResolution.checked = s.dynamicResolution !== false;
   }
 
   _startHardwareMonitor() {
@@ -6666,6 +6819,9 @@ class NeonScopeApp {
     s.hardwareAuto = false;
     if (this.dom.hardwareAuto) this.dom.hardwareAuto.checked = false;
     s.previewScale = Math.max(50, (Number(s.previewScale) || 100) - 10);
+    s.computeArchitecture = 'deferred';
+    s.renderArchitecture = 'performance';
+    s.dynamicResolution = true;
     const tiers = [1024, 2048, 4096, 8192, 16384];
     const index = tiers.indexOf(Number(s.fftSize));
     s.fftSize = tiers[Math.max(0, index - 1)];
@@ -6695,6 +6851,9 @@ class NeonScopeApp {
     s.sensitivity = 100;
     s.smoothing = 78;
     s.rendererMode = 'gpu';
+    s.computeArchitecture = 'deferred';
+    s.renderArchitecture = 'adaptive';
+    s.dynamicResolution = true;
     s.cpuBudget = 100;
     s.gpuBudget = 100;
     s.memBudget = 80;
@@ -6734,6 +6893,9 @@ class NeonScopeApp {
     d.smoothing.value = s.smoothing;
     d.smoothingOut.textContent = `${s.smoothing}%`;
     if (d.hardwareAuto) d.hardwareAuto.checked = s.hardwareAuto !== false;
+    if (d.computeArchitecture) d.computeArchitecture.value = s.computeArchitecture || 'deferred';
+    if (d.renderArchitecture) d.renderArchitecture.value = s.renderArchitecture || 'adaptive';
+    if (d.dynamicResolution) d.dynamicResolution.checked = s.dynamicResolution !== false;
     for (const [key, input, output] of [
       ['cpuBudget', d.cpuBudget, d.cpuBudgetOut],
       ['gpuBudget', d.gpuBudget, d.gpuBudgetOut],

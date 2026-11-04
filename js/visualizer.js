@@ -6,11 +6,13 @@ const GUIDE_THRESHOLD = 10;
 const GRID = 8;
 const MIN_W = 150;
 const MIN_H = 100;
+const STATIC_MODULE_TYPES = new Set(['basicInfo']);
+const SLOW_MODULE_TYPES = new Set(['spectrogram', 'pianoRoll', 'peakSlope', 'stereoField', 'waveform', 'chladni']);
 
 export class Visualizer {
   constructor({ canvas, stage, overlay, guideV, guideH, engine, state, callbacks = {} }) {
     this.canvas = canvas;
-    this.ctx = canvas.getContext('2d', { alpha: false });
+    this.ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
     this.stage = stage;
     this.overlay = overlay;
     this.guideV = guideV;
@@ -19,6 +21,9 @@ export class Visualizer {
     this.state = state;
     this.callbacks = callbacks;
     this.states = new Map();
+    this.moduleLayers = new Map();
+    this.moduleKeys = new Map();
+    this.layerFrame = 0;
     this.background = new BackgroundRenderer();
     this.running = false;
     this.exportMode = false;
@@ -34,6 +39,7 @@ export class Visualizer {
     this._previewH = 720;
     this._previewTimer = 0;
     this._lastDrawTs = 0;
+    this._qualityAccum = 0;
     this.drag = null;
     this._guideTimer = 0;
     this._particles = Array.from({ length: 46 }, (_, i) => ({
@@ -59,6 +65,7 @@ export class Visualizer {
     this.running = true;
     this.lastTs = 0;
     this._lastDrawTs = 0;
+    this._qualityAccum = 0;
     this._scheduleNext();
   }
 
@@ -103,7 +110,8 @@ export class Visualizer {
     }
     this._previewW = width;
     this._previewH = height;
-    this.background.resize(width, height);
+    const backgroundScale = this.exportMode ? 1 : (this.state.settings.renderArchitecture === 'performance' ? 0.62 : 1);
+    this.background.resize(Math.round(width * backgroundScale), Math.round(height * backgroundScale));
     this.callbacks.onPreviewResize?.({ width, height, cssWidth: Math.round(rect.width) });
   }
 
@@ -190,6 +198,12 @@ export class Visualizer {
     }
     for (const [id, el] of existing) {
       if (!seen.has(id)) el.remove();
+    }
+    for (const id of this.moduleLayers.keys()) {
+      if (!seen.has(id)) {
+        this.moduleLayers.delete(id);
+        this.moduleKeys.delete(id);
+      }
     }
     this.overlay.style.pointerEvents = this.state.settings.editing && !this.exportMode ? '' : 'none';
   }
@@ -503,6 +517,23 @@ export class Visualizer {
     this.callbacks.onTick?.(frame, this.fps, dt);
     const drawMs = performance.now() - drawStarted;
     this.frameMs = this.frameMs ? this.frameMs * 0.88 + drawMs * 0.12 : drawMs;
+    if (!this.exportMode && this.state.settings.dynamicResolution !== false) {
+      this._qualityAccum += dt;
+      if (this._qualityAccum >= 1.8) {
+        this._qualityAccum = 0;
+        const targetFps = Math.max(10, Number(this.state.settings.previewFps) || 60);
+        const targetMs = 1000 / targetFps;
+        const current = clamp(Number(this.state.settings.previewScale) || 100, 50, 120);
+        let next = current;
+        if (this.frameMs > targetMs * 1.22 && current > 50) next = Math.max(50, current - 5);
+        else if (this.frameMs < targetMs * 0.62 && current < 100) next = Math.min(100, current + 5);
+        if (next !== current) {
+          this.state.settings.previewScale = next;
+          this._applyPreviewResolution();
+          this.callbacks.onPreviewScale?.(next);
+        }
+      }
+    }
     this._scheduleNext();
   }
 
@@ -567,8 +598,13 @@ export class Visualizer {
 
     this._drawAtmosphere(ctx, w, h, frame, s);
     const sorted = this.state.modules.filter((m) => !m.hidden);
+    const renderArchitecture = s.renderArchitecture || 'adaptive';
+    const computeArchitecture = s.computeArchitecture || 'deferred';
+    const layered = renderArchitecture !== 'direct' && computeArchitecture !== 'main';
+    this.layerFrame++;
     for (const mod of sorted) {
-      this._drawModuleSafe(ctx, mod, this._moduleAccent(mod), frame, palette);
+      if (layered) this._drawModuleLayered(ctx, mod, this._moduleAccent(mod), frame, palette, renderArchitecture, computeArchitecture);
+      else this._drawModuleSafe(ctx, mod, this._moduleAccent(mod), frame, palette);
     }
     this._drawOverlayEffects(ctx, w, h, frame, s);
     this._drawInfoCard(ctx, w, h);
@@ -1032,6 +1068,49 @@ export class Visualizer {
       ctx.fillRect(0, 0, w, h);
       ctx.restore();
     }
+  }
+
+  _moduleCacheKey(mod, color, palette) {
+    return [
+      mod.x, mod.y, mod.w, mod.h, mod.title || '', mod.color || '', mod.colorAlpha ?? 1, mod.opacity ?? 1,
+      JSON.stringify(mod.options || {}), JSON.stringify(this.state.info || {}),
+      this.engine.track?.name || '', this.engine.duration || 0,
+      palette.bg, palette.window, palette.text, palette.chart,
+    ].join('|');
+  }
+
+  _drawModuleLayered(ctx, mod, color, frame, palette, renderArchitecture, computeArchitecture) {
+    const isStatic = STATIC_MODULE_TYPES.has(mod.type);
+    const isSlow = SLOW_MODULE_TYPES.has(mod.type);
+    if (!isStatic && !isSlow) {
+      this._drawModuleSafe(ctx, mod, color, frame, palette);
+      return;
+    }
+    const key = this._moduleCacheKey(mod, color, palette);
+    const width = Math.max(1, Math.round(mod.w));
+    const height = Math.max(1, Math.round(mod.h));
+    let layer = this.moduleLayers.get(mod.id);
+    if (!layer || layer.width !== width || layer.height !== height) {
+      layer = document.createElement('canvas');
+      layer.width = width;
+      layer.height = height;
+      this.moduleLayers.set(mod.id, layer);
+      this.moduleKeys.delete(mod.id);
+    }
+    const cadence = isStatic ? Infinity
+      : (renderArchitecture === 'performance' ? 3 : (computeArchitecture === 'quality' ? 1 : 2));
+    const due = this.moduleKeys.get(mod.id) !== key || (Number.isFinite(cadence) && this.layerFrame % cadence === 0);
+    if (due) {
+      const lctx = layer.getContext('2d', { alpha: true });
+      lctx.setTransform(1, 0, 0, 1, 0, 0);
+      lctx.clearRect(0, 0, width, height);
+      lctx.save();
+      lctx.translate(-mod.x, -mod.y);
+      this._drawModuleSafe(lctx, mod, color, frame, palette);
+      lctx.restore();
+      this.moduleKeys.set(mod.id, key);
+    }
+    ctx.drawImage(layer, mod.x, mod.y, mod.w, mod.h);
   }
 
   _drawModuleSafe(ctx, mod, color, frame, palette) {

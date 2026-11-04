@@ -1168,6 +1168,17 @@ input[type="number"]:focus, .select:focus, .module-option-field select:focus {
     linear-gradient(135deg, transparent 0 48%, rgba(255,255,255,.28) 49% 53%, transparent 54% 60%, rgba(255,255,255,.48) 61% 65%, transparent 66% 72%, rgba(255,255,255,.72) 73% 77%, transparent 78%);
 }
 .panel-floating > .panel-resizer, .subpanel-floating > .subpanel-resizer { display: block; opacity: 0; transition: opacity .15s ease; }
+/* Floating cards keep the grip in the fixed subpanel layer, outside the
+   scrolling content, so it stays pinned to the card's bottom-right. */
+.subpanel-resizer-overlay {
+  display: block;
+  position: absolute;
+  right: auto;
+  bottom: auto;
+  z-index: 90;
+  pointer-events: auto;
+  opacity: .55;
+}
 .panel-floating:hover > .panel-resizer, .subpanel-floating:hover > .subpanel-resizer,
 .panel-floating:focus-within > .panel-resizer, .subpanel-floating:focus-within > .subpanel-resizer { opacity: 1; }
 .panel-resizer:hover, .subpanel-resizer:hover { background-color: rgba(var(--accent-rgb), .14); opacity: 1; }
@@ -2690,3 +2701,4 @@ body[data-ui-mode="light"] .hw-meter canvas, body[data-ui-theme="catbot"] .hw-me
 .plugin-card-actions { display: flex; align-items: center; gap: 5px; }
 .plugin-card-actions button { font: 6px var(--mono); }
 .plugin-empty { padding: 16px 8px; border: 1px dashed rgba(255,255,255,.12); border-radius: 5px; text-align: center; color: var(--dim); font: 6px var(--mono); }
+.settings-zoom { margin-left: auto; margin-right: 10px; font: 6px var(--mono); letter-spacing: .06em; color: var(--dim); white-space: nowrap; }

@@ -315,6 +315,10 @@
             <span class="footer-label">FFMPEG</span>
             <span id="footerFfmpeg">CHECKING</span>
           </div>
+          <div class="footer-block" title="Ctrl + 滚轮 调整界面缩放">
+            <span class="footer-label">UI</span>
+            <span id="footerUiScale">100%</span>
+          </div>
         </div>
       </main>
 
@@ -866,6 +870,22 @@
               <button data-renderer="cpu">CPU 兼容</button>
             </div>
             <p class="section-help">GPU 模式使用 WebGL 着色器绘制背景等离子；示波器与频谱仍由高精度 Canvas2D 叠加。</p>
+            <label class="module-option-field"><span>计算架构</span>
+              <select id="computeArchitecture">
+                <option value="deferred">分帧缓存 · 推荐</option>
+                <option value="quality">逐帧质量</option>
+                <option value="main">主线程直绘</option>
+              </select>
+            </label>
+            <label class="module-option-field"><span>渲染架构</span>
+              <select id="renderArchitecture">
+                <option value="adaptive">自适应分层</option>
+                <option value="performance">性能优先</option>
+                <option value="direct">逐帧直绘</option>
+              </select>
+            </label>
+            <p class="section-help">基础信息等静态模块缓存；声谱图、钢琴卷帘、克拉尼等慢模块分帧更新；电平、频谱、示波器等快模块保持逐帧。</p>
+            <label class="check-row compact"><input type="checkbox" id="dynamicResolution" checked /><span>动态分辨率（根据帧耗时自动升降）</span></label>
             <div class="setting-block">
               <div class="setting-block-head"><span>资源配额</span><em>SAFE BUDGETS</em></div>
               <div class="field-row">
@@ -955,8 +975,10 @@
             <div class="archive-actions">
               <button class="btn primary" id="pluginInstallGithub">从 GitHub 安装</button>
               <button class="btn ghost" id="pluginInstallPnpm">从 PNPM 安装</button>
+              <button class="btn ghost" id="pluginImportLocal">导入本地插件</button>
               <button class="mini-action" id="pluginReloadAll">重新加载插件</button>
             </div>
+            <input type="file" id="pluginFolder" webkitdirectory multiple hidden />
             <p class="section-help" id="pluginStatus">插件以单文件 ESM 运行，安装前请确认来源可信。</p>
             <div class="plugin-list" id="pluginList"></div>
             <p class="section-help">命令规范：仓库名或包名需匹配 <code>Tatsukini-Neon-*</code>；插件清单、生命周期与模块注册规范见仓库根目录 <code>PLUGIN_SPEC.md</code>。</p>
@@ -1038,6 +1060,7 @@
       </div>
       <div class="window-foot">
         <span class="window-foot-note">更改会自动保存</span>
+        <span class="settings-zoom" id="settingsZoom" title="Ctrl + 滚轮 调整界面缩放">UI 100%</span>
         <button class="btn primary" data-close="settings">完成</button>
       </div>
     </div>

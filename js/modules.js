@@ -2288,6 +2288,178 @@ function drawCircularScope(ctx, mod, body, frame, st, env) {
   ctx.fillText('CIRCULAR SCOPE', cx, y + h + 8);
 }
 
+function drawChladni(ctx, mod, body, frame, st, env) {
+  const accent = body.accent || '#ff7dba';
+  const p = 8;
+  const x = body.x + p;
+  const y = body.y + p + 1;
+  const w = body.w - p * 2;
+  const h = body.h - p * 2 - 12;
+  const side = Math.max(24, Math.min(w, h));
+  const ox = x + (w - side) / 2;
+  const oy = y + (h - side) / 2;
+  const cx = ox + side / 2;
+  const cy = oy + side / 2;
+  const mode = String(modOpt(mod, 'chladniMode', '3,4')).split(',');
+  const m = clamp(Number(mode[0]) || 3, 1, 9);
+  const n = clamp(Number(mode[1]) || 4, 1, 9);
+  const sandCount = clamp(Math.round(modNum(mod, 'sandCount', 4500, 1000, 12000)), 500, 12000);
+  const amplitude = clamp(modNum(mod, 'vibration', 45, 0, 100) / 100, 0, 1);
+  const sampling = clamp(Math.round(modNum(mod, 'sampling', 16, 8, 32)), 6, 32);
+  const grainResponse = clamp(modNum(mod, 'grainResponse', 70, 10, 100) / 100, 0.1, 1);
+  const showField = modOpt(mod, 'showField', true);
+  const beat = clamp(frame.beatPulse || 0, 0, 1);
+  const low = clamp(frame.low || 0, 0, 1);
+  const mid = clamp(frame.mid || 0, 0, 1);
+  const high = clamp(frame.high || 0, 0, 1);
+  const playing = !!frame.playing;
+  const audioDrive = clamp(low * 1.25 + mid * 0.55 + high * 0.25 + beat * 0.55, 0, 1);
+  if (playing) {
+    // Modes follow the low/high spectrum, not just a fixed m x n pair.
+    st.modeM = clamp(m * (0.78 + low * 1.25 + beat * 0.35), 1, 12);
+    st.modeN = clamp(n * (1.22 - high * 0.85 + mid * 0.30), 1, 12);
+  }
+  const mEff = st.modeM || m;
+  const nEff = st.modeN || n;
+  const rgb = hexToRgb(accent);
+  const palette = env.palette || {};
+  const bgRgb = hexToRgb(palette.bg || '#08040c');
+  const isLight = (bgRgb.r * 299 + bgRgb.g * 587 + bgRgb.b * 114) / 1000 > 145;
+  const labelColor = isLight ? 'rgba(45,25,55,.42)' : 'rgba(255,255,255,.26)';
+  const sandColor = isLight ? 'rgba(52,28,60,.70)' : 'rgba(255,242,248,.72)';
+  const cos = Math.cos;
+  const sin = Math.sin;
+
+  // The plate mode is slowly phase-modulated so the nodal figure visibly
+  // breathes; sand jitter adds the fine grain motion on top.
+  if (playing) {
+    st.phase = (st.phase || 0) + 0.012 + amplitude * 0.045 + audioDrive * 0.16 + beat * 0.05;
+    st.wobble = Math.sin((st.phase || 0) * 1.7) * (0.015 + amplitude * 0.16 + audioDrive * 0.14);
+    st.pulse = 1 + beat * 0.05;
+  }
+  const wobble = st.wobble || 0;
+  const pulse = st.pulse || 1;
+
+  // Low-resolution nodal field. The real Chladni figure is the zero set of
+  // this approximate eigenfunction; we render |f| as a soft plate glow.
+  if (showField) {
+    const grid = clamp(Math.round(12 + sampling * 1.8), 20, 72);
+    if (!st.fieldCanvas || st.fieldSize !== grid) {
+      st.fieldCanvas = document.createElement('canvas');
+      st.fieldCanvas.width = grid;
+      st.fieldCanvas.height = grid;
+      st.fieldCtx = st.fieldCanvas.getContext('2d');
+      st.fieldSize = grid;
+      st.fieldImage = st.fieldCtx.createImageData(grid, grid);
+    }
+    const image = st.fieldImage;
+    const data = image.data;
+    for (let gy = 0; gy < grid; gy++) {
+      const yy = (gy + 0.5) / grid * 2 - 1;
+      for (let gx = 0; gx < grid; gx++) {
+        const xx = (gx + 0.5) / grid * 2 - 1;
+        const f = cos(mEff * Math.PI * xx + wobble) * cos(nEff * Math.PI * yy - wobble)
+          - cos(nEff * Math.PI * xx - wobble) * cos(mEff * Math.PI * yy + wobble);
+        const line = Math.pow(clamp(1 - Math.abs(f) * 1.35, 0, 1), 2.4);
+        const idx = (gy * grid + gx) * 4;
+        data[idx] = rgb.r;
+        data[idx + 1] = rgb.g;
+        data[idx + 2] = rgb.b;
+        data[idx + 3] = Math.round(4 + line * 105 + amplitude * 22);
+      }
+    }
+    st.fieldCtx.putImageData(image, 0, 0);
+    ctx.save();
+    ctx.globalAlpha = (mod.opacity ?? 1) * (isLight ? 0.58 : 0.78);
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(st.fieldCanvas, ox, oy, side, side);
+    ctx.restore();
+  }
+
+  if (!st.particles || st.particleCount !== sandCount) {
+    st.particleCount = sandCount;
+    st.particles = new Float32Array(sandCount * 2);
+    let seed = 0x9e3779b9;
+    const rand = () => {
+      seed = (seed * 1664525 + 1013904223) >>> 0;
+      return seed / 4294967296;
+    };
+    for (let i = 0; i < sandCount; i++) {
+      st.particles[i * 2] = rand() * 2 - 1;
+      st.particles[i * 2 + 1] = rand() * 2 - 1;
+    }
+    st.randState = seed;
+  }
+
+  // Approximate sand advection: a damped Newton step toward f = 0, plus a
+  // small vibration jitter. This is cheaper than integrating a real plate.
+  const particles = st.particles;
+  const jitter = 0.003 + amplitude * 0.026 + audioDrive * 0.018 + beat * 0.025;
+  const kick = 0.003 + amplitude * 0.006 + audioDrive * 0.025 + beat * 0.006;
+  const step = 0.12 + grainResponse * 0.20;
+  let seed = st.randState || 0x9e3779b9;
+  const rand = () => {
+    seed = (seed * 1664525 + 1013904223) >>> 0;
+    return seed / 4294967296;
+  };
+  if (playing) {
+    for (let i = 0; i < sandCount; i++) {
+      let px = particles[i * 2];
+      let py = particles[i * 2 + 1];
+      const ax = mEff * Math.PI * px + wobble;
+      const ay = nEff * Math.PI * py - wobble;
+      const bx = nEff * Math.PI * px - wobble;
+      const by = mEff * Math.PI * py + wobble;
+      const f = cos(ax) * cos(ay) - cos(bx) * cos(by);
+      const fx = -mEff * Math.PI * sin(ax) * cos(ay) + nEff * Math.PI * sin(bx) * cos(by);
+      const fy = -nEff * Math.PI * cos(ax) * sin(ay) + mEff * Math.PI * cos(bx) * sin(by);
+      const denom = fx * fx + fy * fy + 1e-5;
+      px -= f * fx / denom * step;
+      py -= f * fy / denom * step;
+      if (rand() < kick) {
+        px = rand() * 2 - 1;
+        py = rand() * 2 - 1;
+      } else if (jitter > 0.0001) {
+        px += (rand() * 2 - 1) * jitter;
+        py += (rand() * 2 - 1) * jitter;
+      }
+      px = clamp(px, -1, 1);
+      py = clamp(py, -1, 1);
+      particles[i * 2] = px;
+      particles[i * 2 + 1] = py;
+    }
+    st.randState = seed;
+  }
+
+  // Plate and sand: one square frame, no extra circular border or plate fill.
+  ctx.save();
+  ctx.strokeStyle = rgba(accent, 0.24 + amplitude * 0.18 + beat * 0.18);
+  ctx.lineWidth = 1;
+  ctx.strokeRect(ox + 0.5, oy + 0.5, side - 1, side - 1);
+
+  const half = side / 2;
+  const scale = half * pulse * (1 + Math.sin(st.phase * 2.3) * (0.006 + amplitude * 0.012));
+  ctx.fillStyle = sandColor;
+  ctx.globalAlpha = (mod.opacity ?? 1) * (0.42 + amplitude * 0.38);
+  ctx.beginPath();
+  const dot = Math.max(0.55, side / 620);
+  for (let i = 0; i < sandCount; i++) {
+    const px = cx + particles[i * 2] * scale;
+    const py = cy + particles[i * 2 + 1] * scale;
+    ctx.rect(px, py, dot, dot);
+  }
+  ctx.fill();
+  ctx.restore();
+
+  mono(ctx, 5.5, '400');
+  ctx.fillStyle = labelColor;
+  ctx.textAlign = 'left';
+  ctx.fillText(`CHLADNI ${m}×${n} · ${sandCount} GRAINS`, x + 1, y + h + 8);
+  ctx.textAlign = 'right';
+  ctx.fillStyle = rgba(accent, 0.55);
+  ctx.fillText(`AMP ${Math.round(amplitude * 100)}% · GRID ${sampling}`, x + w - 1, y + h + 8);
+}
+
 const DRAWERS = {
   levels: drawLevels,
   loudness: drawLoudness,
@@ -2308,6 +2480,7 @@ const DRAWERS = {
   peakSpectrum: drawPeakSpectrum,
   beatPulse: drawBeatPulse,
   circularScope: drawCircularScope,
+  chladni: drawChladni,
   basicInfo: drawBasicInfo,
 };
 

@@ -149,7 +149,7 @@ export class BackgroundRenderer {
     try {
       const gl = this.glCanvas.getContext('webgl', {
         antialias: false, alpha: false, depth: false, stencil: false,
-        preserveDrawingBuffer: true, powerPreference: 'high-performance',
+        preserveDrawingBuffer: false, powerPreference: 'high-performance',
       });
       if (!gl) throw new Error('WebGL unavailable');
       const compile = (type, source) => {
@@ -534,7 +534,7 @@ export class BackgroundRenderer {
 
   resize(width, height) {
     const aspect = width / Math.max(1, height);
-    let w = Math.min(1280, Math.max(640, Math.round(width)));
+    let w = Math.min(1280, Math.max(360, Math.round(width)));
     let h = Math.round(w / aspect);
     if (h > 720) { h = 720; w = Math.round(h * aspect); }
     w = Math.max(2, Math.round(w / 2) * 2);
