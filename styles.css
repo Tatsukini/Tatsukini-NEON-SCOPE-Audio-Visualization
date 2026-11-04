@@ -128,7 +128,7 @@ input[type="range"] {
   -webkit-appearance: none; appearance: none;
   width: 100%; height: 3px; margin: 0;
   border-radius: 5px;
-  background: linear-gradient(90deg, var(--accent) 0%, var(--accent) 0%, rgba(255,255,255,.12) 0%);
+  background: linear-gradient(90deg, var(--accent) 0%, var(--accent) 0%, var(--range-track, rgba(255,255,255,.14)) 0%);
   cursor: pointer;
 }
 .seek { position: relative; z-index: 1; height: 18px; background: transparent; }

@@ -4996,10 +4996,33 @@ class NeonScopeApp {
     if (!silent) this._toast(`布局已切换 · ${preset.label}`);
   }
 
+  _syncRangeTrackColor() {
+    const style = getComputedStyle(document.body);
+    const raw = style.backgroundColor || '';
+    const match = raw.match(/rgba?\(([^)]+)\)/i);
+    let rgb = null;
+    if (match) {
+      const parts = match[1].split(',').map((part) => Number(part.trim()));
+      if (parts.length >= 3 && parts.every((n) => Number.isFinite(n))) rgb = parts.slice(0, 3);
+    }
+    let light = true;
+    if (rgb) {
+      const [r, g, b] = rgb;
+      const luminanceValue = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+      light = luminanceValue > 0.55;
+    } else {
+      light = document.body.dataset.uiTheme === 'catbot' || document.body.dataset.uiMode === 'light';
+    }
+    const root = document.documentElement;
+    root.style.setProperty('--range-track', light ? 'rgba(24,18,40,.22)' : 'rgba(255,255,255,.16)');
+    root.style.setProperty('--range-track-hover', light ? 'rgba(24,18,40,.30)' : 'rgba(255,255,255,.24)');
+  }
+
   _applyUiMode(mode, { silent = false, noPersist = false } = {}) {
     const value = ['auto', 'dark', 'light'].includes(mode) ? mode : 'auto';
     this.state.settings.uiMode = value;
     document.body.dataset.uiMode = value;
+    this._syncRangeTrackColor();
     $$('#settingsModal [data-ui-mode-btn]').forEach((btn) => {
       btn.classList.toggle('active', btn.dataset.uiModeBtn === value);
     });
@@ -5043,6 +5066,7 @@ class NeonScopeApp {
     const value = ['neon', 'vidi', 'catbot'].includes(theme) ? theme : 'neon';
     this.state.settings.uiTheme = value;
     document.body.dataset.uiTheme = value;
+    this._syncRangeTrackColor();
     $$('#settingsModal .theme-card[data-ui-theme]').forEach((btn) => {
       btn.classList.toggle('active', btn.dataset.uiTheme === value);
     });
