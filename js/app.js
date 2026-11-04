@@ -19,6 +19,8 @@ const SETTINGS_SYNC_KEY = 'neon-scope.settings-sync.v1';
 const BG_PREVIEW_KEY = 'neon-scope.bg-preview.v1';
 const BG_IMAGE_KEY = 'neon-scope.bg-image.v1';
 const DEMO_META = { name: 'When Rain In My Mind Vol.2', kind: 'demo', bpm: 140, artist: 'NEON//SCOPE' };
+const DEMO_ASSET_VERSION = '2026-11-04-3';
+const DEMO_VERSION_KEY = 'neon-scope.demo-asset-version';
 function dataUrlToBytes(dataUrl) {
   const match = String(dataUrl || '').match(/^data:([^;,]+)?(;base64)?,(.*)$/s);
   if (!match) return null;
@@ -151,7 +153,7 @@ const MODULE_OPTIONS = {
     { key: 'noteThickness', label: '音符厚度', type: 'range', min: 50, max: 200, step: 5, default: 100, unit: '%' },
     { key: 'centerY', label: '垂直中心', type: 'range', min: 0, max: 100, step: 5, default: 50, unit: '%' },
     { key: 'vibrato', label: 'Vibrato', type: 'range', min: 0, max: 100, step: 5, default: 0, unit: '%' },
-    { key: 'trackDepth', label: '单轨道深度', type: 'range', min: 0, max: 100, step: 5, default: 55, unit: '%' },
+    { key: 'trackDepth', label: '单轨道深度', type: 'range', min: 0, max: 500, step: 5, default: 275, unit: '' },
     { key: 'grid', label: '节拍网格', type: 'toggle', default: true },
     { key: 'labels', label: '音名标签', type: 'toggle', default: true },
     { key: 'showTitle', label: '显示标题', type: 'toggle', default: true },
@@ -956,6 +958,14 @@ class NeonScopeApp {
         }
         if (Array.isArray(raw.options.trackMutes)) options.trackMutes = raw.options.trackMutes.slice(0, 16).map(Boolean);
         if (Array.isArray(raw.options.trackSolos)) options.trackSolos = raw.options.trackSolos.slice(0, 16).map(Boolean);
+        const depthVersion = Number(raw.options.depthVersion) || 1;
+        if (depthVersion < 2) {
+          if (Number.isFinite(Number(options.trackDepth))) options.trackDepth = clamp(Number(options.trackDepth) * 5, 0, 500);
+          if (Array.isArray(options.trackDepths)) options.trackDepths = options.trackDepths.map((value) => clamp(Number(value) * 5, 0, 500));
+          options.depthVersion = 2;
+        } else {
+          options.depthVersion = 2;
+        }
       }
       out.push({
         id, type: raw.type, x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h),
@@ -1271,7 +1281,7 @@ class NeonScopeApp {
         depths[index] = Number(midiDepth.value);
         mod.options = { ...(mod.options || {}), trackDepths: depths };
         const output = d.moduleOptions.querySelector(`[data-midi-depth-out="${index}"]`);
-        if (output) output.textContent = `${Math.round(depths[index])}%`;
+        if (output) output.textContent = `${Math.round(depths[index])}`;
         this._persist();
         return;
       }
@@ -4607,7 +4617,17 @@ class NeonScopeApp {
       this._refreshTrackUI();
       this._updateStartOverlay('ready');
       this._setEngineStatus('示例音频就绪', 'ready');
-      if (!this.state.midiLayers?.length) await this._loadBundledMidi();
+      const demoLayers = (this.state.midiLayers || []).filter((layer) => /^When Rain In My Mind/i.test(layer.title || layer.fileName || ''));
+      if (demoLayers.length === 6 && demoLayers.length === (this.state.midiLayers || []).length && safeRead(DEMO_VERSION_KEY) !== DEMO_ASSET_VERSION) {
+        this.state.midiLayers = [];
+        this.state.midi = null;
+      }
+      if (!this.state.midiLayers?.length) {
+        await this._loadBundledMidi();
+        safeStore(DEMO_VERSION_KEY, DEMO_ASSET_VERSION);
+      } else if (demoLayers.length) {
+        safeStore(DEMO_VERSION_KEY, DEMO_ASSET_VERSION);
+      }
       if (autoplay) {
         await this._togglePlay();
       }
@@ -4976,13 +4996,13 @@ class NeonScopeApp {
     const depths = Array.isArray(mod.options?.trackDepths) ? mod.options.trackDepths : [];
     const mutes = Array.isArray(mod.options?.trackMutes) ? mod.options.trackMutes : [];
     const solos = Array.isArray(mod.options?.trackSolos) ? mod.options.trackSolos : [];
-    const defaultDepth = Number(this._moduleOptionValue(mod, { key: 'trackDepth', default: 55 })) || 55;
+    const defaultDepth = Number(this._moduleOptionValue(mod, { key: 'trackDepth', default: 275 })) || 0;
     const order = this._midiTrackOrder(mod, midi);
     return `<div class="midi-track-options"><div class="midi-track-head"><span>轨道 / TRACKS</span><em>顺序控制纵深 · 上远下近</em></div>
       <div class="midi-track-list">${order.slice(0, 16).map((trackIndex, orderIndex) => {
         const track = tracks[trackIndex] || { name: `Track ${trackIndex + 1}` };
         const color = /^#[0-9a-fA-F]{6}$/.test(colors[trackIndex] || '') ? colors[trackIndex] : fallback[trackIndex % fallback.length];
-        const depth = clamp(Number(depths[trackIndex] ?? defaultDepth) || 0, 0, 100);
+        const depth = clamp(Number(depths[trackIndex] ?? defaultDepth) || 0, 0, 500);
         const name = String(track.name || `Track ${trackIndex + 1}`).replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
         return `<div class="midi-track-row" data-midi-track="${trackIndex}">
           <span class="midi-track-no">${String(orderIndex + 1).padStart(2, '0')}</span>
@@ -4992,8 +5012,8 @@ class NeonScopeApp {
           <button type="button" class="midi-track-ms ${mutes[trackIndex] ? 'active mute' : ''}" data-midi-mute="${trackIndex}" title="静音">M</button>
           <button type="button" class="midi-track-ms ${solos[trackIndex] ? 'active solo' : ''}" data-midi-solo="${trackIndex}" title="独奏">S</button>
           <input type="color" data-midi-color="${trackIndex}" value="${color}" title="轨道颜色" />
-          <input type="range" data-midi-depth="${trackIndex}" min="0" max="100" step="5" value="${depth}" title="额外深度偏移" />
-          <output data-midi-depth-out="${trackIndex}">${Math.round(depth)}%</output>
+          <input type="range" data-midi-depth="${trackIndex}" min="0" max="500" step="5" value="${depth}" title="轨道深度" />
+          <output data-midi-depth-out="${trackIndex}">${Math.round(depth)}</output>
           <button type="button" class="midi-track-ms midi-track-delete" data-midi-delete="${trackIndex}" title="删除轨道（也可 Ctrl+Shift+左键）">×</button>
         </div>`;
       }).join('')}</div></div>`;
@@ -5063,7 +5083,7 @@ class NeonScopeApp {
       master = primary || createModule('pianoRoll', this._findPlacement(MODULE_DEFS.pianoRoll.w, MODULE_DEFS.pianoRoll.h));
       if (!primary) this.state.modules.push(master);
     }
-    master.options = { ...baseOptions, midiMaster: true };
+    master.options = { ...baseOptions, midiMaster: true, depthVersion: 2 };
     delete master.options.midiId;
     if (modules.length > 1) {
       const colors = [], depths = [], mutes = [], solos = [];
@@ -5185,8 +5205,8 @@ class NeonScopeApp {
     const depths = Array.isArray(options.trackDepths) ? options.trackDepths : [];
     const mutes = Array.isArray(options.trackMutes) ? options.trackMutes : [];
     const solos = Array.isArray(options.trackSolos) ? options.trackSolos : [];
-    const depthValue = Number(value('trackDepth', 55));
-    const defaultDepth = Number.isFinite(depthValue) ? depthValue : 55;
+    const depthValue = Number(value('trackDepth', 275));
+    const defaultDepth = Number.isFinite(depthValue) ? depthValue : 275;
     const checkbox = (key, label) => `<label class="check-row compact"><input type="checkbox" data-bus-layer="${busId}" data-bus-key="${key}" ${value(key, true) ? 'checked' : ''}/><span>${label}</span></label>`;
     const colorControl = (key, label) => `<label class="module-option-field module-option-color"><span>${label}</span><input type="color" data-bus-layer="${busId}" data-bus-key="${key}" value="${/^#[0-9a-fA-F]{6}$/.test(String(value(key, '#C7F8FF'))) ? value(key, '#C7F8FF') : '#C7F8FF'}" /></label>`;
     const selectControl = (key, label, opts, fallback = opts[0]?.[0]) => `<label class="module-option-field"><span>${label}</span><select data-bus-layer="${busId}" data-bus-key="${key}">${opts.map(([v, t]) => `<option value="${v}" ${String(value(key, fallback)) === String(v) ? 'selected' : ''}>${t}</option>`).join('')}</select></label>`;
@@ -5195,7 +5215,7 @@ class NeonScopeApp {
     const trackRows = order.map((trackIndex, orderIndex) => {
       const track = midi.tracks[trackIndex] || { name: `Track ${trackIndex + 1}` };
       const color = /^#[0-9a-fA-F]{6}$/.test(colors[trackIndex] || '') ? colors[trackIndex] : palette[trackIndex % palette.length];
-      const depth = clamp(Number(depths[trackIndex] ?? defaultDepth) || 0, 0, 100);
+      const depth = clamp(Number(depths[trackIndex] ?? defaultDepth) || 0, 0, 500);
       const name = escape(track.name || `Track ${trackIndex + 1}`);
       return `<div class="midi-track-row" data-bus-track="${trackIndex}" data-bus-layer="${busId}">
         <span class="midi-track-no">${String(orderIndex + 1).padStart(2, '0')}</span>
@@ -5205,8 +5225,8 @@ class NeonScopeApp {
         <button type="button" class="midi-track-ms ${mutes[trackIndex] ? 'active mute' : ''}" data-bus-mute="${trackIndex}" data-bus-layer="${busId}" title="静音">M</button>
         <button type="button" class="midi-track-ms ${solos[trackIndex] ? 'active solo' : ''}" data-bus-solo="${trackIndex}" data-bus-layer="${busId}" title="独奏">S</button>
         <input type="color" data-bus-color="${trackIndex}" data-bus-layer="${busId}" value="${color}" title="轨道颜色" />
-        <input type="range" data-bus-depth="${trackIndex}" data-bus-layer="${busId}" min="0" max="100" step="5" value="${depth}" title="额外深度偏移" />
-        <output data-bus-depth-out="${busId}:${trackIndex}">${Math.round(depth)}%</output>
+        <input type="range" data-bus-depth="${trackIndex}" data-bus-layer="${busId}" min="0" max="500" step="5" value="${depth}" title="轨道深度" />
+        <output data-bus-depth-out="${busId}:${trackIndex}">${Math.round(depth)}</output>
         <button type="button" class="midi-track-ms midi-track-delete" data-bus-delete="${trackIndex}" data-bus-layer="${busId}" title="删除轨道（也可 Ctrl+Shift+左键）">×</button>
       </div>`;
     }).join('');
@@ -5226,7 +5246,7 @@ class NeonScopeApp {
         ${rangeControl('midiZoom', 'MIDI 缩放', 50, 200, 5, 100, '%')}
         ${rangeControl('speed', '滚动速度', 25, 200, 5, 100, '%')}
         ${selectControl('window', '手动时间窗口', [['4', '4 秒'], ['6', '6 秒'], ['10', '10 秒'], ['16', '16 秒'], ['20', '20 秒']], '10')}
-        ${rangeControl('trackDepth', '默认深度', 0, 100, 5, 55, '%')}
+        ${rangeControl('trackDepth', '默认深度', 0, 500, 5, 275, '')}
         ${rangeControl('noteThickness', '音符厚度', 50, 200, 5, 100, '%')}
         ${rangeControl('centerY', '垂直中心', 0, 100, 5, 50, '%')}
         ${rangeControl('vibrato', 'Vibrato', 0, 100, 5, 0, '%')}
@@ -5274,7 +5294,7 @@ class NeonScopeApp {
         depths[index] = Number(depthIndex.value);
         mod.options = { ...(mod.options || {}), trackDepths: depths };
         const output = list.querySelector(`[data-bus-depth-out="${busId}:${index}"]`);
-        if (output) output.textContent = `${Math.round(depths[index])}%`;
+        if (output) output.textContent = `${Math.round(depths[index])}`;
         this._persist();
         return;
       }

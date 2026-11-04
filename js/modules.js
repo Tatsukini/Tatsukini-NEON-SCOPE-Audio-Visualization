@@ -86,7 +86,8 @@ function modOpt(mod, key, fallback) {
 }
 
 function modNum(mod, key, fallback, min = -Infinity, max = Infinity) {
-  return clamp(Number(modOpt(mod, key, fallback)) || fallback, min, max);
+  const value = Number(modOpt(mod, key, fallback));
+  return clamp(Number.isFinite(value) ? value : fallback, min, max);
 }
 
 /** Draw the common panel frame. Returns the inner body rect. */
@@ -1765,7 +1766,7 @@ function drawPianoRoll(ctx, mod, body, frame, st, env) {
   const noteThickness = modNum(mod, 'noteThickness', 100, 50, 200) / 100;
   const centerShift = (modNum(mod, 'centerY', 50, 0, 100) / 100 - 0.5) * h * 0.24;
   const vibratoAmount = modNum(mod, 'vibrato', 0, 0, 100) / 100;
-  const defaultDepth = modNum(mod, 'trackDepth', 55, 0, 100) / 100;
+  const defaultDepth = modNum(mod, 'trackDepth', 275, 0, 500);
   const trackColors = Array.isArray(mod.options?.trackColors) ? mod.options.trackColors : [];
   const trackDepths = Array.isArray(mod.options?.trackDepths) ? mod.options.trackDepths : [];
   const trackMutes = Array.isArray(mod.options?.trackMutes) ? mod.options.trackMutes : [];
@@ -1845,9 +1846,8 @@ function drawPianoRoll(ctx, mod, body, frame, st, env) {
     if (soloActive && !trackSolos[trackIndex]) continue;
     if (count++ > 5000) break;
     const orderIndex = orderPosition.get(trackIndex) ?? trackIndex;
-    const orderDepth = orderPosition.size > 1 ? orderIndex / (orderPosition.size - 1) : 0.5;
-    const bias = (clamp(Number(trackDepths[trackIndex] ?? defaultDepth * 100) || 0, 0, 100) / 100 - 0.5) * 0.22;
-    const z = clamp(orderDepth + bias, 0, 1);
+    const depthValue = clamp(Number(trackDepths[trackIndex] ?? defaultDepth) || 0, 0, 500);
+    const z = clamp(depthValue / 500, 0, 1);
     const scale = 0.58 + z * 0.82;
     const laneCenter = y + h * (0.18 + z * 0.60) + centerShift;
     const pitchOffset = ((midPitch - note.pitch) / pitchSpan) * h * (0.36 + z * 0.20);
@@ -1860,9 +1860,9 @@ function drawPianoRoll(ctx, mod, body, frame, st, env) {
     const color = allTrackColor ? globalTrackColor : (/^#[0-9a-fA-F]{6}$/.test(trackColors[trackIndex] || '') ? trackColors[trackIndex] : palette[trackIndex % palette.length]);
     const active = midiTime >= note.start && midiTime <= note.end;
     const nh = Math.max(1.1, rowH * (0.62 + z * 0.38) - 0.7) * scale * noteThickness;
-    visible.push({ note, trackIndex, z, scale, px, py, pw, nh, color, active });
+    visible.push({ note, trackIndex, orderIndex, z, scale, px, py, pw, nh, color, active });
   }
-  visible.sort((a, b) => a.z - b.z || a.note.start - b.note.start);
+  visible.sort((a, b) => a.z - b.z || a.orderIndex - b.orderIndex || a.note.start - b.note.start);
   for (const item of visible) {
     const { note, z, scale, px, py, pw, nh, color, active } = item;
     const depthAlpha = 0.30 + z * 0.70;

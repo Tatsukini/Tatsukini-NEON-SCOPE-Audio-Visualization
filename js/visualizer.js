@@ -91,8 +91,8 @@ export class Visualizer {
 
   _applyPreviewResolution() {
     const rect = this.stage.getBoundingClientRect();
-    const dpr = Math.min(2, window.devicePixelRatio || 1);
-    const width = clamp(Math.round(rect.width * dpr), 1280, 1920);
+    const dpr = Math.min(1.5, window.devicePixelRatio || 1);
+    const width = clamp(Math.round(rect.width * dpr), 960, 1600);
     const height = Math.round(width * 9 / 16);
     if (this.canvas.width !== width || this.canvas.height !== height) {
       this.canvas.width = width;
