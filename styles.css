@@ -1471,6 +1471,10 @@ body[data-ui-mode="light"] .alpha-layer .alpha-card, body[data-ui-theme="catbot"
 
 .midi-bus-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 7px 0 6px; }
 .midi-bus-toolbar span { font: 6px var(--mono); color: var(--dim); letter-spacing: .05em; }
+.midi-bus-offset { display: grid; grid-template-columns: 52px minmax(0,1fr) 54px; align-items: center; gap: 7px; padding: 6px 7px; margin-bottom: 5px; border: 1px solid rgba(255,255,255,.08); border-radius: 4px; background: rgba(255,255,255,.018); }
+.midi-bus-offset > span { font: 7px var(--mono); color: var(--muted); letter-spacing: .04em; }
+.midi-bus-offset input[type="range"] { height: 3px; min-width: 0; }
+.midi-bus-offset output { font: 7px var(--mono); color: var(--accent-solid); text-align: right; white-space: nowrap; }
 .midi-bus-list { display: flex; flex-direction: column; gap: 5px; max-height: none; overflow: visible; padding-right: 2px; }
 .midi-bus-empty { padding: 10px; border: 1px dashed rgba(255,255,255,.12); border-radius: 4px; font: 7px/1.65 var(--mono); color: var(--dim); }
 .midi-bus-layer { border: 1px solid rgba(255,255,255,.08); border-radius: 4px; background: rgba(255,255,255,.018); }

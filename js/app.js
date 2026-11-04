@@ -106,6 +106,7 @@ const MODULE_OPTIONS = {
   ],
   pianoRoll: [
     { key: 'window', label: '时间窗口', type: 'select', default: '10', options: [['4', '4 秒'], ['6', '6 秒'], ['10', '10 秒'], ['16', '16 秒'], ['20', '20 秒']] },
+    { key: 'midiOffset', label: 'MIDI 偏移', type: 'range', min: -2000, max: 2000, step: 10, default: 0, unit: ' ms' },
     { key: 'speed', label: '滚动速度', type: 'range', min: 50, max: 250, step: 5, default: 100, unit: '%' },
     { key: 'noteStyle', label: '音符样式', type: 'select', default: 'rect', options: [['rect', '长方形'], ['rounded', '圆角长方形']] },
     { key: 'allTrackColor', label: '统一轨道颜色', type: 'toggle', default: false },
@@ -1232,7 +1233,9 @@ class NeonScopeApp {
       mod.options = { ...(mod.options || {}), [key]: value };
       if (schema.type === 'range') {
         const output = d.moduleOptions.querySelector(`[data-opt-output="${key}"]`);
-        if (output) output.textContent = `${Math.round(value)}${schema.unit || ''}`;
+        if (output) output.textContent = key === 'midiOffset'
+          ? `${value > 0 ? '+' : ''}${Math.round(value)} ms`
+          : `${Math.round(value)}${schema.unit || ''}`;
       }
       this._persist();
     });
@@ -4724,7 +4727,9 @@ class NeonScopeApp {
       if (option.type === 'text') {
         return `<label class="module-option-field"><span>${option.label}</span><input type="text" data-opt-key="${option.key}" value="${String(value).replace(/"/g, '&quot;')}" maxlength="80" /></label>`;
       }
-      const output = `${Math.round(Number(value))}${option.unit || ''}`;
+      const output = option.key === 'midiOffset'
+        ? `${Number(value) > 0 ? '+' : ''}${Math.round(Number(value))} ms`
+        : `${Math.round(Number(value))}${option.unit || ''}`;
       return `<div class="field-row module-option-range"><label class="field-label">${option.label} <output data-opt-output="${option.key}">${output}</output></label><input type="range" data-opt-key="${option.key}" min="${option.min}" max="${option.max}" step="${option.step}" value="${value}" /></div>`;
     }).join('') + (mod.type === 'pianoRoll' ? this._midiTrackOptions(mod) : '');
     if (this.subpanelState.midiBus && !this.subpanelState.midiBus.hidden) this._renderMidiBus();
@@ -4975,7 +4980,13 @@ class NeonScopeApp {
         <button type="button" class="midi-track-ms midi-track-delete" data-bus-delete="${trackIndex}" data-bus-layer="${busId}" title="删除轨道（也可 Ctrl+Shift+左键）">×</button>
       </div>`;
     }).join('');
-    this.dom.midiBusList.innerHTML = `<details class="midi-bus-layer" data-bus-card="${busId}" open>
+    const offset = Number(value('midiOffset', 0)) || 0;
+    const offsetLabel = `${offset > 0 ? '+' : ''}${Math.round(offset)} ms`;
+    this.dom.midiBusList.innerHTML = `<div class="midi-bus-offset">
+      <span>MIDI 偏移</span>
+      <input type="range" data-bus-layer="${busId}" data-bus-key="midiOffset" min="-2000" max="2000" step="10" value="${offset}" />
+      <output data-bus-output="${busId}:midiOffset">${offsetLabel}</output>
+    </div><details class="midi-bus-layer" data-bus-card="${busId}" open>
       <summary><span class="midi-bus-layer-name">MIDI 3D 合并层</span><em>${midi.noteCount || 0} NOTES · ${midi.trackCount} TRACKS · ${layers.length} FILES</em><button type="button" class="mini-action" data-bus-select="${busId}">定位</button></summary>
       <div class="midi-bus-grid">
         ${selectControl('noteStyle', '音符样式', [['rect', '长方形'], ['rounded', '圆角长方形']])}
@@ -5042,7 +5053,10 @@ class NeonScopeApp {
       mod.options = { ...(mod.options || {}), [key]: value };
       if (e.target.type === 'range') {
         const output = list.querySelector(`[data-bus-output="${busId}:${key}"]`);
-        if (output) output.textContent = `${Math.round(value)}${key === 'titleSize' ? 'px' : key === 'speed' || key === 'trackDepth' ? '%' : ''}`;
+        if (output) {
+          if (key === 'midiOffset') output.textContent = `${value > 0 ? '+' : ''}${Math.round(value)} ms`;
+          else output.textContent = `${Math.round(value)}${key === 'titleSize' ? 'px' : key === 'speed' || key === 'trackDepth' ? '%' : ''}`;
+        }
       }
       this._persist();
     });

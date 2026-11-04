@@ -1737,7 +1737,9 @@ function drawPianoRoll(ctx, mod, body, frame, st, env) {
   const rowH = h / pitchSpan;
   const speed = clamp(modNum(mod, 'speed', 100, 50, 250) / 100, 0.5, 2.5);
   const windowSec = modNum(mod, 'window', 10, 4, 20) / speed;
-  const startT = Math.max(0, frame.time - 1.2);
+  const midiOffset = modNum(mod, 'midiOffset', 0, -2000, 2000) / 1000;
+  const midiTime = frame.time - midiOffset;
+  const startT = Math.max(0, midiTime - 1.2);
   const endT = startT + windowSec;
   const palette = [accent, '#68e8ff', '#a98bff', '#ffc46b', '#b9ff8a', '#ff8a6b'];
   const showGrid = modOpt(mod, 'grid', true);
@@ -1833,7 +1835,7 @@ function drawPianoRoll(ctx, mod, body, frame, st, env) {
     const z = clamp(orderDepth + bias, 0, 1);
     const scale = 0.58 + z * 0.82;
     const laneCenter = y + h * (0.18 + z * 0.60) + centerShift;
-    const pitchOffset = ((note.pitch - midPitch) / pitchSpan) * h * (0.36 + z * 0.20);
+    const pitchOffset = ((midPitch - note.pitch) / pitchSpan) * h * (0.36 + z * 0.20);
     const vibratoY = vibratoAmount ? Math.sin(frame.time * 7 + note.pitch * 0.7) * vibratoAmount * 5 : 0;
     const nx = x + ((note.start - startT) / windowSec) * w;
     const nw = Math.max(1.5, ((note.end - note.start) / windowSec) * w);
@@ -1841,7 +1843,7 @@ function drawPianoRoll(ctx, mod, body, frame, st, env) {
     const py = laneCenter + pitchOffset + vibratoY;
     const pw = nw * scale;
     const color = allTrackColor ? globalTrackColor : (/^#[0-9a-fA-F]{6}$/.test(trackColors[trackIndex] || '') ? trackColors[trackIndex] : palette[trackIndex % palette.length]);
-    const active = frame.time >= note.start && frame.time <= note.end;
+    const active = midiTime >= note.start && midiTime <= note.end;
     const nh = Math.max(1.1, rowH * (0.62 + z * 0.38) - 0.7) * scale * noteThickness;
     visible.push({ note, trackIndex, z, scale, px, py, pw, nh, color, active });
   }
@@ -1901,7 +1903,7 @@ function drawPianoRoll(ctx, mod, body, frame, st, env) {
     ctx.restore();
   }
   if (showChords) {
-    const chord = midiChordAt(midi, frame.time);
+    const chord = midiChordAt(midi, midiTime);
     if (chord) {
       ctx.save();
       ctx.globalAlpha = mod.opacity ?? 1;
