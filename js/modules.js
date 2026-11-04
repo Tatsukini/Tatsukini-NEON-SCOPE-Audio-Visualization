@@ -1701,7 +1701,9 @@ function drawPianoRoll(ctx, mod, body, frame, st, env) {
   const p = 8;
   const x = body.x + p + 22, y = body.y + p + 1;
   const w = body.w - p * 2 - 22, h = body.h - p * 2 - 12;
-  const midi = (env.midiLayers || []).find((layer) => layer.id === mod.options?.midiId) || env.midi;
+  const midi = (mod.options?.midiMaster && env.midiMerged)
+    ? env.midiMerged
+    : ((env.midiLayers || []).find((layer) => layer.id === mod.options?.midiId) || env.midi);
 
   if (!midi || !midi.notes?.length) {
     ctx.strokeStyle = 'rgba(255,255,255,.055)';
@@ -1741,6 +1743,11 @@ function drawPianoRoll(ctx, mod, body, frame, st, env) {
   const showGrid = modOpt(mod, 'grid', true);
   const showLabels = modOpt(mod, 'labels', true);
   const noteStyle = modOpt(mod, 'noteStyle', 'rect');
+  const allTrackColor = modOpt(mod, 'allTrackColor', false);
+  const globalTrackColor = /^#[0-9a-fA-F]{6}$/.test(modOpt(mod, 'globalTrackColor', '#ffc46b')) ? modOpt(mod, 'globalTrackColor', '#ffc46b') : '#ffc46b';
+  const noteThickness = modNum(mod, 'noteThickness', 100, 50, 200) / 100;
+  const centerShift = (modNum(mod, 'centerY', 50, 0, 100) / 100 - 0.5) * h * 0.24;
+  const vibratoAmount = modNum(mod, 'vibrato', 0, 0, 100) / 100;
   const defaultDepth = modNum(mod, 'trackDepth', 55, 0, 100) / 100;
   const trackColors = Array.isArray(mod.options?.trackColors) ? mod.options.trackColors : [];
   const trackDepths = Array.isArray(mod.options?.trackDepths) ? mod.options.trackDepths : [];
@@ -1762,8 +1769,8 @@ function drawPianoRoll(ctx, mod, body, frame, st, env) {
     if (!seenTracks.has(index)) trackOrder.push(index);
   }
   const orderPosition = new Map(trackOrder.map((track, index) => [track, index]));
-  const horizonX = x + w * 0.10;
-  const horizonY = y + h * 0.10;
+  const horizonX = x + w * 0.08;
+  const midPitch = (minPitch + maxPitch) / 2;
 
   // Pitch rows and keyboard.
   for (let pitch = minPitch; pitch <= maxPitch; pitch++) {
@@ -1824,17 +1831,18 @@ function drawPianoRoll(ctx, mod, body, frame, st, env) {
     const orderDepth = orderPosition.size > 1 ? orderIndex / (orderPosition.size - 1) : 0.5;
     const bias = (clamp(Number(trackDepths[trackIndex] ?? defaultDepth * 100) || 0, 0, 100) / 100 - 0.5) * 0.22;
     const z = clamp(orderDepth + bias, 0, 1);
-    const scale = 0.62 + z * 0.95;
-    const laneOffset = (z - 0.5) * h * 0.28;
+    const scale = 0.58 + z * 0.82;
+    const laneCenter = y + h * (0.18 + z * 0.60) + centerShift;
+    const pitchOffset = ((note.pitch - midPitch) / pitchSpan) * h * (0.36 + z * 0.20);
+    const vibratoY = vibratoAmount ? Math.sin(frame.time * 7 + note.pitch * 0.7) * vibratoAmount * 5 : 0;
     const nx = x + ((note.start - startT) / windowSec) * w;
     const nw = Math.max(1.5, ((note.end - note.start) / windowSec) * w);
-    const ny = y + h - ((note.pitch - minPitch + 1) / pitchSpan) * h;
     const px = horizonX + (nx - horizonX) * scale;
-    const py = horizonY + (ny - horizonY) * scale + laneOffset;
+    const py = laneCenter + pitchOffset + vibratoY;
     const pw = nw * scale;
-    const color = /^#[0-9a-fA-F]{6}$/.test(trackColors[trackIndex] || '') ? trackColors[trackIndex] : palette[trackIndex % palette.length];
+    const color = allTrackColor ? globalTrackColor : (/^#[0-9a-fA-F]{6}$/.test(trackColors[trackIndex] || '') ? trackColors[trackIndex] : palette[trackIndex % palette.length]);
     const active = frame.time >= note.start && frame.time <= note.end;
-    const nh = Math.max(1.1, rowH * (0.65 + z * 0.50) - 0.7) * scale;
+    const nh = Math.max(1.1, rowH * (0.62 + z * 0.38) - 0.7) * scale * noteThickness;
     visible.push({ note, trackIndex, z, scale, px, py, pw, nh, color, active });
   }
   visible.sort((a, b) => a.z - b.z || a.note.start - b.note.start);

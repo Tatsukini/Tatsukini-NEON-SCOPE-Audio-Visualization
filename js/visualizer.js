@@ -995,6 +995,7 @@ export class Visualizer {
         states: this.states,
         engine: this.engine,
         midi: this.state.midi,
+        midiMerged: this.state.midiMerged,
         midiLayers: this.state.midiLayers,
         info: this.state.info,
         palette,

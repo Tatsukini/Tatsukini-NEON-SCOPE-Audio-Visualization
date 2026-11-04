@@ -90,7 +90,7 @@ export const MODULE_DEFS = {
     name: 'MIDI 钢琴卷帘',
     code: 'MIDI / PIANO ROLL',
     glyph: '▦',
-    about: '所有 MIDI 轨道在同一个 3D 纵深场景中滚动，轨道列表顺序决定前后，音符近大远小、近快远慢。',
+    about: '所有导入 MIDI 的轨道都强制合并进同一个 3D 纵深场景；轨道列表顺序决定前后，音符近大远小、近快远慢。',
     w: 760, h: 420, category: 'MIDI',
   },
   peakSlope: {
