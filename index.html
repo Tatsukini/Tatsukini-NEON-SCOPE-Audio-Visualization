@@ -118,7 +118,7 @@
               <button class="btn ghost" id="importAudioBtn"><svg class="icon"><use href="#i-wave"/></svg>导入音频</button>
               <button class="btn ghost" id="importMidiBtn"><svg class="icon"><use href="#i-midi"/></svg>导入 MIDI</button>
             </div>
-            <button class="text-btn" id="demoBtn"><svg class="icon tiny"><use href="#i-spark"/></svg>载入内置 DEMO 音轨 <span>SYNTHWAVE / 36s</span></button>
+            <button class="text-btn" id="demoBtn"><svg class="icon tiny"><use href="#i-spark"/></svg>载入示例音轨 <span>WHEN RAIN / 04:42</span></button>
             <div class="dropzone" id="dropzone">
               <svg class="icon"><use href="#i-wave"/></svg>
               <span>拖放音频或 MIDI 到窗口任意位置</span>
@@ -854,7 +854,7 @@
             <div class="settings-panel-head">
               <span class="eyebrow">FILES / ARCHIVE</span>
               <h3>存档与路径</h3>
-              <p>把整个工程保存为单个 .neon 文件；不包含音频或视频素材。</p>
+              <p>把整个工程保存为单个 .NEON（ZIP 压缩包）；包含工程动画、音频、MIDI 与背景素材。</p>
             </div>
             <div class="setting-block">
               <div class="setting-block-head"><span>工程存档</span><em>PROJECT</em></div>
@@ -863,12 +863,12 @@
                 <button class="btn ghost" id="archiveExportBtn">另存为…</button>
                 <button class="btn ghost" id="archiveImportBtn">导入存档</button>
               </div>
-              <input type="file" id="archiveFile" accept=".neon,.json,application/json" hidden />
+              <input type="file" id="archiveFile" accept=".NEON,.neon,.json,application/zip,application/json" hidden />
               <div class="archive-actions">
                 <button class="mini-action" id="fileAnimExportBtn">导出动画 .txt</button>
                 <button class="mini-action" id="fileAnimImportBtn">导入动画 .txt</button>
               </div>
-              <p class="section-help">快捷键 Ctrl+S 保存。存档包含布局、主题、动效、信息、动画动作和封面；不包含音轨与视频。关闭软件后可从存档恢复全部改动。</p>
+              <p class="section-help">快捷键 Ctrl+S 保存。.NEON 是 ZIP 工程包，包含 project.json、动画、音频、MIDI 源文件、背景与封面；关闭软件后可完整恢复。</p>
             </div>
             <div class="setting-block">
               <div class="setting-block-head"><span>默认存档路径</span><em>SAVE PATH</em></div>

@@ -74,6 +74,30 @@ internal sealed class ServerHost : IAsyncDisposable
         app.MapPost("/api/convert", (Delegate)HandleConvertAsync)
             .DisableAntiforgery();
 
+        app.MapPost("/api/save-archive", async (HttpRequest request, string? filename, string? folder) =>
+        {
+            try
+            {
+                var targetFolder = string.IsNullOrWhiteSpace(folder)
+                    ? Path.Combine(AppPaths.Root, "Saves")
+                    : folder;
+                Directory.CreateDirectory(targetFolder);
+                var safeName = Path.GetFileName(string.IsNullOrWhiteSpace(filename) ? "neon-scope.NEON" : filename);
+                if (string.IsNullOrWhiteSpace(safeName)) safeName = "neon-scope.NEON";
+                var target = Path.Combine(targetFolder, safeName);
+                await using (var stream = new FileStream(target, FileMode.Create, FileAccess.Write, FileShare.None))
+                {
+                    await request.Body.CopyToAsync(stream);
+                }
+                return Results.Json(new { ok = true, path = target });
+            }
+            catch (Exception ex)
+            {
+                AppPaths.Log("HTTP archive save failed: " + ex.Message);
+                return Results.Json(new { ok = false, message = ex.Message }, statusCode: 500);
+            }
+        }).DisableAntiforgery();
+
         var defaultFiles = new DefaultFilesOptions { FileProvider = _fileProvider };
         defaultFiles.DefaultFileNames.Clear();
         defaultFiles.DefaultFileNames.Add("index.html");

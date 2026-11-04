@@ -362,7 +362,8 @@ internal sealed class MainForm : Form
         {
             var filename = root.TryGetProperty("filename", out var nameElement) ? nameElement.GetString() : null;
             var content = root.TryGetProperty("content", out var contentElement) ? contentElement.GetString() : null;
-            if (string.IsNullOrWhiteSpace(content)) return;
+            var contentBase64 = root.TryGetProperty("contentBase64", out var base64Element) ? base64Element.GetString() : null;
+            if (string.IsNullOrWhiteSpace(content) && string.IsNullOrWhiteSpace(contentBase64)) return;
             var folder = string.IsNullOrWhiteSpace(_saveFolder)
                 ? Path.Combine(AppPaths.Root, "Saves")
                 : _saveFolder;
@@ -389,7 +390,14 @@ internal sealed class MainForm : Form
             {
                 target = MakeUniquePath(folder, filename);
             }
-            File.WriteAllText(target, content, new System.Text.UTF8Encoding(false));
+            if (!string.IsNullOrWhiteSpace(contentBase64))
+            {
+                File.WriteAllBytes(target, Convert.FromBase64String(contentBase64));
+            }
+            else
+            {
+                File.WriteAllText(target, content, new System.Text.UTF8Encoding(false));
+            }
             var payload = JsonSerializer.Serialize(new { action = "archive-saved", path = target });
             PostToMain(payload);
             _settingsForm?.PostJson(payload);

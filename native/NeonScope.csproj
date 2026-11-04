@@ -42,6 +42,12 @@
     <EmbeddedResource Include="..\assets\*.jpg">
       <LogicalName>web/assets/%(Filename)%(Extension)</LogicalName>
     </EmbeddedResource>
+    <EmbeddedResource Include="..\assets\*.mp3">
+      <LogicalName>web/assets/%(Filename)%(Extension)</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="..\assets\*.mid">
+      <LogicalName>web/assets/%(Filename)%(Extension)</LogicalName>
+    </EmbeddedResource>
   </ItemGroup>
 
 </Project>

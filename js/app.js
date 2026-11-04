@@ -6,7 +6,8 @@ import {
   formatShortTime, humanBytes, safeRead, safeStore, safeParse, debounce,
 } from './core.js';
 import { AudioEngine } from './audio.js';
-import { createDemoTrack } from './demo.js';
+import { createZip, readZip } from './neonzip.js';
+import { putPendingArchive, takePendingArchive } from './archive-store.js';
 import { parseMidi } from './midi.js';
 import { Visualizer } from './visualizer.js';
 import { VideoExporter, downloadBlob, checkFfmpeg, sanitizeFilename } from './exporter.js';
@@ -17,7 +18,39 @@ const STORAGE_KEY = 'neon-scope.project.v1';
 const SETTINGS_SYNC_KEY = 'neon-scope.settings-sync.v1';
 const BG_PREVIEW_KEY = 'neon-scope.bg-preview.v1';
 const BG_IMAGE_KEY = 'neon-scope.bg-image.v1';
-const DEMO_META = { name: 'Neon Skyline · DEMO', kind: 'demo', bpm: 112, artist: 'NEON//SCOPE' };
+const DEMO_META = { name: 'When Rain In My Mind Vol.2', kind: 'demo', bpm: 140, artist: 'NEON//SCOPE' };
+function dataUrlToBytes(dataUrl) {
+  const match = String(dataUrl || '').match(/^data:([^;,]+)?(;base64)?,(.*)$/s);
+  if (!match) return null;
+  const type = match[1] || 'application/octet-stream';
+  const ext = (type.split('/')[1] || 'bin').replace(/[^a-z0-9]/gi, '') || 'bin';
+  try {
+    const raw = match[2] ? atob(match[3]) : decodeURIComponent(match[3]);
+    const bytes = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i) & 0xFF;
+    return { bytes, type, ext };
+  } catch {
+    return null;
+  }
+}
+
+function bytesToBase64(bytes) {
+  let binary = '';
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+  }
+  return btoa(binary);
+}
+
+const DEMO_MIDI_FILES = [
+  ['assets/demo-1.mid', 'When Rain In My Mind Pt.2 (1).mid'],
+  ['assets/demo-2.mid', 'When Rain In My Mind Pt.2 (2).mid'],
+  ['assets/demo-3.mid', 'When Rain In My Mind Pt.2 (3).mid'],
+  ['assets/demo-4.mid', 'When Rain In My Mind Pt.2 (4).mid'],
+  ['assets/demo-5.mid', 'When Rain In My Mind Pt.2 (5).mid'],
+  ['assets/demo-6.mid', 'When Rain In My Mind Pt.2.mid'],
+];
 
 const SHORTCUT_ACTIONS = [
   { id: 'play_pause', label: '播放 / 暂停', code: 'PLAYBACK', group: '播放', default: 'Space' },
@@ -264,6 +297,8 @@ class NeonScopeApp {
     this.demoBuffer = null;
     this.demoPromise = null;
     this.demoToken = 0;
+    this.demoBytes = null;
+    this.audioAsset = null;
     this.loadToken = 0;
     this.bgImageUrl = null;
     this.bgImage = null;
@@ -330,7 +365,7 @@ class NeonScopeApp {
       this._checkHealth();
       this.visualizer.start();
       this._updateStartOverlay('loading');
-      this._loadDemo(false);
+      this._boot();
       window.setTimeout(() => this._drawSeekWave(0), 150);
     }
   }
@@ -2321,56 +2356,156 @@ class NeonScopeApp {
     };
   }
 
-  async _saveArchive({ as = false } = {}) {
+  async _buildArchivePackage() {
     const archive = this._buildArchive();
-    const content = JSON.stringify(archive, null, 2);
-    const filename = `${sanitizeFilename(this.audio.track?.name || 'neon-scope')}-${new Date().toISOString().slice(0, 10)}.neon`;
-    if (this._isNative) {
-      try {
-        window.chrome.webview.postMessage({ action: 'save-archive', filename, content, saveAs: !!as });
-        this._toast('正在保存工程存档…', 'info', 1800);
-        return;
-      } catch { /* fall through */ }
+    const files = [];
+    const encoder = new TextEncoder();
+    const audio = this.audioAsset;
+    if (audio?.bytes) {
+      const ext = (audio.name.match(/\.[^.]+$/) || ['.wav'])[0];
+      const path = `assets/audio${ext}`;
+      files.push({ name: path, data: audio.bytes });
+      archive.files = { ...(archive.files || {}), audio: { path, name: audio.name, type: audio.type || 'audio/wav' } };
     }
-    try {
-      if (window.showSaveFilePicker) {
-        const handle = await window.showSaveFilePicker({
-          suggestedName: filename,
-          types: [{ description: 'NEON//SCOPE 工程存档', accept: { 'application/json': ['.neon'] } }],
-        });
-        const writable = await handle.createWritable();
-        await writable.write(content);
-        await writable.close();
-        this._toast(`存档已保存 · ${handle.name}`, 'success', 3600);
-        return;
+    const rawMidi = [];
+    (this.state.midiLayers || []).forEach((layer, index) => {
+      const bytes = layer.bytes instanceof Uint8Array ? layer.bytes : (layer.bytes ? new Uint8Array(Object.values(layer.bytes)) : null);
+      if (!bytes?.length) return;
+      const ext = (layer.fileName?.match(/\.[^.]+$/) || ['.mid'])[0];
+      const path = `assets/midi/${String(index + 1).padStart(2, '0')}${ext}`;
+      files.push({ name: path, data: bytes });
+      rawMidi.push({ path, name: layer.fileName || `MIDI ${index + 1}`, type: layer.mimeType || 'audio/midi', index });
+    });
+    const layers = (this.state.midiLayers || []).map(({ bytes, tickToSec, ...rest }) => rest);
+    files.push({ name: 'midi/layers.json', data: encoder.encode(JSON.stringify({ layers })) });
+    archive.files = { ...(archive.files || {}), midi: rawMidi };
+    const background = safeRead(BG_IMAGE_KEY);
+    if (background) {
+      const parsed = dataUrlToBytes(background);
+      if (parsed) {
+        const path = `assets/background.${parsed.ext}`;
+        files.push({ name: path, data: parsed.bytes });
+        archive.files.background = { path, type: parsed.type };
+        archive.backgroundImage = '';
       }
-    } catch (err) {
-      if (err?.name !== 'AbortError') console.warn('Archive save failed:', err);
-      if (err?.name === 'AbortError') return;
     }
-    downloadBlob(new Blob([content], { type: 'application/json' }), filename);
-    this._toast('存档已下载', 'success');
+    archive.project.midi = null;
+    archive.project.midiLayers = [];
+    files.push({ name: 'project.json', data: encoder.encode(JSON.stringify(archive, null, 2)) });
+    const bytes = await createZip(files);
+    return {
+      bytes,
+      filename: `${sanitizeFilename(this.audio.track?.name || 'neon-scope')}-${new Date().toISOString().slice(0, 10)}.NEON`,
+    };
+  }
+
+  async _saveArchive({ as = false } = {}) {
+    try {
+      this._toast('正在打包 .NEON 工程…', 'info', 2200);
+      const { bytes, filename } = await this._buildArchivePackage();
+      if (this._isNative) {
+        try {
+          const params = new URLSearchParams({ filename, folder: this.state.settings.savePath || '' });
+          const response = await fetch(`/api/save-archive?${params.toString()}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/zip' },
+            body: bytes,
+          });
+          const result = await response.json().catch(() => ({}));
+          if (!response.ok || !result.ok) throw new Error(result.message || `HTTP ${response.status}`);
+          this._toast(`存档已保存 · ${result.path || filename}`, 'success', 4200);
+          return;
+        } catch (err) {
+          console.warn('Native archive save failed:', err);
+        }
+      }
+      try {
+        if (window.showSaveFilePicker) {
+          const handle = await window.showSaveFilePicker({
+            suggestedName: filename,
+            types: [{ description: 'NEON//SCOPE 工程存档', accept: { 'application/zip': ['.NEON'] } }],
+          });
+          const writable = await handle.createWritable();
+          await writable.write(bytes);
+          await writable.close();
+          this._toast(`存档已保存 · ${handle.name}`, 'success', 3600);
+          return;
+        }
+      } catch (err) {
+        if (err?.name !== 'AbortError') console.warn('Archive save failed:', err);
+        if (err?.name === 'AbortError') return;
+      }
+      downloadBlob(new Blob([bytes], { type: 'application/zip' }), filename);
+      this._toast('存档已下载', 'success');
+    } catch (err) {
+      console.error(err);
+      this._toast(`存档保存失败：${err.message}`, 'error', 5200);
+    }
   }
 
   async _importArchive(file) {
     try {
-      const text = await file.text();
+      const buffer = await file.arrayBuffer();
+      const bytes = new Uint8Array(buffer);
+      if (bytes[0] === 0x50 && bytes[1] === 0x4b) {
+        await this._importZipArchive(file.name, buffer);
+        return;
+      }
+      const text = new TextDecoder().decode(bytes);
       const data = JSON.parse(text);
       const archive = data?.format === 'neon-scope-project' ? data : { project: data };
       if (!archive.project || typeof archive.project !== 'object') throw new Error('不是有效的 NEON//SCOPE 存档');
-      const confirmed = await this._showConfirm('导入存档会覆盖当前工程，继续吗？', {
+      const confirmed = await this._showConfirm('导入旧版 JSON 存档会覆盖当前工程，继续吗？', {
         title: '导入工程', confirmText: '导入', cancelText: '取消',
       });
       if (!confirmed) return;
-      if (this._standaloneSettings && this._isNative) {
-        window.chrome.webview.postMessage({ action: 'archive-import', archive });
-        this._toast('已发送到主窗口，正在恢复存档…', 'success', 3000);
-        return;
-      }
       this._applyArchive(archive);
     } catch (err) {
       this._toast(`存档导入失败：${err.message}`, 'error', 5200);
     }
+  }
+
+  async _importZipArchive(fileName, buffer) {
+    const files = await readZip(buffer);
+    const decoder = new TextDecoder();
+    const projectBytes = files.get('project.json');
+    if (!projectBytes) throw new Error('.NEON 中缺少 project.json');
+    const archive = JSON.parse(decoder.decode(projectBytes));
+    if (!archive.project || typeof archive.project !== 'object') throw new Error('不是有效的 NEON//SCOPE 存档');
+    const confirmed = await this._showConfirm(`导入 ${fileName} 会覆盖当前工程，继续吗？`, {
+      title: '导入工程', confirmText: '导入', cancelText: '取消',
+    });
+    if (!confirmed) return;
+    const layersFile = files.get('midi/layers.json');
+    const layers = layersFile ? (JSON.parse(decoder.decode(layersFile)).layers || []) : [];
+    const midiFiles = archive.files?.midi || [];
+    layers.forEach((layer, index) => {
+      const descriptor = midiFiles.find((item) => item.index === index) || midiFiles[index];
+      if (descriptor && files.has(descriptor.path)) layer.bytes = files.get(descriptor.path);
+    });
+    const audioDescriptor = archive.files?.audio;
+    const audioBytes = audioDescriptor ? files.get(audioDescriptor.path) : null;
+    const backgroundDescriptor = archive.files?.background;
+    const backgroundBytes = backgroundDescriptor ? files.get(backgroundDescriptor.path) : null;
+    if (backgroundBytes) {
+      const dataUrl = `data:${backgroundDescriptor.type || 'image/png'};base64,${bytesToBase64(backgroundBytes)}`;
+      safeStore(BG_IMAGE_KEY, dataUrl);
+    } else {
+      localStorage.removeItem(BG_IMAGE_KEY);
+    }
+    const pending = {
+      audio: audioBytes ? {
+        name: audioDescriptor.name || 'audio.wav',
+        type: audioDescriptor.type || 'audio/wav',
+        bytes: audioBytes,
+      } : null,
+      layers,
+    };
+    await putPendingArchive(pending);
+    this._skipUnloadSave = true;
+    safeStore(STORAGE_KEY, JSON.stringify(archive.project));
+    this._toast('存档已导入，正在恢复音频与 MIDI…', 'success', 1600);
+    setTimeout(() => location.reload(), 450);
   }
 
   _applyArchive(archive) {
@@ -4146,6 +4281,8 @@ class NeonScopeApp {
       this.dom.dragVeil.classList.add('hidden');
       const files = Array.from(e.dataTransfer?.files || []);
       if (!files.length) return;
+      const archive = files.find((f) => /\.neon$/i.test(f.name));
+      if (archive) { this._importArchive(archive); return; }
       const image = files.find((f) => f.type.startsWith('image/'));
       const midis = files.filter((f) => /\.(mid|midi)$/i.test(f.name));
       const audio = files.find((f) => f.type.startsWith('audio/') || /\.(wav|mp3|flac|ogg|m4a|aac)$/i.test(f.name));
@@ -4356,15 +4493,15 @@ class NeonScopeApp {
     const title = this.dom.startOverlay.querySelector('.start-title');
     const desc = this.dom.startOverlay.querySelector('.start-desc');
     if (mode === 'loading') {
-      kicker.textContent = 'RENDERING DEMO SIGNAL // PLEASE WAIT';
-      title.textContent = '正在生成演示音轨';
-      desc.textContent = '内置合成器正在离线渲染一段 36 秒 Synthwave DEMO。你也可以直接导入自己的音频或 MIDI。';
+      kicker.textContent = 'LOADING DEMO SIGNAL // PLEASE WAIT';
+      title.textContent = '正在加载示例音轨';
+      desc.textContent = '正在载入 When Rain In My Mind Vol.2 与配套 MIDI 示例。';
       this.dom.startPlayBtn.disabled = true;
       this.dom.startPlayBtn.style.opacity = '.45';
     } else if (mode === 'ready') {
       kicker.textContent = `DEMO READY // ${formatShortTime(this.audio.duration)}`;
-      title.textContent = '启动演示音轨';
-      desc.textContent = '或从左侧导入你的音频 / MIDI。所有视觉将跟随声音实时生成。';
+      title.textContent = '启动示例音轨';
+      desc.textContent = 'When Rain In My Mind Vol.2 · 示例 MIDI 已合并进 3D 钢琴卷帘。';
       this.dom.startPlayBtn.disabled = false;
       this.dom.startPlayBtn.style.opacity = '';
     } else if (mode === 'custom') {
@@ -4382,14 +4519,58 @@ class NeonScopeApp {
     }
   }
 
+  async _boot() {
+    try {
+      const restored = await this._restorePendingArchive();
+      if (!restored) await this._loadDemo(false);
+    } catch (err) {
+      console.error(err);
+      this._toast(`恢复存档失败：${err.message}`, 'error', 5200);
+      await this._loadDemo(false);
+    }
+  }
+
+  async _restorePendingArchive() {
+    const pending = await takePendingArchive();
+    if (!pending) return false;
+    if (pending.audio?.bytes) {
+      const file = new File([pending.audio.bytes], pending.audio.name || 'audio.wav', { type: pending.audio.type || 'audio/wav' });
+      const buffer = await this.audio.decodeFile(file);
+      this.audio.setBuffer(buffer, {
+        name: (pending.audio.name || 'audio').replace(/\.[^.]+$/, ''),
+        kind: 'audio',
+        file: pending.audio.name,
+      });
+      this.audioAsset = { name: pending.audio.name, type: pending.audio.type, bytes: pending.audio.bytes };
+    }
+    if (Array.isArray(pending.layers) && pending.layers.length) {
+      this.state.midiLayers = pending.layers;
+      this._rebuildMidiMerged();
+      this._ensureMidiMaster();
+      this._renderMidiBus();
+    }
+    this.visualizer.states.clear();
+    this._refreshTrackUI();
+    this._updateStartOverlay(pending.audio ? 'custom' : 'empty');
+    this._setEngineStatus(pending.audio ? '存档音频就绪' : '等待信号', pending.audio ? 'ready' : '');
+    if (pending.audio) this._toast('存档已恢复 · 音频、MIDI 与动画已载入', 'success', 3600);
+    return true;
+  }
+
   async _loadDemo(autoplay = false) {
     const token = ++this.loadToken;
     try {
-      this._setEngineStatus('渲染 DEMO 音轨…', 'busy');
-      this._setBusyTrack('生成内置 DEMO…');
+      this._setEngineStatus('加载示例音轨…', 'busy');
+      this._setBusyTrack('加载示例音频…', 'SAMPLE AUDIO', 'WAV');
       if (!this.demoBuffer) {
         if (!this.demoPromise) {
-          this.demoPromise = createDemoTrack(this.audio.ctx.sampleRate).catch((err) => {
+          this.demoPromise = (async () => {
+            const response = await fetch('assets/demo.mp3');
+            if (!response.ok) throw new Error(`示例音频加载失败 (${response.status})`);
+            this.demoBytes = new Uint8Array(await response.arrayBuffer());
+            const file = new File([this.demoBytes], 'When Rain In My Mind Vol.2.mp3', { type: 'audio/mpeg' });
+            return this.audio.decodeFile(file);
+          })().catch((err) => {
             this.demoPromise = null;
             throw err;
           });
@@ -4397,27 +4578,48 @@ class NeonScopeApp {
         this.demoBuffer = await this.demoPromise;
       }
       if (token !== this.loadToken) return;
-      this.audio.setBuffer(this.demoBuffer, { ...DEMO_META });
+      this.audio.setBuffer(this.demoBuffer, { ...DEMO_META, file: 'When Rain In My Mind Vol.2.mp3' });
+      this.audioAsset = {
+        name: 'When Rain In My Mind Vol.2.mp3',
+        type: 'audio/mpeg',
+        bytes: this.demoBytes,
+      };
       this.state.preset = this.state.preset || 'studio';
       this._refreshTrackUI();
       this._updateStartOverlay('ready');
-      this._setEngineStatus('演示音频就绪', 'ready');
+      this._setEngineStatus('示例音频就绪', 'ready');
+      if (!this.state.midiLayers?.length) await this._loadBundledMidi();
       if (autoplay) {
         await this._togglePlay();
       }
     } catch (err) {
       console.error(err);
       if (token !== this.loadToken) return;
-      this._setEngineStatus('DEMO 生成失败', 'error');
+      this._setEngineStatus('示例音频加载失败', 'error');
       this._updateStartOverlay('empty');
-      this._toast(`演示音轨生成失败：${err.message}`, 'error', 5200);
+      this._toast(`示例音频加载失败：${err.message}`, 'error', 5200);
     }
   }
 
-  _setBusyTrack(text) {
+  async _loadBundledMidi() {
+    try {
+      const files = [];
+      for (const [path, name] of DEMO_MIDI_FILES) {
+        const response = await fetch(path);
+        if (!response.ok) continue;
+        const bytes = new Uint8Array(await response.arrayBuffer());
+        files.push(new File([bytes], name, { type: 'audio/midi' }));
+      }
+      if (files.length) await this._loadMidiFiles(files, { openBus: false });
+    } catch (err) {
+      console.warn('Bundled MIDI load failed:', err);
+    }
+  }
+
+  _setBusyTrack(text, meta = 'DECODING AUDIO', badge = 'LOAD') {
     this.dom.trackName.textContent = text;
-    this.dom.trackMeta.textContent = 'OFFLINE SYNTHESIS';
-    this.dom.trackBadge.textContent = 'SYNTH';
+    this.dom.trackMeta.textContent = meta;
+    this.dom.trackBadge.textContent = badge;
   }
 
   async _loadAudioFile(file) {
@@ -4426,10 +4628,12 @@ class NeonScopeApp {
     this._setEngineStatus('解码音频…', 'busy');
     this._setBusyTrack(file.name);
     try {
-      const buffer = await this.audio.decodeFile(file);
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const buffer = await this.audio.decodeFile(new File([bytes], file.name, { type: file.type || 'audio/wav' }));
       if (token !== this.loadToken) return;
       const name = file.name.replace(/\.[^.]+$/, '');
       this.audio.setBuffer(buffer, { name, kind: 'audio', file: file.name });
+      this.audioAsset = { name: file.name, type: file.type || 'audio/wav', bytes };
       this._refreshTrackUI();
       this._updateStartOverlay('custom');
       this._setEngineStatus('音频就绪', 'ready');
@@ -4451,7 +4655,7 @@ class NeonScopeApp {
     return this._loadMidiFiles([file]);
   }
 
-  async _loadMidiFiles(files) {
+  async _loadMidiFiles(files, { openBus = true } = {}) {
     if (!files?.length) return;
     const token = (this._midiLoadToken = (this._midiLoadToken || 0) + 1);
     this._setEngineStatus('解析 MIDI…', 'busy');
@@ -4464,6 +4668,9 @@ class NeonScopeApp {
         if (token !== this._midiLoadToken) return;
         const midi = parseMidi(buf);
         midi.title = file.name.replace(/\.[^.]+$/, '');
+        midi.fileName = file.name;
+        midi.mimeType = file.type || 'audio/midi';
+        midi.bytes = new Uint8Array(buf);
         loaded.push(midi);
       } catch (err) {
         failed.push(`${file.name}: ${err.message || '解析失败'}`);
@@ -4484,7 +4691,7 @@ class NeonScopeApp {
       this._persist();
       this._renderMidiBus();
       const bus = this.subpanelState.midiBus;
-      if (bus?.hidden) {
+      if (openBus && bus?.hidden) {
         bus.hidden = false;
         bus.floating = true;
         this._applySubpanelState();
