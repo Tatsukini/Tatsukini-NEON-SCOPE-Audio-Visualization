@@ -253,6 +253,22 @@ internal sealed class ServerHost : IAsyncDisposable
             await using var target = new FileStream(destination, FileMode.Create, FileAccess.Write, FileShare.Read);
             await source.CopyToAsync(target);
         }
+
+        // Portable ZIP assets override the embedded copies. This keeps the
+        // distribution editable without requiring a rebuild of the EXE.
+        var externalAssets = Path.Combine(AppContext.BaseDirectory, "assets");
+        if (Directory.Exists(externalAssets))
+        {
+            var targetAssets = Path.Combine(_webRoot, "assets");
+            Directory.CreateDirectory(targetAssets);
+            foreach (var file in Directory.EnumerateFiles(externalAssets, "*", SearchOption.AllDirectories))
+            {
+                var relative = Path.GetRelativePath(externalAssets, file);
+                var destination = Path.Combine(targetAssets, relative);
+                Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+                File.Copy(file, destination, true);
+            }
+        }
     }
 
     private static int FindFreePort()

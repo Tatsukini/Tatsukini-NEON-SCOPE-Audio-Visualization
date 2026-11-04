@@ -893,6 +893,26 @@
               <p class="section-help">快捷键 Ctrl+S 保存。.NEON 是 ZIP 工程包，包含 project.json、动画、音频、MIDI 源文件、背景与封面；关闭软件后可完整恢复。</p>
             </div>
             <div class="setting-block">
+              <div class="setting-block-head"><span>舞台排版存档</span><em>LAYOUT SLOTS</em></div>
+              <label class="module-option-field"><span>快速存档位</span>
+                <select id="layoutSlotSelect">
+                  <option value="1">SLOT 1</option>
+                  <option value="2">SLOT 2</option>
+                  <option value="3">SLOT 3</option>
+                  <option value="4">SLOT 4</option>
+                  <option value="5">SLOT 5</option>
+                </select>
+              </label>
+              <div class="archive-actions">
+                <button class="btn primary" id="layoutSaveBtn">保存排版</button>
+                <button class="btn ghost" id="layoutLoadBtn">读取排版</button>
+                <button class="mini-action" id="layoutExportBtn">导出 .NEONMDUL</button>
+                <button class="mini-action" id="layoutImportBtn">导入 .NEONMDUL</button>
+              </div>
+              <input type="file" id="layoutFile" accept=".NEONMDUL,.neonmdul,application/json" hidden />
+              <p class="section-help" id="layoutSlotInfo">5 个排版槽独立于工程存档，只记录模块布局、尺寸、颜色与参数。</p>
+            </div>
+            <div class="setting-block">
               <div class="setting-block-head"><span>默认存档路径</span><em>SAVE PATH</em></div>
               <div class="path-row">
                 <input id="savePathInput" type="text" placeholder="默认：本机 NEONScope / Saves" spellcheck="false" />

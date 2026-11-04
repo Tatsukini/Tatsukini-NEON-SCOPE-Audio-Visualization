@@ -15,6 +15,7 @@ import { VideoExporter, downloadBlob, checkFfmpeg, sanitizeFilename } from './ex
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 const STORAGE_KEY = 'neon-scope.project.v1';
+const LAYOUT_SLOTS_KEY = 'neon-scope.layout-slots.v1';
 const SETTINGS_SYNC_KEY = 'neon-scope.settings-sync.v1';
 const BG_PREVIEW_KEY = 'neon-scope.bg-preview.v1';
 const BG_IMAGE_KEY = 'neon-scope.bg-image.v1';
@@ -329,7 +330,7 @@ class NeonScopeApp {
     };
     this._panelZ = 66;
     this.subpanelState = {};
-    this.timelineState = { floating: false, x: null, y: null, w: null, h: null, height: 220, labelWidth: 148 };
+    this.timelineState = { floating: false, x: null, y: null, w: null, h: null, height: 220, labelWidth: 148, yScale: 1 };
     this._started = false;
     this._isNative = !!window.chrome?.webview;
     this._standaloneSettings = new URLSearchParams(location.search).has('settings');
@@ -690,6 +691,9 @@ class NeonScopeApp {
       animScript: $('#animScript'), animScriptApply: $('#animScriptApply'), animScriptExport: $('#animScriptExport'),
       animScriptImport: $('#animScriptImport'), animScriptFile: $('#animScriptFile'),
       archiveSaveBtn: $('#archiveSaveBtn'), archiveExportBtn: $('#archiveExportBtn'), archiveImportBtn: $('#archiveImportBtn'),
+      layoutSlotSelect: $('#layoutSlotSelect'), layoutSaveBtn: $('#layoutSaveBtn'), layoutLoadBtn: $('#layoutLoadBtn'),
+      layoutExportBtn: $('#layoutExportBtn'), layoutImportBtn: $('#layoutImportBtn'), layoutFile: $('#layoutFile'),
+      layoutSlotInfo: $('#layoutSlotInfo'),
       archiveFile: $('#archiveFile'), fileAnimExportBtn: $('#fileAnimExportBtn'), fileAnimImportBtn: $('#fileAnimImportBtn'),
       savePathInput: $('#savePathInput'), exportPathInput: $('#exportPathInput'),
       savePathBrowse: $('#savePathBrowse'), exportPathBrowse: $('#exportPathBrowse'),
@@ -889,7 +893,9 @@ class NeonScopeApp {
         h: num(raw.h),
         height: clamp(Number(raw.height) || 220, 80, 620),
         labelWidth: clamp(Number(raw.labelWidth) || 148, 110, 420),
+        yScale: clamp(Number(raw.yScale) || 1, 0.6, 3),
       };
+      this._timelineYScale = this.timelineState.yScale;
     }
     if (data.panelState && typeof data.panelState === 'object') {
       for (const id of ['left', 'stage', 'right']) {
@@ -1482,6 +1488,17 @@ class NeonScopeApp {
       this.dom.archiveFile.value = '';
       if (file) this._importArchive(file);
     });
+    this.dom.layoutSlotSelect?.addEventListener('change', () => this._renderLayoutSlotInfo());
+    this.dom.layoutSaveBtn?.addEventListener('click', () => this._saveLayoutSlot());
+    this.dom.layoutLoadBtn?.addEventListener('click', () => this._loadLayoutSlot());
+    this.dom.layoutExportBtn?.addEventListener('click', () => this._exportLayoutSlot());
+    this.dom.layoutImportBtn?.addEventListener('click', () => this.dom.layoutFile?.click());
+    this.dom.layoutFile?.addEventListener('change', () => {
+      const file = this.dom.layoutFile.files?.[0];
+      this.dom.layoutFile.value = '';
+      if (file) this._importLayoutFile(file);
+    });
+    this._renderLayoutSlotInfo();
     this.dom.savePathInput.addEventListener('change', () => {
       this.state.settings.savePath = this.dom.savePathInput.value.trim();
       this._notifyNativePaths();
@@ -1685,6 +1702,7 @@ class NeonScopeApp {
   _bindTimeline() {
     if (!this.dom.timelinePanel) return;
     this._timelineZoom = 1;
+    this._timelineYScale = this.timelineState.yScale || 1;
     this._timelineHome = { parent: this.dom.timelinePanel.parentNode, next: this.dom.timelinePanel.nextSibling };
     this._tlSelectedId = null;
     this._timelineScrubbing = false;
@@ -1703,6 +1721,28 @@ class NeonScopeApp {
       this._renderTimeline();
     });
     this.dom.timelineAddCue.addEventListener('click', () => this._openActionBuilder('effect'));
+    this.dom.timelinePanel.addEventListener('wheel', (e) => {
+      if (!e.ctrlKey && !e.altKey) return;
+      e.preventDefault();
+      const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+      if (e.ctrlKey) {
+        const scroll = this.dom.timelineScroll;
+        const rect = scroll.getBoundingClientRect();
+        const localX = clamp(e.clientX - rect.left, 0, rect.width);
+        const anchorTime = (scroll.scrollLeft + localX) / (this._tlPps || 1);
+        this._timelineZoom = clamp((this._timelineZoom || 1) * factor, 0.5, 4);
+        this._renderTimeline();
+        requestAnimationFrame(() => {
+          scroll.scrollLeft = Math.max(0, anchorTime * (this._tlPps || 1) - localX);
+        });
+      } else {
+        this._timelineYScale = clamp((this._timelineYScale || 1) * factor, 0.6, 3);
+        this.timelineState.yScale = this._timelineYScale;
+        this._persist();
+        this._renderTimeline();
+        requestAnimationFrame(() => { this.dom.timelineScroll.scrollTop = 0; });
+      }
+    }, { passive: false });
     this.dom.timelineScroll.addEventListener('pointerdown', (e) => {
       if (e.button !== 0 || e.target.closest('.tl-bar')) return;
       this._timelineScrubbing = true;
@@ -2195,6 +2235,7 @@ class NeonScopeApp {
     if (!this.dom.timelineScroll.clientWidth) return;
     const duration = Math.max(1, this.audio.duration || 36, ...this.state.animationCues.map((c) => c.time + c.duration));
     this._tlDuration = duration;
+    this.dom.timelinePanel.style.setProperty('--tl-y-scale', this._timelineYScale || 1);
     const viewport = Math.max(120, this.dom.timelineScroll.clientWidth);
     const width = Math.round(viewport * (this._timelineZoom || 1));
     this.dom.timelineContent.style.width = `${width}px`;
@@ -2491,6 +2532,125 @@ class NeonScopeApp {
       this._applyArchive(archive);
     } catch (err) {
       this._toast(`存档导入失败：${err.message}`, 'error', 5200);
+    }
+  }
+
+  _layoutSlots() {
+    try {
+      const parsed = JSON.parse(safeRead(LAYOUT_SLOTS_KEY) || '[]');
+      return Array.from({ length: 5 }, (_, index) => parsed[index] || null);
+    } catch {
+      return Array.from({ length: 5 }, () => null);
+    }
+  }
+
+  _layoutPayload() {
+    return {
+      format: 'neon-scope-layout',
+      version: 1,
+      savedAt: new Date().toISOString(),
+      title: this.audio.track?.name || 'NEON//SCOPE',
+      preset: this.state.preset || 'custom',
+      modules: JSON.parse(JSON.stringify(this.state.modules || [])),
+    };
+  }
+
+  _renderLayoutSlotInfo() {
+    if (!this.dom.layoutSlotInfo || !this.dom.layoutSlotSelect) return;
+    const index = Number(this.dom.layoutSlotSelect.value) - 1;
+    const slot = this._layoutSlots()[index];
+    this.dom.layoutSlotInfo.textContent = slot
+      ? `SLOT ${index + 1} · ${slot.layout?.modules?.length || 0} 个模块 · ${new Date(slot.savedAt).toLocaleString()}`
+      : `SLOT ${index + 1} 为空 · 仅保存舞台排版，不影响 .NEON 工程与音频`;
+  }
+
+  _saveLayoutSlot() {
+    const index = Number(this.dom.layoutSlotSelect.value) - 1;
+    const slots = this._layoutSlots();
+    const layout = this._layoutPayload();
+    slots[index] = { savedAt: layout.savedAt, layout };
+    safeStore(LAYOUT_SLOTS_KEY, JSON.stringify(slots));
+    this._renderLayoutSlotInfo();
+    this._toast(`舞台排版已保存到 SLOT ${index + 1}`, 'success', 2200);
+  }
+
+  _applyLayout(layout) {
+    if (!layout || !Array.isArray(layout.modules)) throw new Error('不是有效的 .NEONMDUL 排版');
+    const modules = this._sanitizeModules(layout.modules);
+    if (layout.modules.length && !modules.length) throw new Error('排版中没有可用的模块');
+    this.state.modules = modules;
+    this.state.selectedId = null;
+    this.state.preset = layout.preset || 'custom';
+    this.visualizer.states.clear();
+    this.visualizer.syncOverlay();
+    this._syncSelectionUI(null);
+    this._renderLibrary();
+    this._syncCanvasMeta();
+    this._renderMidiBus();
+    this._persist();
+  }
+
+  async _loadLayoutSlot() {
+    const index = Number(this.dom.layoutSlotSelect.value) - 1;
+    const slot = this._layoutSlots()[index];
+    if (!slot?.layout) {
+      this._toast(`SLOT ${index + 1} 还没有保存排版`, 'info', 2200);
+      return;
+    }
+    const confirmed = await this._showConfirm(`读取 SLOT ${index + 1} 会替换当前舞台排版，继续吗？`, {
+      title: '读取舞台排版', confirmText: '读取', cancelText: '取消',
+    });
+    if (!confirmed) return;
+    this._applyLayout(slot.layout);
+    this._toast(`已读取 SLOT ${index + 1} 舞台排版`, 'success', 2400);
+  }
+
+  async _exportLayoutSlot() {
+    const index = Number(this.dom.layoutSlotSelect.value) - 1;
+    const slot = this._layoutSlots()[index];
+    if (!slot?.layout) {
+      this._toast(`SLOT ${index + 1} 还没有保存排版`, 'info', 2200);
+      return;
+    }
+    const filename = `${sanitizeFilename(slot.layout.title || 'neon-scope')}-layout-${index + 1}.NEONMDUL`;
+    const content = JSON.stringify(slot.layout, null, 2);
+    try {
+      if (window.showSaveFilePicker) {
+        const handle = await window.showSaveFilePicker({
+          suggestedName: filename,
+          types: [{ description: 'NEON//SCOPE 舞台排版', accept: { 'application/json': ['.NEONMDUL'] } }],
+        });
+        const writable = await handle.createWritable();
+        await writable.write(content);
+        await writable.close();
+        this._toast(`排版已导出 · ${handle.name}`, 'success', 3000);
+        return;
+      }
+    } catch (err) {
+      if (err?.name === 'AbortError') return;
+    }
+    downloadBlob(new Blob([content], { type: 'application/json' }), filename);
+    this._toast('舞台排版已导出', 'success');
+  }
+
+  async _importLayoutFile(file) {
+    try {
+      const layout = JSON.parse(await file.text());
+      const data = layout?.layout && Array.isArray(layout.layout.modules) ? layout.layout : layout;
+      if (!Array.isArray(data.modules)) throw new Error('不是有效的 .NEONMDUL 排版');
+      const index = Number(this.dom.layoutSlotSelect.value) - 1;
+      const confirmed = await this._showConfirm(`导入并应用到 SLOT ${index + 1}？当前舞台排版会被替换。`, {
+        title: '导入舞台排版', confirmText: '导入', cancelText: '取消',
+      });
+      if (!confirmed) return;
+      const slots = this._layoutSlots();
+      slots[index] = { savedAt: new Date().toISOString(), layout: data };
+      safeStore(LAYOUT_SLOTS_KEY, JSON.stringify(slots));
+      this._applyLayout(data);
+      this._renderLayoutSlotInfo();
+      this._toast(`排版已导入 SLOT ${index + 1}`, 'success', 2600);
+    } catch (err) {
+      this._toast(`排版导入失败：${err.message}`, 'error', 5200);
     }
   }
 
