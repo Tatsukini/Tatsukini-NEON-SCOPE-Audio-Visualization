@@ -1,0 +1,9 @@
+Third-party media notice
+
+The MIT license in LICENSE applies to the NEON//SCOPE application source code,
+not to the media assets under assets/.
+
+Demo audio, demo MIDI files, music, fonts and images under assets/ remain the
+property of their respective authors and are included only as demonstration
+material. Do not redistribute them separately from the project without the
+permission of their respective rights holders.

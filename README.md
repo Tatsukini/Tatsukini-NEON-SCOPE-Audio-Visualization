@@ -254,7 +254,7 @@ For the SignPath Foundation program, this project is built automatically from th
 
 源代码使用 MIT License，见 [LICENSE](LICENSE)。
 
-`assets/` 下的示例音频、MIDI、字体和图片仍归各自作者所有，不包含在 MIT 许可范围内。
+`assets/` 下的示例音频、MIDI、字体和图片仍归各自作者所有，不包含在 MIT 许可范围内；详见 [NOTICE](NOTICE)。
 
 ## Privacy / 隐私
 
