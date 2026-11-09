@@ -10,7 +10,7 @@ import { createZip, readZip } from './neonzip.js';
 import { putPendingArchive, takePendingArchive } from './archive-store.js';
 import { parseMidi } from './midi.js';
 import { Visualizer } from './visualizer.js';
-import { VideoExporter, downloadBlob, checkFfmpeg, sanitizeFilename } from './exporter.js';
+import { VideoExporter, downloadBlob, checkFfmpeg, sanitizeFilename, pickMime, pickDirectMime } from './exporter.js';
 import { registerPluginDrawer, unregisterPluginDrawer } from './modules.js';
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -26,6 +26,22 @@ const BG_IMAGE_KEY = 'neon-scope.bg-image.v1';
 const DEMO_META = { name: 'When Rain In My Mind Vol.2', kind: 'demo', bpm: 140, artist: 'NEON//SCOPE' };
 const DEMO_ASSET_VERSION = '2026-11-04-3';
 const DEMO_VERSION_KEY = 'neon-scope.demo-asset-version';
+const EXPORT_DEFAULTS = {
+  quality: 1080, fps: 60, bitrate: 24, format: 'mp4', range: 'full',
+  codec: 'h264', crf: 'auto', preset: 'medium',
+  audioCodec: 'aac', audioBitrate: 192, sampleRate: 48000, gop: 2,
+  advancedOpen: false,
+};
+const EXPORT_CONTAINER_CODECS = {
+  mp4: ['h264', 'h265', 'av1'],
+  mov: ['h264', 'h265', 'av1'],
+  mkv: ['h264', 'h265', 'av1', 'vp9', 'vp8'],
+  webm: ['vp9', 'vp8', 'av1'],
+};
+const EXPORT_CONTAINER_AUDIO = {
+  mp4: ['aac'], mov: ['aac'], mkv: ['aac', 'opus'], webm: ['opus'],
+};
+const EXPORT_CODEC_LABELS = { h264: 'H.264', h265: 'HEVC', av1: 'AV1', vp9: 'VP9', vp8: 'VP8' };
 function dataUrlToBytes(dataUrl) {
   const match = String(dataUrl || '').match(/^data:([^;,]+)?(;base64)?,(.*)$/s);
   if (!match) return null;
@@ -66,6 +82,9 @@ const SHORTCUT_ACTIONS = [
   { id: 'open_export', label: '打开视频导出', code: 'EXPORT', group: '播放', default: 'Ctrl+Shift+KeyE' },
   { id: 'save_archive', label: '保存工程存档', code: 'SAVE', group: '文件', default: 'Ctrl+KeyS' },
   { id: 'snap', label: '吸附对齐', code: 'SNAP', group: '编辑', default: 'KeyG' },
+  { id: 'timeline_align', label: '时间轴对齐参考', code: 'ALIGN', group: '动画', default: 'Ctrl+KeyK' },
+  { id: 'anim_undo', label: '撤销动画编辑', code: 'UNDO', group: '动画', default: 'Ctrl+KeyZ' },
+  { id: 'anim_redo', label: '重做动画编辑', code: 'REDO', group: '动画', default: 'Ctrl+Shift+KeyZ' },
   { id: 'edit_mode', label: '编辑 / 预览模式', code: 'EDIT', group: '编辑', default: 'KeyE' },
   { id: 'delete_module', label: '删除所选模块', code: 'DELETE', group: '编辑', default: 'Delete' },
   { id: 'duplicate_module', label: '复制所选模块', code: 'DUPLICATE', group: '编辑', default: 'Ctrl+KeyD' },
@@ -328,11 +347,10 @@ class NeonScopeApp {
       info: { title: '', artist: '', composer: '', album: '', genre: '', bpm: '', trackNo: '', cover: '', show: false },
       animationCues: [],
       ffmpegAvailable: false,
+      ffmpegCodecs: [],
       exporting: false,
     };
-    this.exportSettings = {
-      quality: 1080, fps: 60, bitrate: 24, format: 'mp4', range: 'full',
-    };
+    this.exportSettings = { ...EXPORT_DEFAULTS };
     this.demoBuffer = null;
     this.demoPromise = null;
     this.demoToken = 0;
@@ -362,7 +380,7 @@ class NeonScopeApp {
     };
     this._panelZ = 66;
     this.subpanelState = {};
-    this.timelineState = { floating: false, x: null, y: null, w: null, h: null, height: 220, labelWidth: 148, yScale: 1 };
+    this.timelineState = { floating: false, x: null, y: null, w: null, h: null, height: 220, labelWidth: 148, yScale: 1, align: true };
     this._started = false;
     this._isNative = !!window.chrome?.webview;
     this._standaloneSettings = new URLSearchParams(location.search).has('settings');
@@ -755,6 +773,7 @@ class NeonScopeApp {
       archiveFile: $('#archiveFile'), fileAnimExportBtn: $('#fileAnimExportBtn'), fileAnimImportBtn: $('#fileAnimImportBtn'),
       savePathInput: $('#savePathInput'), exportPathInput: $('#exportPathInput'),
       savePathBrowse: $('#savePathBrowse'), exportPathBrowse: $('#exportPathBrowse'),
+      savePathView: $('#savePathView'), exportPathView: $('#exportPathView'),
       timelinePanel: $('#timelinePanel'), timelineToggle: $('#timelineToggle'), timelineLabels: $('#timelineLabels'),
       timelineRuler: $('#timelineRuler'), timelineLanes: $('#timelineLanes'), timelinePlayhead: $('#timelinePlayhead'),
       timelineContent: $('#timelineContent'), timelineScroll: $('#timelineScroll'), timelineZoomLabel: $('#timelineZoomLabel'),
@@ -779,6 +798,7 @@ class NeonScopeApp {
       timelineSelectionLabel: $('#timelineSelectionLabel'), timelineSelStart: $('#timelineSelStart'),
       timelineSelEnd: $('#timelineSelEnd'), timelineSelectionEdit: $('#timelineSelectionEdit'),
       timelineSelectionDelete: $('#timelineSelectionDelete'), timelineSnap: $('#timelineSnap'),
+      timelineAlign: $('#timelineAlign'), timelineAlignGuide: $('#timelineAlignGuide'),
       useGlobalColor: $('#useGlobalColor'), moduleColorPickBtn: $('#moduleColorPickBtn'), moduleColorSwatch: $('#moduleColorSwatch'),
       moduleColorValue: $('#moduleColorValue'),
       opacity: $('#opacity'), opacityOut: $('#opacityOut'), moduleVisible: $('#moduleVisible'),
@@ -788,6 +808,10 @@ class NeonScopeApp {
       exportModal: $('#exportModal'), exportSetup: $('#exportSetup'), exportProgress: $('#exportProgress'),
       startExportBtn: $('#startExportBtn'), cancelExportBtn: $('#cancelExportBtn'), qualityGrid: $('#qualityGrid'),
       fpsSeg: $('#fpsSeg'), formatSeg: $('#formatSeg'), bitrateSelect: $('#bitrateSelect'), rangeSelect: $('#rangeSelect'),
+      exportAdvanced: $('#exportAdvanced'), exportAdvancedBtn: $('#exportAdvancedBtn'), exportAdvancedReset: $('#exportAdvancedReset'),
+      fpsInput: $('#fpsInput'), bitrateInput: $('#bitrateInput'), codecSelect: $('#codecSelect'), crfSelect: $('#crfSelect'),
+      presetSelect: $('#presetSelect'), gopInput: $('#gopInput'), audioCodecSelect: $('#audioCodecSelect'),
+      audioBitrateSelect: $('#audioBitrateSelect'), sampleRateSelect: $('#sampleRateSelect'),
       exportSummaryQuality: $('#exportSummaryQuality'), exportSummaryDuration: $('#exportSummaryDuration'),
       exportSummarySize: $('#exportSummarySize'), exportSummaryEncoder: $('#exportSummaryEncoder'),
       exportWarning: $('#exportWarning'), progressFill: $('#progressFill'), progressTime: $('#progressTime'),
@@ -873,6 +897,7 @@ class NeonScopeApp {
     if (typeof data.preset === 'string') this.state.preset = data.preset;
     if (data.exportSettings && typeof data.exportSettings === 'object') {
       Object.assign(this.exportSettings, data.exportSettings);
+      this._normalizeExportSettings();
     }
     if (Array.isArray(data.midiLayers) && data.midiLayers.length) {
       this.state.midiLayers = data.midiLayers.filter((layer) => layer && Array.isArray(layer.notes) && layer.notes.length);
@@ -962,6 +987,7 @@ class NeonScopeApp {
         height: clamp(Number(raw.height) || 220, 80, 620),
         labelWidth: clamp(Number(raw.labelWidth) || 148, 110, 420),
         yScale: clamp(Number(raw.yScale) || 1, 0.6, 3),
+        align: raw.align !== false,
       };
       this._timelineYScale = this.timelineState.yScale;
     }
@@ -1582,12 +1608,78 @@ class NeonScopeApp {
       this._syncExportUI();
     });
     d.bitrateSelect.addEventListener('change', () => {
+      if (d.bitrateSelect.value === 'custom') {
+        this._toggleExportAdvanced(true);
+        d.bitrateInput.focus();
+        d.bitrateInput.select();
+        return;
+      }
       this.exportSettings.bitrate = Number(d.bitrateSelect.value);
       this._syncExportUI();
+      this._persist();
     });
     d.rangeSelect.addEventListener('change', () => {
       this.exportSettings.range = d.rangeSelect.value;
       this._syncExportUI();
+    });
+    d.exportAdvancedBtn.addEventListener('click', () => {
+      this._toggleExportAdvanced(!this.exportSettings.advancedOpen);
+    });
+    d.exportAdvancedReset.addEventListener('click', () => {
+      const es = this.exportSettings;
+      Object.assign(es, {
+        fps: 60, bitrate: 24, crf: 'auto', preset: 'medium', gop: 2,
+        codec: this._defaultCodec(es.format),
+        audioCodec: this._containerAudio(es.format)[0],
+        audioBitrate: 192, sampleRate: 48000,
+      });
+      this._syncExportUI();
+      this._persist();
+    });
+    d.fpsInput.addEventListener('change', () => {
+      this.exportSettings.fps = clamp(Math.round(Number(d.fpsInput.value) || 60), 1, 240);
+      this._syncExportUI();
+      this._persist();
+    });
+    d.bitrateInput.addEventListener('change', () => {
+      this.exportSettings.bitrate = clamp(Math.round(Number(d.bitrateInput.value) || 24), 1, 200);
+      this._syncExportUI();
+      this._persist();
+    });
+    d.codecSelect.addEventListener('change', () => {
+      this.exportSettings.codec = d.codecSelect.value;
+      this._syncExportUI();
+      this._persist();
+    });
+    d.crfSelect.addEventListener('change', () => {
+      this.exportSettings.crf = d.crfSelect.value;
+      this._syncExportUI();
+      this._persist();
+    });
+    d.presetSelect.addEventListener('change', () => {
+      this.exportSettings.preset = d.presetSelect.value;
+      this._syncExportUI();
+      this._persist();
+    });
+    d.gopInput.addEventListener('change', () => {
+      this.exportSettings.gop = clamp(Number(d.gopInput.value) || 2, 0.5, 10);
+      this._syncExportUI();
+      this._persist();
+    });
+    d.audioCodecSelect.addEventListener('change', () => {
+      this.exportSettings.audioCodec = d.audioCodecSelect.value;
+      this._syncExportUI();
+      this._persist();
+    });
+    d.audioBitrateSelect.addEventListener('change', () => {
+      this.exportSettings.audioBitrate = Number(d.audioBitrateSelect.value) || 192;
+      this._syncExportUI();
+      this._persist();
+    });
+    d.sampleRateSelect.addEventListener('change', () => {
+      this.exportSettings.sampleRate = Number(d.sampleRateSelect.value) === 44100 ? 44100 : 48000;
+      this._syncExportUI();
+      this._persist();
     });
     d.startExportBtn.addEventListener('click', () => this._startExport());
     d.cancelExportBtn.addEventListener('click', () => {
@@ -1695,6 +1787,8 @@ class NeonScopeApp {
     this.dom.uiFontReset?.addEventListener('click', () => this._applyUiFont('default'));
     this.dom.savePathBrowse.addEventListener('click', () => this._chooseFolder('save'));
     this.dom.exportPathBrowse.addEventListener('click', () => this._chooseFolder('export'));
+    this.dom.savePathView.addEventListener('click', () => this._openFolder('save'));
+    this.dom.exportPathView.addEventListener('click', () => this._openFolder('export'));
     this.dom.animScriptApply.addEventListener('click', () => this._applyAnimationScript());
     this.dom.animScriptImport.addEventListener('click', () => this.dom.animScriptFile.click());
     this.dom.animScriptFile.addEventListener('change', async () => {
@@ -1888,7 +1982,13 @@ class NeonScopeApp {
     this._timelineHome = { parent: this.dom.timelinePanel.parentNode, next: this.dom.timelinePanel.nextSibling };
     this._tlSelectedId = null;
     this._timelineScrubbing = false;
-    this._timelineSnap = this.dom.timelineSnap.checked;
+    this._animUndoStack = [];
+    this._animRedoStack = [];
+    this._pendingCueDelete = null;
+    this._timelineSnap = this.state.settings.snap !== false;
+    this.dom.timelineSnap.checked = this._timelineSnap;
+    this._timelineAlign = this.timelineState.align !== false;
+    if (this.dom.timelineAlign) this.dom.timelineAlign.checked = this._timelineAlign;
     this._tlPps = 1;
     this._tlDuration = 1;
     this.dom.timelineToggle.addEventListener('click', () => {
@@ -1904,7 +2004,17 @@ class NeonScopeApp {
     });
     this.dom.timelineAddCue.addEventListener('click', () => this._openActionBuilder('effect'));
     this.dom.timelinePanel.addEventListener('wheel', (e) => {
-      if (!e.ctrlKey && !e.altKey) return;
+      const scroll = this.dom.timelineScroll;
+      if (!e.ctrlKey && !e.altKey) {
+        // Plain wheel pans the visible time range instead of scrolling vertically.
+        const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? scroll.clientWidth : 1;
+        const delta = (Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY) * unit;
+        if (!delta) return;
+        e.preventDefault();
+        const max = Math.max(0, scroll.scrollWidth - scroll.clientWidth);
+        scroll.scrollLeft = clamp(scroll.scrollLeft + delta, 0, max);
+        return;
+      }
       e.preventDefault();
       const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
       if (e.ctrlKey) {
@@ -1957,11 +2067,25 @@ class NeonScopeApp {
       const guard = this._delPointer;
       this._delPointer = null;
       if (guard && Math.hypot(e.clientX - guard.x, e.clientY - guard.y) > 4) return;
-      this.state.animationCues = this.state.animationCues.filter((cue) => cue.id !== del.dataset.cueId);
-      this._renderAnimationCues();
-      this._persist();
+      // Defer so a double-click (edit gesture) cancels the delete instead of
+      // silently removing the cue from under the second click.
+      if (e.detail > 1) return;
+      this._cancelPendingCueDelete();
+      const cueId = del.dataset.cueId;
+      const timer = setTimeout(() => {
+        if (this._pendingCueDelete?.timer !== timer) return;
+        this._pendingCueDelete = null;
+        if (!this.state.animationCues.some((cue) => cue.id === cueId)) return;
+        this._pushAnimationHistory();
+        this.state.animationCues = this.state.animationCues.filter((cue) => cue.id !== cueId);
+        if (this._tlSelectedId === cueId) this._tlSelectedId = null;
+        this._renderAnimationCues();
+        this._persist();
+      }, 280);
+      this._pendingCueDelete = { timer, cueId };
     });
     this.dom.timelineContent.addEventListener('dblclick', (e) => {
+      this._cancelPendingCueDelete();
       const bar = e.target.closest('.tl-bar');
       if (bar) {
         const cue = this.state.animationCues.find((item) => item.id === bar.dataset.cueId);
@@ -1978,6 +2102,7 @@ class NeonScopeApp {
     this.dom.timelineSelStart.addEventListener('change', () => {
       const cue = this._selectedTimelineCue();
       if (!cue) return;
+      this._pushAnimationHistory();
       const start = clamp(Number(this.dom.timelineSelStart.value) || 0, 0, 36000);
       const end = start + cue.duration;
       cue.time = start;
@@ -1990,6 +2115,7 @@ class NeonScopeApp {
     this.dom.timelineSelEnd.addEventListener('change', () => {
       const cue = this._selectedTimelineCue();
       if (!cue) return;
+      this._pushAnimationHistory();
       const end = clamp(Number(this.dom.timelineSelEnd.value) || 0, cue.time + 0.1, 36000);
       cue.duration = clamp(end - cue.time, 0.1, 60);
       this._renderTimeline();
@@ -2002,8 +2128,12 @@ class NeonScopeApp {
     });
     this.dom.timelineSelectionDelete.addEventListener('click', () => this._deleteSelectedTimelineCue());
     this.dom.timelineSnap.addEventListener('change', () => {
-      this._timelineSnap = this.dom.timelineSnap.checked;
+      this._setSnap(this.dom.timelineSnap.checked);
     });
+    this.dom.timelineAlign?.addEventListener('change', () => {
+      this._setTimelineAlign(this.dom.timelineAlign.checked, { silent: true });
+    });
+    this.dom.timelineScroll.addEventListener('scroll', () => this._syncTimelineLabelScroll());
     this.dom.timelineContent.addEventListener('pointerdown', (e) => {
       if (e.button !== 0) return;
       const keyMarker = e.target.closest('.tl-key-marker');
@@ -2036,31 +2166,120 @@ class NeonScopeApp {
       this._selectTimelineCue(cue.id);
       const leftTrim = !!e.target.closest('.tl-trim-left');
       const rightTrim = !!e.target.closest('.tl-resize');
+      const canMoveTrack = !leftTrim && !rightTrim;
       const startX = e.clientX;
       const startTime = cue.time;
       const startDuration = cue.duration;
+      const startTrack = Number.isInteger(cue.track) ? cue.track : 0;
       const screenPps = this.dom.timelineContent.getBoundingClientRect().width / Math.max(0.1, this._tlDuration);
       const snap = (value) => this._timelineSnap ? Math.round(value * 10) / 10 : value;
+      const alignTargets = this._timelineAlignTargets(cue);
+      const alignThreshold = Math.min(1, 8 / Math.max(1, screenPps));
+      const nearestTarget = (value) => {
+        if (!this._timelineAlign) return null;
+        let best = null;
+        for (const target of alignTargets) {
+          const distance = Math.abs(target - value);
+          if (distance > alignThreshold) continue;
+          if (!best || distance < best.distance) best = { target, distance };
+        }
+        return best;
+      };
+      let dropTrack = startTrack;
+      let dropNew = false;
+      let historyPushed = false;
+      let changed = false;
+      const markHistory = (ev) => {
+        if (ev.clientX === startX && ev.clientY === startY) return;
+        changed = true;
+        if (historyPushed) return;
+        historyPushed = true;
+        this._pushAnimationHistory();
+      };
+      const paintDrop = () => {
+        const rows = [...this.dom.timelineLanes.querySelectorAll('.tl-row[data-track]')];
+        for (const row of rows) {
+          row.classList.toggle('tl-drop-target', !dropNew && Number(row.dataset.track) === dropTrack && dropTrack !== startTrack);
+        }
+        for (const el of this.dom.timelinePanel.querySelectorAll('.tl-drop-row')) {
+          el.classList.toggle('tl-drop-target', dropNew);
+        }
+      };
+      const trackAtY = (clientY) => {
+        const rows = [...this.dom.timelineLanes.querySelectorAll('.tl-row[data-track]')];
+        if (!rows.length) return { track: 0, fresh: true };
+        for (const row of rows) {
+          const r = row.getBoundingClientRect();
+          if (clientY >= r.top && clientY <= r.bottom) return { track: Number(row.dataset.track), fresh: false };
+        }
+        const last = rows[rows.length - 1].getBoundingClientRect();
+        if (clientY > last.bottom) {
+          return { track: Math.max(...rows.map((row) => Number(row.dataset.track))) + 1, fresh: true };
+        }
+        return { track: Number(rows[0].dataset.track), fresh: false };
+      };
+      if (canMoveTrack) this.dom.timelinePanel.classList.add('tl-dragging');
       const move = (ev) => {
+        markHistory(ev);
         const delta = (ev.clientX - startX) / Math.max(0.001, screenPps);
         if (rightTrim) {
-          cue.duration = clamp(snap(startDuration + delta), 0.1, 60);
+          let end = snap(startDuration + delta);
+          const hit = nearestTarget(end);
+          if (hit) { end = hit.target; this._showTimelineGuide(end); } else { this._hideTimelineGuide(); }
+          cue.duration = clamp(end - cue.time, 0.1, 60);
         } else if (leftTrim) {
-          const nextTime = clamp(snap(startTime + delta), 0, startTime + startDuration - 0.1);
-          cue.duration = clamp(snap(startDuration - (nextTime - startTime)), 0.1, 60);
+          let nextTime = snap(startTime + delta);
+          const hit = nearestTarget(nextTime);
+          if (hit) { nextTime = hit.target; this._showTimelineGuide(nextTime); } else { this._hideTimelineGuide(); }
+          nextTime = clamp(nextTime, 0, startTime + startDuration - 0.1);
+          cue.duration = clamp(startTime + startDuration - nextTime, 0.1, 60);
           cue.time = nextTime;
         } else {
-          cue.time = clamp(snap(startTime + delta), 0, Math.max(0.1, this._tlDuration));
+          let nextTime = clamp(snap(startTime + delta), 0, Math.max(0.1, this._tlDuration));
+          if (this._timelineAlign) {
+            let best = null;
+            for (const target of alignTargets) {
+              const fromStart = Math.abs(target - nextTime);
+              const fromEnd = Math.abs(target - (nextTime + cue.duration));
+              if (fromStart <= alignThreshold && (!best || fromStart < best.distance)) best = { target, distance: fromStart, edge: 0 };
+              if (fromEnd <= alignThreshold && (!best || fromEnd < best.distance)) best = { target, distance: fromEnd, edge: 1 };
+            }
+            if (best) {
+              nextTime = clamp(best.target - (best.edge ? cue.duration : 0), 0, Math.max(0.1, this._tlDuration));
+              this._showTimelineGuide(best.target);
+            } else {
+              this._hideTimelineGuide();
+            }
+          } else {
+            this._hideTimelineGuide();
+          }
+          cue.time = nextTime;
+          const spot = trackAtY(ev.clientY);
+          dropTrack = spot.track;
+          dropNew = spot.fresh;
         }
         this.state.animationCues.sort((a, b) => a.time - b.time);
         this._renderTimeline();
+        paintDrop();
         this._syncTimelineSelection();
       };
       const up = () => {
         document.removeEventListener('pointermove', move);
         document.removeEventListener('pointerup', up);
-        this._renderAnimationCues();
-        this._persist();
+        if (canMoveTrack) {
+          this.dom.timelinePanel.classList.remove('tl-dragging');
+          if (dropTrack !== startTrack) {
+            cue.track = dropTrack;
+            this._normalizeCueTracks();
+          }
+        }
+        this._hideTimelineGuide();
+        if (changed || dropTrack !== startTrack) {
+          this._renderAnimationCues();
+          this._persist();
+        } else {
+          this._syncTimelineSelection();
+        }
       };
       document.addEventListener('pointermove', move);
       document.addEventListener('pointerup', up);
@@ -2091,7 +2310,9 @@ class NeonScopeApp {
     if (duplicate) duplicate.disabled = !cue;
     if (del) del.disabled = !cue;
     const snap = this.dom.timelineMenu.querySelector('[data-timeline-menu="snap"] .menu-state');
-    if (snap) snap.textContent = this._timelineSnap ? 'ON' : 'OFF';
+    if (snap) snap.textContent = this.state.settings.snap !== false ? 'ON' : 'OFF';
+    const align = this.dom.timelineMenu.querySelector('[data-timeline-menu="align"] .menu-state');
+    if (align) align.textContent = this._timelineAlign ? 'ON' : 'OFF';
     this.dom.timelineMenu.classList.remove('hidden');
     const vp = this._panelViewport();
     const localX = e.clientX / vp.scale;
@@ -2116,6 +2337,7 @@ class NeonScopeApp {
     if (action === 'edit') { this._openActionBuilder(cue.type, cue); return; }
     if (action === 'keys') { this._openKeyframeEditor(cue); return; }
     if (action === 'duplicate') {
+      this._pushAnimationHistory();
       const copy = JSON.parse(JSON.stringify(cue));
       copy.id = uid('cue');
       copy.time = clamp(cue.time + 0.5, 0, 36000);
@@ -2127,6 +2349,7 @@ class NeonScopeApp {
       return;
     }
     if (action === 'delete') {
+      this._pushAnimationHistory();
       this.state.animationCues = this.state.animationCues.filter((item) => item.id !== cue.id);
       this._tlSelectedId = null;
       this._renderAnimationCues();
@@ -2146,8 +2369,11 @@ class NeonScopeApp {
     }
     if (action === 'float') { this._toggleTimelineFloat(); return; }
     if (action === 'snap') {
-      this.dom.timelineSnap.checked = !this.dom.timelineSnap.checked;
-      this._timelineSnap = this.dom.timelineSnap.checked;
+      this._setSnap(this.state.settings.snap === false);
+      return;
+    }
+    if (action === 'align') {
+      this._setTimelineAlign(!this._timelineAlign);
     }
   }
 
@@ -2382,16 +2608,86 @@ class NeonScopeApp {
   _selectTimelineCue(id) {
     this._tlSelectedId = id;
     this._syncTimelineSelection();
-    this._renderTimeline();
+    for (const bar of this.dom.timelineLanes?.querySelectorAll('.tl-bar') || []) {
+      bar.classList.toggle('selected', bar.dataset.cueId === id);
+    }
+    for (const marker of this.dom.timelineLanes?.querySelectorAll('.tl-key-marker') || []) {
+      marker.classList.toggle('selected', marker.dataset.keyCue === id);
+    }
+    this._renderKeyframeManager();
   }
 
   _deleteSelectedTimelineCue() {
     const cue = this._selectedTimelineCue();
     if (!cue) return;
+    this._pushAnimationHistory();
     this.state.animationCues = this.state.animationCues.filter((item) => item.id !== cue.id);
     this._tlSelectedId = null;
     this._renderAnimationCues();
     this._persist();
+  }
+
+  _animationSnapshot() {
+    return JSON.stringify({ cues: this.state.animationCues || [], selected: this._tlSelectedId || null });
+  }
+
+  _restoreAnimationSnapshot(snapshot) {
+    let data;
+    try {
+      data = JSON.parse(snapshot);
+    } catch {
+      return;
+    }
+    this.state.animationCues = Array.isArray(data.cues) ? data.cues : [];
+    this._tlSelectedId = data.selected || null;
+    this._normalizeCueTracks();
+    this._renderAnimationCues();
+    this._persist();
+  }
+
+  _pushAnimationHistory() {
+    if (!this._animUndoStack) {
+      this._animUndoStack = [];
+      this._animRedoStack = [];
+    }
+    const snapshot = this._animationSnapshot();
+    if (this._animUndoStack[this._animUndoStack.length - 1] === snapshot) return null;
+    this._animUndoStack.push(snapshot);
+    if (this._animUndoStack.length > 80) this._animUndoStack.shift();
+    this._animRedoStack.length = 0;
+    return snapshot;
+  }
+
+  _undoAnimation() {
+    this._cancelPendingCueDelete();
+    if (!this._animUndoStack?.length) {
+      this._toast('没有可撤销的动画编辑', 'info', 1600);
+      return;
+    }
+    const current = this._animationSnapshot();
+    const snapshot = this._animUndoStack.pop();
+    this._animRedoStack.push(current);
+    this._restoreAnimationSnapshot(snapshot);
+    this._toast('已撤销动画编辑', 'info', 1400);
+  }
+
+  _redoAnimation() {
+    this._cancelPendingCueDelete();
+    if (!this._animRedoStack?.length) {
+      this._toast('没有可重做的动画编辑', 'info', 1600);
+      return;
+    }
+    const current = this._animationSnapshot();
+    const snapshot = this._animRedoStack.pop();
+    this._animUndoStack.push(current);
+    this._restoreAnimationSnapshot(snapshot);
+    this._toast('已重做动画编辑', 'info', 1400);
+  }
+
+  _cancelPendingCueDelete() {
+    if (!this._pendingCueDelete) return;
+    clearTimeout(this._pendingCueDelete.timer);
+    this._pendingCueDelete = null;
   }
 
   _syncTimelineSelection() {
@@ -2423,13 +2719,20 @@ class NeonScopeApp {
     this.dom.timelineContent.style.width = `${width}px`;
     this._tlPps = width / duration;
     this.dom.timelineZoomLabel.textContent = `${Math.round((this._timelineZoom || 1) * 100)}%`;
+    const esc = (value) => String(value).replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
     const cues = this.state.animationCues.slice().sort((a, b) => a.time - b.time);
+    const labelsMap = { text: 'TEXT', subtitle: 'SUB', mash: 'MASH', color: 'COLOR', effect: 'FX', bpm: 'BPM', genre: 'GENRE', intro: 'INTRO', batch: 'CALL', flash: 'FLASH', tint: 'TINT', fade: 'FADE' };
+    const trackIds = [];
+    for (const cue of cues) {
+      const track = Number.isInteger(cue.track) && cue.track >= 0 ? cue.track : 0;
+      cue.track = track;
+      if (!trackIds.includes(track)) trackIds.push(track);
+    }
+    trackIds.sort((a, b) => a - b);
     const labels = [];
     const lanes = [];
     const keyMarkers = [];
-    const labelsMap = { text: 'TEXT', subtitle: 'SUB', mash: 'MASH', color: 'COLOR', effect: 'FX', bpm: 'BPM', genre: 'GENRE', intro: 'INTRO', batch: 'CALL', flash: 'FLASH', tint: 'TINT', fade: 'FADE' };
     for (const cue of cues) {
-      labels.push(`<div class="tl-row-label"><span class="tl-type">${labelsMap[cue.type] || cue.type.toUpperCase()}</span><span class="tl-value">${this._timelineLabel(cue)}</span></div>`);
       const kfStart = cue.time * this._tlPps;
       const kfEnd = (cue.time + cue.duration) * this._tlPps;
       const kfSel = this._tlSelectedId === cue.id ? ' selected' : '';
@@ -2443,24 +2746,33 @@ class NeonScopeApp {
           keyMarkers.push(`<span class="tl-key-marker tl-key-marker-auto ${cue.type}${kfSel}" data-key-cue="${cue.id}" style="left:${x}px" title="${formatCueTime(cue.time + key.t)} · ${prop}"></span>`);
         }
       }
-      const left = cue.time * this._tlPps;
-      const bw = Math.max(10, cue.duration * this._tlPps);
-      lanes.push(`<div class="tl-row">
-        <div class="tl-bar ${cue.type} ${this._tlSelectedId === cue.id ? 'selected' : ''}" data-cue-id="${cue.id}" style="left:${left}px;width:${bw}px" title="${formatCueTime(cue.time)} · ${cue.type}">
+    }
+    for (const track of trackIds) {
+      const trackCues = cues.filter((cue) => cue.track === track);
+      const kinds = [...new Set(trackCues.map((cue) => labelsMap[cue.type] || cue.type.toUpperCase()))].slice(0, 3).join(' · ');
+      labels.push(`<div class="tl-row-label tl-track-label" data-track-label="${track}"><span class="tl-track-no">TRACK ${String(track + 1).padStart(2, '0')}</span><span class="tl-track-meta">${trackCues.length} · ${kinds}</span></div>`);
+      const bars = trackCues.map((cue) => {
+        const left = cue.time * this._tlPps;
+        const bw = Math.max(10, cue.duration * this._tlPps);
+        const tight = bw < 44 ? ' tl-bar-tight' : '';
+        return `<div class="tl-bar ${cue.type} ${this._tlSelectedId === cue.id ? 'selected' : ''}${tight}" data-cue-id="${cue.id}" style="left:${left}px;width:${bw}px" title="${formatCueTime(cue.time)} · ${cue.type}">
           <span class="tl-keyframe" title="起始关键帧"></span>
           <span class="tl-keyframe tl-keyframe-end" title="结束关键帧"></span>
           <span class="tl-trim-left" title="拖动改变开始时间"></span>
-          <span class="tl-label">${this._timelineLabel(cue)}</span>
+          <span class="tl-label">${esc(this._timelineLabel(cue))}</span>
           <span class="tl-del" data-cue-id="${cue.id}" title="删除动作">×</span>
           <span class="tl-resize" title="拖动改变结束时间"></span>
-        </div>
-      </div>`);
+        </div>`;
+      }).join('');
+      lanes.push(`<div class="tl-row" data-track="${track}">${bars}</div>`);
     }
     if (!cues.length) {
       labels.push('<div class="tl-row-label"><span class="tl-type">EMPTY</span></div>');
-      lanes.push('<div class="tl-row"><div class="timeline-empty">还没有动画动作 · 点击「+ 动作」或导入动画脚本</div></div>');
+      lanes.push('<div class="tl-row"><div class="timeline-empty">还没有动画动作 · 点击「+ 动作」或导入动画脚本 · 拖动动作到下方可新建轨道</div></div>');
     }
-    this.dom.timelineLabels.innerHTML = `<div style="height:22px"></div><div class="tl-row-label tl-key-label"><span class="tl-type">KEYS</span><span class="tl-value">${cues.length * 2} keyframes</span></div>${labels.join('')}`;
+    labels.push('<div class="tl-row-label tl-drop-row"><span class="tl-track-no">+</span><span class="tl-track-meta">拖到此处新建轨道</span></div>');
+    lanes.push('<div class="tl-row tl-drop-row"><span>松开以新建轨道</span></div>');
+    this.dom.timelineLabels.innerHTML = `<div class="tl-label-spacer"></div><div class="tl-label-rows"><div class="tl-row-label tl-key-label"><span class="tl-type">KEYS</span><span class="tl-value">${cues.length * 2} keyframes</span></div>${labels.join('')}</div>`;
     this.dom.timelineLanes.innerHTML = `<div class="tl-key-row">${keyMarkers.join('')}</div>${lanes.join('')}`;
     const ruler = [];
     const steps = [0.25, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300];
@@ -2474,8 +2786,48 @@ class NeonScopeApp {
       this._tlSelectedId = null;
     }
     this._syncTimelineSelection();
+    this._syncTimelineLabelScroll();
     this._syncTimelinePlayhead(this.audio.getTime() || 0);
     this._renderKeyframeManager();
+  }
+
+  _syncTimelineLabelScroll() {
+    const rows = this.dom.timelineLabels?.querySelector('.tl-label-rows');
+    if (rows) rows.style.transform = `translateY(${-this.dom.timelineScroll.scrollTop}px)`;
+  }
+
+  _timelineAlignTargets(exclude) {
+    const targets = [0, this.audio.duration || 0, this.audio.getTime() || 0];
+    for (const cue of this.state.animationCues || []) {
+      if (cue === exclude) continue;
+      targets.push(cue.time, cue.time + cue.duration);
+    }
+    return targets;
+  }
+
+  _showTimelineGuide(time) {
+    if (!this.dom.timelineAlignGuide) return;
+    this.dom.timelineAlignGuide.style.left = `${Math.max(0, time) * (this._tlPps || 1)}px`;
+    this.dom.timelineAlignGuide.classList.remove('hidden');
+  }
+
+  _hideTimelineGuide() {
+    this.dom.timelineAlignGuide?.classList.add('hidden');
+  }
+
+  _normalizeCueTracks() {
+    const cues = this.state.animationCues || [];
+    const used = [...new Set(cues.map((cue) => (Number.isInteger(cue.track) && cue.track >= 0 ? cue.track : 0)))].sort((a, b) => a - b);
+    const map = new Map(used.map((track, index) => [track, index]));
+    for (const cue of cues) cue.track = map.get(Number.isInteger(cue.track) && cue.track >= 0 ? cue.track : 0) ?? 0;
+  }
+
+  _setTimelineAlign(value, { silent = false } = {}) {
+    this._timelineAlign = !!value;
+    this.timelineState.align = this._timelineAlign;
+    if (this.dom.timelineAlign) this.dom.timelineAlign.checked = this._timelineAlign;
+    this._persist();
+    if (!silent) this._toast(this._timelineAlign ? '时间轴对齐参考已开启' : '时间轴对齐参考已关闭');
   }
 
   _renderKeyframeManager() {
@@ -2554,6 +2906,17 @@ class NeonScopeApp {
     this._toast('网页版请直接输入路径；EXE 中可用原生文件夹选择器', 'info', 3200);
   }
 
+  _openFolder(kind) {
+    const path = kind === 'save' ? this.state.settings.savePath : this.state.settings.exportPath;
+    if (this._isNative) {
+      try {
+        window.chrome.webview.postMessage({ action: 'open-folder', kind, path: String(path || '') });
+        return;
+      } catch { /* fall through */ }
+    }
+    this._toast('网页版无法打开系统文件夹；EXE 中可用「查看文件」', 'info', 3200);
+  }
+
   _pathName(kind) {
     return kind === 'save' ? 'savePath' : 'exportPath';
   }
@@ -2565,6 +2928,7 @@ class NeonScopeApp {
       this._toast('没有解析到动画动作，请检查时间码与格式', 'error', 4200);
       return;
     }
+    this._pushAnimationHistory();
     this.state.animationCues = cues;
     this._renderAnimationCues();
     this._persist();
@@ -3219,14 +3583,19 @@ class NeonScopeApp {
     });
     this.dom.animOpenBuilder.addEventListener('click', () => this._openActionBuilder('effect'));
     this.dom.animClearBtn.addEventListener('click', () => {
+      if (!this.state.animationCues.length) return;
+      this._pushAnimationHistory();
       this.state.animationCues = [];
+      this._tlSelectedId = null;
       this._renderAnimationCues();
       this._persist();
     });
     this.dom.animCueList.addEventListener('click', (e) => {
       const btn = e.target.closest('[data-cue-delete]');
       if (!btn) return;
+      this._pushAnimationHistory();
       this.state.animationCues = this.state.animationCues.filter((cue) => cue.id !== btn.dataset.cueDelete);
+      if (this._tlSelectedId === btn.dataset.cueDelete) this._tlSelectedId = null;
       this._renderAnimationCues();
       this._persist();
     });
@@ -3263,6 +3632,16 @@ class NeonScopeApp {
       this._updateActionBuilderPreview();
     });
     this.dom.actionBuilderInsert.addEventListener('click', () => this._insertActionFromBuilder());
+    this.dom.actionBuilderModal.addEventListener('keydown', (e) => {
+      // Never let a keystroke typed into the builder reach global shortcuts.
+      if (e.isComposing || e.keyCode === 229) return;
+      if (!this._isTypingTarget(e.target)) return;
+      e.stopPropagation();
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.target.blur();
+      }
+    });
     this.dom.actionBuilderModal.addEventListener('click', (e) => {
       if (e.target === this.dom.actionBuilderModal || e.target.closest('[data-action-builder-cancel]')) {
         this._closeActionBuilder();
@@ -3287,7 +3666,9 @@ class NeonScopeApp {
       } else if (kind === 'edit') {
         this._openActionBuilder(cue.type, cue);
       } else if (kind === 'delete') {
+        this._pushAnimationHistory();
         this.state.animationCues = this.state.animationCues.filter((item) => item.id !== cue.id);
+        if (this._tlSelectedId === cue.id) this._tlSelectedId = null;
         this._renderAnimationCues();
         this._persist();
       }
@@ -3534,6 +3915,11 @@ class NeonScopeApp {
     const data = this._automationPointFromEvent(e);
     if (!cue || !data) return;
     const point = e.target.closest('[data-kf-point]');
+    let historyPushed = false;
+    if (!point) {
+      this._pushAnimationHistory();
+      historyPushed = true;
+    }
     let index;
     if (point) {
       index = Number(point.dataset.kfPoint);
@@ -3552,6 +3938,10 @@ class NeonScopeApp {
     this._kfSelectedKey = index;
     const snap = (v) => Math.round(v * 100) / 100;
     const move = (ev) => {
+      if (!historyPushed) {
+        historyPushed = true;
+        this._pushAnimationHistory();
+      }
       const next = this._automationPointFromEvent(ev);
       if (!next) return;
       const key = data.keys[index];
@@ -3577,6 +3967,7 @@ class NeonScopeApp {
     const cue = this._automationCue();
     const keys = this._ensureAutomation();
     if (!cue || !keys) return;
+    this._pushAnimationHistory();
     const spec = this._automationSpec(cue, this._kfProp);
     const span = this._automationSpan(cue);
     const t = Math.round(clamp(this.audio.getTime() - cue.time, 0, span) * 100) / 100;
@@ -3594,6 +3985,7 @@ class NeonScopeApp {
   _deleteAutomationKey() {
     const keys = this._ensureAutomation();
     if (!keys || !keys.length) return;
+    this._pushAnimationHistory();
     keys.splice(clamp(Number(this._kfSelectedKey) || 0, 0, keys.length - 1), 1);
     this._kfSelectedKey = Math.max(0, Math.min(this._kfSelectedKey, keys.length - 1));
     this._renderKeyframeEditor();
@@ -3610,6 +4002,7 @@ class NeonScopeApp {
     const spec = this._automationSpec(cue, this._kfProp);
     const index = clamp(Number(row.dataset.kfRow), 0, keys.length - 1);
     const field = e.target.dataset.kfField;
+    this._pushAnimationHistory();
     if (field === 'time') keys[index].t = clamp(Number(e.target.value) || 0, 0, this._automationSpan(cue));
     if (field === 'value') keys[index].v = spec.kind === 'color' ? e.target.value : (Number(e.target.value) || 0);
     keys.sort((a, b) => a.t - b.t);
@@ -3983,16 +4376,21 @@ class NeonScopeApp {
       this._toast('动作参数不完整，无法生成', 'error');
       return;
     }
+    this._pushAnimationHistory();
     const editing = this._editingCueId ? this.state.animationCues.find((cue) => cue.id === this._editingCueId) : null;
     if (editing) {
       const replacement = cues[0];
       replacement.id = editing.id;
       replacement.keys = editing.keys || {};
+      replacement.track = Number.isInteger(editing.track) ? editing.track : 0;
       const index = this.state.animationCues.indexOf(editing);
       this.state.animationCues[index] = replacement;
       this._tlSelectedId = replacement.id;
       this._toast('动作已更新', 'success');
     } else {
+      const active = this._selectedTimelineCue();
+      const track = Number.isInteger(active?.track) ? active.track : 0;
+      for (const cue of cues) cue.track = track;
       this.state.animationCues.push(...cues);
       this._tlSelectedId = cues[0].id;
       this._toast('动作已插入', 'success');
@@ -4005,6 +4403,7 @@ class NeonScopeApp {
 
   _renderAnimationCues() {
     if (!this.dom.animCueList) return;
+    this._normalizeCueTracks();
     const labels = { flash: '闪白', text: '文字', subtitle: '字幕', tint: '染色', fade: '淡出', effect: '效果', mash: '标题卡', color: '调色', bpm: 'BPM', genre: '流派', intro: '开场', batch: '动作组' };
     const esc = (value) => String(value).replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
     const cues = this.state.animationCues || [];
@@ -4759,6 +5158,7 @@ class NeonScopeApp {
   }
 
   _handleGlobalKeydown(e) {
+    if (e.isComposing || e.keyCode === 229) return;
     if (this.dom.alphaNotice && !this.dom.alphaNotice.classList.contains('hidden')) return;
     if (e.key === 'Escape' && !this.dom.panelMenu.classList.contains('hidden')) {
       this._closePanelMenu();
@@ -4799,6 +5199,9 @@ class NeonScopeApp {
         fastNudge = true;
       }
     }
+    if (!action && e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey && e.code === 'KeyY') {
+      action = { id: 'anim_redo' };
+    }
     if (!action) return;
     if (e.repeat && !action.id.startsWith('nudge_')) return;
     e.preventDefault();
@@ -4821,6 +5224,9 @@ class NeonScopeApp {
       case 'open_export': this._openExport(); break;
       case 'save_archive': this._saveArchive(); break;
       case 'snap': this._setSnap(!this.state.settings.snap); break;
+      case 'timeline_align': this._setTimelineAlign(!this._timelineAlign); break;
+      case 'anim_undo': this._undoAnimation(); break;
+      case 'anim_redo': this._redoAnimation(); break;
       case 'edit_mode': this._setEditing(!this.state.settings.editing); break;
       case 'delete_module':
         if (editing && selected) this._deleteSelected();
@@ -5055,6 +5461,8 @@ class NeonScopeApp {
 
   _setSnap(v) {
     this.state.settings.snap = !!v;
+    this._timelineSnap = this.state.settings.snap;
+    if (this.dom.timelineSnap) this.dom.timelineSnap.checked = this._timelineSnap;
     this.dom.snapBtn.classList.toggle('active', this.state.settings.snap);
     this.dom.snapMeta.textContent = this.state.settings.snap ? 'SNAP ON' : 'SNAP OFF';
     this._syncCanvasMeta();
@@ -7092,8 +7500,72 @@ class NeonScopeApp {
     return `${q.label} · ${this.exportSettings.fps}FPS`;
   }
 
-  _syncExportUI() {
+  _containerCodecs(format) {
+    return EXPORT_CONTAINER_CODECS[format] || EXPORT_CONTAINER_CODECS.mp4;
+  }
+
+  _containerAudio(format) {
+    return EXPORT_CONTAINER_AUDIO[format] || EXPORT_CONTAINER_AUDIO.mp4;
+  }
+
+  _defaultCodec(format) {
+    return format === 'webm' ? 'vp9' : 'h264';
+  }
+
+  _codecAvailable(codec) {
+    if ((this.state.ffmpegCodecs || []).includes(codec)) return true;
+    if (codec === 'h264') return !!pickMime('mp4');
+    if (codec === 'vp9' || codec === 'vp8') return !!pickMime('webm', codec);
+    return false;
+  }
+
+  _directExportAvailable(es = this.exportSettings) {
+    return es.crf === 'auto' && !!pickDirectMime(es.format, es.codec);
+  }
+
+  _normalizeExportSettings() {
     const es = this.exportSettings;
+    const qualities = Object.keys(EXPORT_QUALITIES).map(Number);
+    es.quality = qualities.includes(Number(es.quality)) ? Number(es.quality) : 1080;
+    es.fps = clamp(Math.round(Number(es.fps) || 60), 1, 240);
+    es.bitrate = clamp(Math.round(Number(es.bitrate) || 24), 1, 200);
+    es.format = EXPORT_CONTAINER_CODECS[es.format] ? es.format : 'mp4';
+    es.range = ['full', '10', '30'].includes(String(es.range)) ? String(es.range) : 'full';
+    if (!this._containerCodecs(es.format).includes(es.codec)) es.codec = this._defaultCodec(es.format);
+    const crfOptions = ['auto', '16', '18', '20', '23', '26', '30'];
+    if (!crfOptions.includes(String(es.crf))) {
+      const value = clamp(Math.round(Number(es.crf) || 23), 0, 63);
+      es.crf = crfOptions.slice(1).reduce((best, item) =>
+        Math.abs(Number(item) - value) < Math.abs(Number(best) - value) ? item : best, '23');
+    } else {
+      es.crf = String(es.crf);
+    }
+    es.preset = ['ultrafast', 'fast', 'medium', 'slow', 'veryslow'].includes(es.preset) ? es.preset : 'medium';
+    if (!this._containerAudio(es.format).includes(es.audioCodec)) {
+      es.audioCodec = this._containerAudio(es.format)[0];
+    }
+    const audioRates = [96, 128, 160, 192, 256, 320];
+    if (!audioRates.includes(Number(es.audioBitrate))) {
+      const value = clamp(Math.round(Number(es.audioBitrate) || 192), 64, 512);
+      es.audioBitrate = audioRates.reduce((best, item) =>
+        Math.abs(item - value) < Math.abs(best - value) ? item : best, 192);
+    } else {
+      es.audioBitrate = Number(es.audioBitrate);
+    }
+    es.sampleRate = Number(es.sampleRate) === 44100 ? 44100 : 48000;
+    es.gop = clamp(Number(es.gop) || 2, 0.5, 10);
+    es.advancedOpen = !!es.advancedOpen;
+    return es;
+  }
+
+  _toggleExportAdvanced(open) {
+    this.exportSettings.advancedOpen = !!open;
+    this._syncExportUI();
+    this._persist();
+  }
+
+  _syncExportUI() {
+    const es = this._normalizeExportSettings();
     const q = EXPORT_QUALITIES[es.quality] || EXPORT_QUALITIES[1080];
     const d = this.dom;
     for (const btn of d.qualityGrid.querySelectorAll('button[data-quality]')) {
@@ -7105,20 +7577,55 @@ class NeonScopeApp {
     for (const btn of d.formatSeg.querySelectorAll('button[data-format]')) {
       btn.classList.toggle('active', btn.dataset.format === es.format);
     }
-    d.bitrateSelect.value = String(es.bitrate);
+    d.bitrateSelect.value = [8, 16, 24, 40].includes(es.bitrate) ? String(es.bitrate) : 'custom';
     d.rangeSelect.value = es.range;
+    d.exportAdvanced.classList.toggle('hidden', !es.advancedOpen);
+    d.exportAdvancedBtn.classList.toggle('active', es.advancedOpen);
+    d.exportAdvancedBtn.setAttribute('aria-expanded', es.advancedOpen ? 'true' : 'false');
+    d.fpsInput.value = String(es.fps);
+    d.bitrateInput.value = String(es.bitrate);
+    d.gopInput.value = String(es.gop);
+
+    const allowedCodecs = this._containerCodecs(es.format);
+    const usableCodecs = allowedCodecs.filter((codec) => this._codecAvailable(codec));
+    if (usableCodecs.length && !usableCodecs.includes(es.codec)) {
+      es.codec = usableCodecs.includes(this._defaultCodec(es.format)) ? this._defaultCodec(es.format) : usableCodecs[0];
+    }
+    for (const option of d.codecSelect.options) {
+      const allowed = allowedCodecs.includes(option.value);
+      option.disabled = !allowed || !this._codecAvailable(option.value);
+      option.title = allowed ? (option.disabled ? '当前环境不支持该编码' : '') : '该封装格式不支持此编码';
+    }
+    d.codecSelect.value = es.codec;
+    d.crfSelect.value = String(es.crf);
+    d.presetSelect.value = es.preset;
+    const allowedAudio = this._containerAudio(es.format);
+    for (const option of d.audioCodecSelect.options) {
+      option.disabled = !allowedAudio.includes(option.value);
+    }
+    d.audioCodecSelect.value = es.audioCodec;
+    d.audioBitrateSelect.value = String(es.audioBitrate);
+    d.sampleRateSelect.value = String(es.sampleRate);
+
     d.exportSummaryQuality.textContent = `${q.w} × ${q.h} · ${es.fps} FPS`;
     const duration = this._exportDuration();
     d.exportSummaryDuration.textContent = formatShortTime(duration);
-    const bytes = (es.bitrate * 1_000_000 / 8 + 192_000 / 8) * duration;
+    const bytes = (es.bitrate * 1_000_000 / 8 + es.audioBitrate * 1000 / 8) * duration;
     d.exportSummarySize.textContent = humanBytes(bytes);
-    d.exportSummaryEncoder.textContent = es.format === 'mp4' ? 'H.264 / AAC · NATIVE' : 'VP9 / OPUS · WEBM';
+    const direct = this._directExportAvailable(es);
+    const mode = direct ? 'DIRECT' : 'FFMPEG';
+    d.exportSummaryEncoder.textContent = `${EXPORT_CODEC_LABELS[es.codec]} / ${es.audioCodec.toUpperCase()} · ${es.format.toUpperCase()} · ${mode}`;
     d.exportPresetLabel.textContent = this._exportPresetLabel();
+
     const warning = [];
-    if (es.format === 'mp4' && !this.state.ffmpegAvailable) {
-      warning.push('当前浏览器支持时直接录制 MP4；若编码不可用，则需要 FFmpeg 转码。');
+    if (!direct && !this.state.ffmpegAvailable) {
+      warning.push('当前组合需要 FFmpeg 转码，但未检测到 FFmpeg；导出会自动回退为 WebM 直录。');
+    }
+    if (es.format === 'mkv' || es.format === 'mov') {
+      warning.push(`${es.format.toUpperCase()} 需要通过本机 FFmpeg 封装，转码时间会明显长于直录。`);
     }
     if (es.quality === 2160) warning.push('4K 实时录制对 GPU/CPU 压力较大，建议保持页面在前台。');
+    if (es.fps > 120) warning.push('高帧率录制需要显示器与编码器同时支持，可能触发自动降帧。');
     d.exportWarning.textContent = warning.join(' ');
     d.exportWarning.classList.toggle('hidden', warning.length === 0);
   }
@@ -7134,6 +7641,7 @@ class NeonScopeApp {
   async _startExport() {
     if (this.state.exporting) return;
     if (!this.audio.hasAudio) { this._toast('没有可导出的音频', 'error'); return; }
+    this._normalizeExportSettings();
     const q = EXPORT_QUALITIES[this.exportSettings.quality] || EXPORT_QUALITIES[1080];
     const duration = this._exportDuration();
     if (duration < 0.5) { this._toast('音频过短，无法导出', 'error'); return; }
@@ -7163,7 +7671,7 @@ class NeonScopeApp {
         this.dom.progressFill.style.width = `${(percent * 100).toFixed(1)}%`;
         this.dom.progressPercent.textContent = `${Math.round(percent * 100)}%`;
         this.dom.progressTime.textContent = `${formatShortTime(p.time || 0)} / ${formatShortTime(p.duration || duration)}`;
-        this.dom.progressTitle.textContent = p.phase === 'converting' ? '正在封装 MP4…' : p.phase === 'finalizing' ? '正在完成视频编码…' : '正在录制画布与音频…';
+        this.dom.progressTitle.textContent = p.phase === 'converting' ? '正在封装视频…' : p.phase === 'finalizing' ? '正在完成视频编码…' : '正在录制画布与音频…';
         this.dom.progressHint.textContent = p.message || '';
         this.dom.exportVeilTime.textContent = formatShortTime(p.time || 0);
       },
@@ -7179,6 +7687,13 @@ class NeonScopeApp {
         format: this.exportSettings.format,
         range: this.exportSettings.range,
         filename,
+        codec: this.exportSettings.codec,
+        crf: this.exportSettings.crf,
+        preset: this.exportSettings.preset,
+        audioCodec: this.exportSettings.audioCodec,
+        audioBitrate: this.exportSettings.audioBitrate,
+        sampleRate: this.exportSettings.sampleRate,
+        gop: this.exportSettings.gop,
       });
       if (result?.cancelled) {
         this._toast('已取消导出');
@@ -7281,6 +7796,7 @@ class NeonScopeApp {
     }
     const info = await checkFfmpeg();
     this.state.ffmpegAvailable = info.ok;
+    this.state.ffmpegCodecs = info.codecs || [];
     this.dom.footerFfmpeg.textContent = info.ok ? 'READY · MP4' : 'WEBM ONLY';
     this.dom.footerFfmpeg.style.color = info.ok ? 'var(--lime)' : 'var(--muted)';
     this._syncExportUI();

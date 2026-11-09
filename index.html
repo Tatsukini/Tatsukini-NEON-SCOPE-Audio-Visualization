@@ -279,6 +279,7 @@
                 <div class="timeline-ruler" id="timelineRuler"></div>
                 <div class="timeline-lanes" id="timelineLanes"></div>
                 <div class="timeline-playhead" id="timelinePlayhead"></div>
+                <div class="timeline-align-guide hidden" id="timelineAlignGuide"></div>
               </div>
             </div>
           </div>
@@ -288,7 +289,8 @@
             <label>OUT <input id="timelineSelEnd" type="number" min="0" step="0.01" placeholder="0.00" /></label>
             <button class="mini-action" id="timelineSelectionEdit">编辑参数</button>
             <button class="mini-action danger" id="timelineSelectionDelete">删除</button>
-            <label class="timeline-snap-toggle"><input id="timelineSnap" type="checkbox" checked /> 吸附 0.1s</label>
+            <label class="timeline-snap-toggle" title="吸附网格 0.1s · 与全局吸附共用快捷键 G"><input id="timelineSnap" type="checkbox" checked /> 吸附 0.1s</label>
+            <label class="timeline-align-toggle" title="对齐参考线（动作边缘 / 播放头）· Ctrl+K"><input id="timelineAlign" type="checkbox" checked /> 对齐</label>
           </div>
           <div class="timeline-resizer" id="timelineResizer" title="拖动调整时间轴大小"></div>
         </section>
@@ -480,8 +482,10 @@
           <div class="export-section">
             <label class="export-label">帧率 <em>FRAME RATE</em></label>
             <div class="segmented compact" id="fpsSeg">
-              <button data-fps="30">30 FPS</button>
-              <button class="active" data-fps="60">60 FPS</button>
+              <button data-fps="24">24</button>
+              <button data-fps="30">30</button>
+              <button class="active" data-fps="60">60</button>
+              <button data-fps="120">120</button>
             </div>
           </div>
           <div class="export-section">
@@ -491,6 +495,7 @@
               <option value="16">16 Mbps · 标准</option>
               <option value="24" selected>24 Mbps · 高画质</option>
               <option value="40">40 Mbps · 母版</option>
+              <option value="custom">自定义（高级设置）</option>
             </select>
           </div>
         </div>
@@ -499,8 +504,10 @@
           <div class="export-section">
             <label class="export-label">封装格式 <em>FORMAT</em></label>
             <div class="segmented compact" id="formatSeg">
+              <button data-format="mp4" class="active">MP4</button>
               <button data-format="webm">WebM</button>
-              <button data-format="mp4" class="active">MP4 / H.264</button>
+              <button data-format="mkv">MKV</button>
+              <button data-format="mov">MOV</button>
             </div>
           </div>
           <div class="export-section">
@@ -511,6 +518,85 @@
               <option value="30">前 30 秒</option>
             </select>
           </div>
+        </div>
+
+        <div class="export-advanced hidden" id="exportAdvanced">
+          <div class="export-advanced-head">
+            <span>高级设置 <em>ADVANCED ENCODE</em></span>
+            <button type="button" class="mini-action" id="exportAdvancedReset">恢复默认</button>
+          </div>
+          <div class="export-adv-grid">
+            <label class="export-adv-field">
+              <span>帧率 <em>FPS · 1–240</em></span>
+              <input id="fpsInput" type="number" min="1" max="240" step="1" value="60" />
+            </label>
+            <label class="export-adv-field">
+              <span>视频码率 <em>MBPS</em></span>
+              <input id="bitrateInput" type="number" min="1" max="200" step="1" value="24" />
+            </label>
+            <label class="export-adv-field">
+              <span>视频编码 <em>CODEC</em></span>
+              <select id="codecSelect" class="select">
+                <option value="h264">H.264 / AVC</option>
+                <option value="h265">H.265 / HEVC</option>
+                <option value="av1">AV1</option>
+                <option value="vp9">VP9</option>
+                <option value="vp8">VP8</option>
+              </select>
+            </label>
+            <label class="export-adv-field">
+              <span>画质 <em>CRF</em></span>
+              <select id="crfSelect" class="select">
+                <option value="auto">自动 · 按码率 / 直录</option>
+                <option value="16">16 · 近乎无损</option>
+                <option value="18">18 · 极高</option>
+                <option value="20">20 · 高</option>
+                <option value="23">23 · 标准</option>
+                <option value="26">26 · 小体积</option>
+                <option value="30">30 · 最小体积</option>
+              </select>
+            </label>
+            <label class="export-adv-field">
+              <span>编码预设 <em>PRESET</em></span>
+              <select id="presetSelect" class="select">
+                <option value="ultrafast">ULTRAFAST · 最快</option>
+                <option value="fast">FAST · 快</option>
+                <option value="medium" selected>MEDIUM · 均衡</option>
+                <option value="slow">SLOW · 高质量</option>
+                <option value="veryslow">VERYSLOW · 最慢</option>
+              </select>
+            </label>
+            <label class="export-adv-field">
+              <span>关键帧间隔 <em>GOP · 秒</em></span>
+              <input id="gopInput" type="number" min="0.5" max="10" step="0.5" value="2" />
+            </label>
+            <label class="export-adv-field">
+              <span>音频编码 <em>AUDIO</em></span>
+              <select id="audioCodecSelect" class="select">
+                <option value="aac">AAC</option>
+                <option value="opus">OPUS</option>
+              </select>
+            </label>
+            <label class="export-adv-field">
+              <span>音频码率 <em>KBPS</em></span>
+              <select id="audioBitrateSelect" class="select">
+                <option value="96">96 kbps</option>
+                <option value="128">128 kbps</option>
+                <option value="160">160 kbps</option>
+                <option value="192" selected>192 kbps</option>
+                <option value="256">256 kbps</option>
+                <option value="320">320 kbps</option>
+              </select>
+            </label>
+            <label class="export-adv-field">
+              <span>采样率 <em>HZ</em></span>
+              <select id="sampleRateSelect" class="select">
+                <option value="44100">44.1 kHz</option>
+                <option value="48000" selected>48 kHz</option>
+              </select>
+            </label>
+          </div>
+          <p class="export-adv-note">CRF 为「自动」时优先使用浏览器直录；指定 CRF、容器或非原生编码时，会调用本机 FFmpeg 转码（需已安装 FFmpeg）。</p>
         </div>
 
         <div class="export-summary">
@@ -535,6 +621,7 @@
       </div>
 
       <div class="modal-foot">
+        <button class="btn ghost export-advanced-toggle" id="exportAdvancedBtn" aria-expanded="false">高级设置</button>
         <button class="btn ghost" data-close="export">取消</button>
         <button class="btn primary" id="startExportBtn"><svg class="icon"><use href="#i-export"/></svg>开始导出</button>
       </div>
@@ -1024,19 +1111,24 @@
               <p class="section-help" id="layoutSlotInfo">5 个排版槽独立于工程存档，只记录模块布局、尺寸、颜色与参数。</p>
             </div>
             <div class="setting-block">
-              <div class="setting-block-head"><span>默认存档路径</span><em>SAVE PATH</em></div>
-              <div class="path-row">
-                <input id="savePathInput" type="text" placeholder="默认：本机 NEONScope / Saves" spellcheck="false" />
-                <button class="mini-action" id="savePathBrowse">浏览…</button>
+              <div class="setting-block-head"><span>默认路径</span><em>STORAGE PATHS</em></div>
+              <div class="path-field">
+                <label class="field-label" for="savePathInput">默认存档路径</label>
+                <div class="path-row">
+                  <input id="savePathInput" type="text" placeholder="默认：本机 NEONScope / Saves" spellcheck="false" />
+                  <button class="mini-action" id="savePathView">查看文件</button>
+                  <button class="mini-action" id="savePathBrowse">浏览…</button>
+                </div>
               </div>
-              <div class="field-row">
-                <label class="field-label">默认导出路径</label>
+              <div class="path-field">
+                <label class="field-label" for="exportPathInput">默认导出路径</label>
                 <div class="path-row">
                   <input id="exportPathInput" type="text" placeholder="默认：下载 / Downloads" spellcheck="false" />
+                  <button class="mini-action" id="exportPathView">查看文件</button>
                   <button class="mini-action" id="exportPathBrowse">浏览…</button>
                 </div>
               </div>
-              <p class="section-help">留空则使用系统默认位置。EXE 中浏览按钮会打开原生文件夹选择器；视频导出会保存到导出路径。</p>
+              <p class="section-help">留空则使用系统默认位置。「查看文件」会在资源管理器中打开当前路径；浏览按钮会打开原生文件夹选择器；视频导出会保存到导出路径。</p>
             </div>
             <div class="setting-block">
               <div class="setting-block-head"><span>恢复</span><em>RECOVERY</em></div>
@@ -1322,7 +1414,7 @@
     <div class="alpha-card">
       <div class="alpha-mark" aria-hidden="true">!</div>
       <div class="alpha-body">
-        <div class="alpha-kicker">ALPHA BUILD / V0.1.1_1104_alpha_Num.2</div>
+        <div class="alpha-kicker">ALPHA BUILD / V0.1.2_1109_alpha</div>
         <h2 id="alphaNoticeTitle">注意！这是 NEON//SCOPE 的 Alpha 测试版本。</h2>
         <p>Alpha 测试版本不代表最终产品的最终质量。感谢您的理解和支持，祝你好运！</p>
         <div class="alpha-foot">
@@ -1348,7 +1440,8 @@
     <button data-timeline-menu="locate">定位到播放头<kbd>↵</kbd></button>
     <button data-timeline-menu="keyframes">显示关键帧管理总线</button>
     <button data-timeline-menu="float">浮动 / 停靠时间轴</button>
-    <button data-timeline-menu="snap">切换吸附 <span class="menu-state">ON</span></button>
+    <button data-timeline-menu="snap">切换吸附 <span class="menu-state">ON</span><kbd>G</kbd></button>
+    <button data-timeline-menu="align">切换对齐参考 <span class="menu-state">ON</span><kbd>CTRL + K</kbd></button>
   </div>
 
   <div class="toast-stack" id="toastStack" aria-live="polite"></div>

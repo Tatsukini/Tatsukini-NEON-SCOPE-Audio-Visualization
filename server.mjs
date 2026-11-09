@@ -29,27 +29,104 @@ const MIME = {
   '.map': 'application/json',
 };
 
+const EMPTY_FFMPEG = { ok: false, version: '', encoders: [], codecs: [], audioCodecs: [] };
 let ffmpegCache = null;
-function getFfmpegInfo() {
-  if (ffmpegCache) return Promise.resolve(ffmpegCache);
+
+function listEncoders() {
   return new Promise((resolve) => {
+    let out = '';
+    let proc;
+    try {
+      proc = spawn('ffmpeg', ['-hide_banner', '-encoders'], { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
+    } catch {
+      resolve([]);
+      return;
+    }
+    proc.stdout.on('data', (d) => { out += d.toString(); });
+    proc.on('error', () => resolve([]));
+    proc.on('close', () => {
+      const names = [];
+      for (const line of out.split(/\r?\n/)) {
+        const match = line.match(/^\s*[VAS][A-Z.]{5}\s+(\S+)/);
+        if (match) names.push(match[1]);
+      }
+      resolve(names);
+    });
+  });
+}
+
+function getFfmpegInfo() {
+  if (ffmpegCache) return ffmpegCache;
+  ffmpegCache = new Promise((resolve) => {
     let proc;
     try {
       proc = spawn('ffmpeg', ['-version'], { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
     } catch {
-      ffmpegCache = { ok: false, version: '' };
-      resolve(ffmpegCache);
+      resolve(EMPTY_FFMPEG);
       return;
     }
     let out = '';
     proc.stdout.on('data', (d) => { out += d.toString(); });
-    proc.on('error', () => { ffmpegCache = { ok: false, version: '' }; resolve(ffmpegCache); });
-    proc.on('close', (code) => {
+    proc.on('error', () => resolve(EMPTY_FFMPEG));
+    proc.on('close', async (code) => {
+      if (code !== 0) {
+        resolve(EMPTY_FFMPEG);
+        return;
+      }
       const first = out.split(/\r?\n/)[0] || '';
-      ffmpegCache = { ok: code === 0, version: first.replace(/^ffmpeg version\s*/i, '').slice(0, 80) };
-      resolve(ffmpegCache);
+      const encoders = await listEncoders();
+      const has = (...names) => names.some((name) => encoders.includes(name));
+      const codecs = [];
+      if (has('libx264')) codecs.push('h264');
+      if (has('libx265')) codecs.push('h265');
+      if (has('libvpx-vp9')) codecs.push('vp9');
+      if (has('libvpx')) codecs.push('vp8');
+      if (has('libsvtav1', 'libaom-av1')) codecs.push('av1');
+      const audioCodecs = [];
+      if (has('aac')) audioCodecs.push('aac');
+      if (has('libopus', 'opus')) audioCodecs.push('opus');
+      resolve({
+        ok: true,
+        version: first.replace(/^ffmpeg version\s*/i, '').slice(0, 80),
+        encoders,
+        codecs,
+        audioCodecs,
+      });
     });
   });
+  return ffmpegCache;
+}
+
+const CONTAINER_TYPES = {
+  mp4: 'video/mp4',
+  mkv: 'video/x-matroska',
+  mov: 'video/quicktime',
+  webm: 'video/webm',
+};
+const VIDEO_CODECS = ['h264', 'h265', 'av1', 'vp9', 'vp8'];
+const AUDIO_CODECS = ['aac', 'opus'];
+const X264_PRESETS = new Set(['ultrafast', 'superfast', 'veryfast', 'faster', 'fast', 'medium', 'slow', 'slower', 'veryslow']);
+const VPX_SPEED = { ultrafast: 8, fast: 6, medium: 4, slow: 2, veryslow: 1 };
+const SVT_PRESET = { ultrafast: 12, fast: 8, medium: 6, slow: 4, veryslow: 3 };
+const CRF_DEFAULT = { h264: 20, h265: 24, vp9: 32, vp8: 28, av1: 30 };
+const CRF_MAX = { h264: 51, h265: 51, vp9: 63, vp8: 63, av1: 63 };
+
+function oneOf(value, allowed, fallback) {
+  return allowed.includes(value) ? value : fallback;
+}
+
+function encoderFor(codec, encoders) {
+  if (!encoders || encoders.length === 0) {
+    // Encoder probing failed but FFmpeg exists; let FFmpeg report real errors.
+    return { h264: 'libx264', h265: 'libx265', av1: 'libsvtav1', vp9: 'libvpx-vp9', vp8: 'libvpx' }[codec] || null;
+  }
+  const has = (name) => encoders.includes(name);
+  if (codec === 'h264') return has('libx264') ? 'libx264' : null;
+  if (codec === 'h265') return has('libx265') ? 'libx265' : null;
+  if (codec === 'vp9') return has('libvpx-vp9') ? 'libvpx-vp9' : null;
+  if (codec === 'vp8') return has('libvpx') ? 'libvpx' : null;
+  if (codec === 'av1') return has('libsvtav1') ? 'libsvtav1' : has('libaom-av1') ? 'libaom-av1' : null;
+  return null;
 }
 
 function sendJson(res, status, obj) {
@@ -81,12 +158,38 @@ async function handleConvert(req, res) {
   }
 
   const base = safeName(req.headers['x-output-name'], 'neon-scope');
-  const crf = Math.max(12, Math.min(30, Number(req.headers['x-video-crf']) || 17));
+  const container = oneOf(req.headers['x-container'], Object.keys(CONTAINER_TYPES), 'mp4');
+  const codec = oneOf(req.headers['x-codec'], VIDEO_CODECS, 'h264');
+  const encoder = encoderFor(codec, ffmpeg.encoders || []);
+  if (!encoder) {
+    return sendJson(res, 400, { error: `当前 FFmpeg 不支持 ${codec.toUpperCase()} 编码，请改用其他编码或更新 FFmpeg。` });
+  }
+  const crfRaw = Number(req.headers['x-video-crf']);
+  const crf = Number.isFinite(crfRaw)
+    ? Math.max(0, Math.min(CRF_MAX[codec], Math.round(crfRaw)))
+    : CRF_DEFAULT[codec];
+  const preset = X264_PRESETS.has(req.headers['x-preset']) ? req.headers['x-preset'] : 'medium';
+  const fps = Math.max(1, Math.min(240, Number(req.headers['x-fps']) || 60));
+  const gopSeconds = Math.max(0.5, Math.min(10, Number(req.headers['x-gop']) || 2));
+  const gopFrames = Math.max(1, Math.round(gopSeconds * fps));
+  const sampleRate = Number(req.headers['x-sample-rate']) === 44100 ? 44100 : 48000;
+  const audioBitrate = Math.max(64, Math.min(512, Math.round(Number(req.headers['x-audio-bitrate']) || 192)));
+  let audioCodec = oneOf(req.headers['x-audio-codec'], AUDIO_CODECS, container === 'webm' ? 'opus' : 'aac');
+  if (container === 'webm') audioCodec = 'opus';
+  if (container === 'mp4' || container === 'mov') audioCodec = 'aac';
+  const encoders = ffmpeg.encoders || [];
+  const audioEncoder = audioCodec === 'opus'
+    ? (encoders.length === 0 || encoders.includes('libopus') ? 'libopus'
+      : encoders.includes('opus') ? 'opus' : null)
+    : 'aac';
+  if (!audioEncoder) {
+    return sendJson(res, 400, { error: '当前 FFmpeg 不支持 OPUS 编码，无法封装 WebM。' });
+  }
   const tmpRoot = path.join(ROOT, '.neon-scope-tmp');
   await mkdir(tmpRoot, { recursive: true });
   const tmpDir = await mkdtemp(path.join(tmpRoot, 'job-'));
   const input = path.join(tmpDir, 'input.webm');
-  const output = path.join(tmpDir, 'output.mp4');
+  const output = path.join(tmpDir, `output.${container}`);
 
   let bytes = 0;
   let tooLarge = false;
@@ -111,11 +214,22 @@ async function handleConvert(req, res) {
       '-i', input,
       '-map', '0:v:0', '-map', '0:a:0?',
       '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2',
-      '-c:v', 'libx264', '-preset', 'medium', '-crf', String(crf),
-      '-pix_fmt', 'yuv420p', '-movflags', '+faststart',
-      '-c:a', 'aac', '-b:a', '192k',
-      '-shortest', output,
     ];
+    if (encoder === 'libx264' || encoder === 'libx265') {
+      args.push('-c:v', encoder, '-preset', preset, '-crf', String(crf));
+      if (encoder === 'libx265') args.push('-tag:v', 'hvc1');
+    } else if (encoder === 'libsvtav1') {
+      args.push('-c:v', 'libsvtav1', '-preset', String(SVT_PRESET[preset] || 6), '-crf', String(crf));
+    } else if (encoder === 'libaom-av1') {
+      args.push('-c:v', 'libaom-av1', '-cpu-used', '6', '-row-mt', '1', '-crf', String(crf), '-b:v', '0');
+    } else {
+      args.push('-c:v', encoder, '-crf', String(crf), '-b:v', '0', '-cpu-used', String(VPX_SPEED[preset] || 4), '-row-mt', '1');
+    }
+    args.push('-pix_fmt', 'yuv420p', '-g', String(gopFrames));
+    if (container === 'mp4' || container === 'mov') args.push('-movflags', '+faststart');
+    args.push('-c:a', audioEncoder, '-b:a', `${audioBitrate}k`);
+    args.push('-ar', audioCodec === 'opus' ? '48000' : String(sampleRate));
+    args.push('-shortest', output);
     let ff;
     try {
       ff = spawn('ffmpeg', args, { windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] });
@@ -134,11 +248,11 @@ async function handleConvert(req, res) {
       return sendJson(res, 500, { error: `FFmpeg 转码失败：${errText.slice(-1000) || `exit ${code}`}` });
     }
     const info = await stat(output);
-    const asciiName = `${base.replace(/[^\x20-\x7E]/g, '_')}.mp4`;
+    const asciiName = `${base.replace(/[^\x20-\x7E]/g, '_')}.${container}`;
     res.writeHead(200, {
-      'Content-Type': 'video/mp4',
+      'Content-Type': CONTAINER_TYPES[container],
       'Content-Length': info.size,
-      'Content-Disposition': `attachment; filename="${asciiName}"; filename*=UTF-8''${encodeURIComponent(`${base}.mp4`)}`,
+      'Content-Disposition': `attachment; filename="${asciiName}"; filename*=UTF-8''${encodeURIComponent(`${base}.${container}`)}`,
       'Cache-Control': 'no-store',
     });
     const stream = createReadStream(output);
@@ -191,7 +305,11 @@ async function handleStatic(req, res) {
 const server = http.createServer((req, res) => {
   if (req.url?.startsWith('/api/health')) {
     getFfmpegInfo().then((info) => sendJson(res, 200, {
-      ffmpeg: info.ok, version: info.version, platform: process.platform,
+      ffmpeg: info.ok,
+      version: info.version,
+      platform: process.platform,
+      codecs: info.codecs || [],
+      audioCodecs: info.audioCodecs || [],
     }));
     return;
   }

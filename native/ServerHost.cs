@@ -25,6 +25,40 @@ internal sealed class ServerHost : IAsyncDisposable
     private readonly string _webRoot;
     private readonly string _tempRoot;
     private readonly IFileProvider _fileProvider;
+    private readonly HashSet<string> _encoders = new(StringComparer.OrdinalIgnoreCase);
+
+    private static readonly Dictionary<string, string> ContainerTypes = new()
+    {
+        ["mp4"] = "video/mp4",
+        ["mkv"] = "video/x-matroska",
+        ["mov"] = "video/quicktime",
+        ["webm"] = "video/webm",
+    };
+
+    private static readonly HashSet<string> X264Presets = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow",
+    };
+
+    private static readonly Dictionary<string, int> VpxSpeed = new()
+    {
+        ["ultrafast"] = 8, ["fast"] = 6, ["medium"] = 4, ["slow"] = 2, ["veryslow"] = 1,
+    };
+
+    private static readonly Dictionary<string, int> SvtPreset = new()
+    {
+        ["ultrafast"] = 12, ["fast"] = 8, ["medium"] = 6, ["slow"] = 4, ["veryslow"] = 3,
+    };
+
+    private static readonly Dictionary<string, int> CrfDefault = new()
+    {
+        ["h264"] = 20, ["h265"] = 24, ["vp9"] = 32, ["vp8"] = 28, ["av1"] = 30,
+    };
+
+    private static readonly Dictionary<string, int> CrfMax = new()
+    {
+        ["h264"] = 51, ["h265"] = 51, ["vp9"] = 63, ["vp8"] = 63, ["av1"] = 63,
+    };
 
     public string BaseUrl { get; private set; } = string.Empty;
     public string? FfmpegPath { get; private set; }
@@ -69,6 +103,8 @@ internal sealed class ServerHost : IAsyncDisposable
             ffmpeg = FfmpegPath != null,
             version = FfmpegVersion,
             platform = "win32",
+            codecs = AvailableVideoCodecs(),
+            audioCodecs = AvailableAudioCodecs(),
         }));
 
         app.MapPost("/api/convert", (Delegate)HandleConvertAsync)
@@ -133,14 +169,61 @@ internal sealed class ServerHost : IAsyncDisposable
         }
 
         var outputName = SanitizeFileName(context.Request.Headers["X-Output-Name"].FirstOrDefault());
-        var crfHeader = context.Request.Headers["X-Video-CRF"].FirstOrDefault();
-        var crf = 17;
-        if (int.TryParse(crfHeader, out var parsedCrf)) crf = Math.Clamp(parsedCrf, 12, 30);
+        var container = OneOf(context.Request.Headers["X-Container"].FirstOrDefault(), ContainerTypes.Keys, "mp4");
+        var codec = OneOf(context.Request.Headers["X-Codec"].FirstOrDefault(), new[] { "h264", "h265", "av1", "vp9", "vp8" }, "h264");
+        var encoder = EncoderFor(codec);
+        if (encoder == null)
+        {
+            return Results.Json(new { error = $"当前 FFmpeg 不支持 {codec.ToUpperInvariant()} 编码，请改用其他编码或更新 FFmpeg。" },
+                statusCode: StatusCodes.Status400BadRequest);
+        }
+
+        var crf = CrfDefault.GetValueOrDefault(codec, 20);
+        if (int.TryParse(context.Request.Headers["X-Video-CRF"].FirstOrDefault(), out var parsedCrf))
+        {
+            crf = Math.Clamp(parsedCrf, 0, CrfMax.GetValueOrDefault(codec, 51));
+        }
+
+        var preset = context.Request.Headers["X-Preset"].FirstOrDefault();
+        if (string.IsNullOrWhiteSpace(preset) || !X264Presets.Contains(preset)) preset = "medium";
+
+        var fps = 60;
+        if (int.TryParse(context.Request.Headers["X-Fps"].FirstOrDefault(), out var parsedFps))
+        {
+            fps = Math.Clamp(parsedFps, 1, 240);
+        }
+        var gopSeconds = 2.0;
+        if (double.TryParse(context.Request.Headers["X-Gop"].FirstOrDefault(),
+                System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var parsedGop))
+        {
+            gopSeconds = Math.Clamp(parsedGop, 0.5, 10.0);
+        }
+        var gopFrames = Math.Max(1, (int)Math.Round(gopSeconds * fps));
+
+        var sampleRate = context.Request.Headers["X-Sample-Rate"].FirstOrDefault() == "44100" ? 44100 : 48000;
+        var audioBitrate = 192;
+        if (int.TryParse(context.Request.Headers["X-Audio-Bitrate"].FirstOrDefault(), out var parsedAudioBitrate))
+        {
+            audioBitrate = Math.Clamp(parsedAudioBitrate, 64, 512);
+        }
+        var audioCodec = OneOf(context.Request.Headers["X-Audio-Codec"].FirstOrDefault(),
+            new[] { "aac", "opus" }, container == "webm" ? "opus" : "aac");
+        if (container == "webm") audioCodec = "opus";
+        if (container == "mp4" || container == "mov") audioCodec = "aac";
+        var audioEncoder = audioCodec == "opus"
+            ? (_encoders.Count == 0 || _encoders.Contains("libopus") ? "libopus"
+                : _encoders.Contains("opus") ? "opus" : null)
+            : "aac";
+        if (audioEncoder == null)
+        {
+            return Results.Json(new { error = "当前 FFmpeg 不支持 OPUS 编码，无法封装 WebM。" },
+                statusCode: StatusCodes.Status400BadRequest);
+        }
 
         var jobDir = Path.Combine(_tempRoot, "job-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(jobDir);
         var inputPath = Path.Combine(jobDir, "input.webm");
-        var outputPath = Path.Combine(jobDir, "output.mp4");
+        var outputPath = Path.Combine(jobDir, "output." + container);
 
         try
         {
@@ -163,11 +246,35 @@ internal sealed class ServerHost : IAsyncDisposable
                 "-i", inputPath,
                 "-map", "0:v:0", "-map", "0:a:0?",
                 "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
-                "-c:v", "libx264", "-preset", "medium", "-crf", crf.ToString(),
-                "-pix_fmt", "yuv420p", "-movflags", "+faststart",
-                "-c:a", "aac", "-b:a", "192k",
-                "-shortest", outputPath,
             };
+
+            if (encoder == "libx264" || encoder == "libx265")
+            {
+                args.AddRange(new[] { "-c:v", encoder, "-preset", preset, "-crf", crf.ToString() });
+                if (encoder == "libx265") args.AddRange(new[] { "-tag:v", "hvc1" });
+            }
+            else if (encoder == "libsvtav1")
+            {
+                args.AddRange(new[] { "-c:v", "libsvtav1", "-preset", SvtPreset.GetValueOrDefault(preset, 6).ToString(), "-crf", crf.ToString() });
+            }
+            else if (encoder == "libaom-av1")
+            {
+                args.AddRange(new[] { "-c:v", "libaom-av1", "-cpu-used", "6", "-row-mt", "1", "-crf", crf.ToString(), "-b:v", "0" });
+            }
+            else
+            {
+                args.AddRange(new[]
+                {
+                    "-c:v", encoder, "-crf", crf.ToString(), "-b:v", "0",
+                    "-cpu-used", VpxSpeed.GetValueOrDefault(preset, 4).ToString(), "-row-mt", "1",
+                });
+            }
+
+            args.AddRange(new[] { "-pix_fmt", "yuv420p", "-g", gopFrames.ToString() });
+            if (container == "mp4" || container == "mov") args.AddRange(new[] { "-movflags", "+faststart" });
+            args.AddRange(new[] { "-c:a", audioEncoder, "-b:a", $"{audioBitrate}k" });
+            args.AddRange(new[] { "-ar", audioCodec == "opus" ? "48000" : sampleRate.ToString() });
+            args.AddRange(new[] { "-shortest", outputPath });
 
             var psi = new ProcessStartInfo
             {
@@ -211,7 +318,7 @@ internal sealed class ServerHost : IAsyncDisposable
             }
 
             var outputInfo = new FileInfo(outputPath);
-            AppPaths.Log($"MP4 ready: {outputName}.mp4 ({outputInfo.Length} bytes)");
+            AppPaths.Log($"{container.ToUpperInvariant()} ready: {outputName}.{container} ({outputInfo.Length} bytes, {codec})");
             // Keep the file briefly: Results.File streams it after this handler
             // returns, and deleting the job directory immediately can truncate
             // the response in some clients.
@@ -221,8 +328,8 @@ internal sealed class ServerHost : IAsyncDisposable
                 finally { TryDeleteDirectory(jobDir); }
             });
 
-            var downloadName = outputName + ".mp4";
-            return Results.File(outputPath, "video/mp4", downloadName);
+            var downloadName = $"{outputName}.{container}";
+            return Results.File(outputPath, ContainerTypes[container], downloadName);
         }
         catch (OperationCanceledException)
         {
@@ -391,6 +498,95 @@ internal sealed class ServerHost : IAsyncDisposable
             FfmpegPath = null;
             FfmpegVersion = string.Empty;
         }
+
+        if (FfmpegPath != null) DetectEncoders();
+    }
+
+    private void DetectEncoders()
+    {
+        _encoders.Clear();
+        if (FfmpegPath == null) return;
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = FfmpegPath,
+                Arguments = "-hide_banner -encoders",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                WindowStyle = ProcessWindowStyle.Hidden,
+            };
+            using var process = Process.Start(psi);
+            if (process == null) return;
+            var text = process.StandardOutput.ReadToEnd();
+            if (!process.WaitForExit(5000))
+            {
+                try { process.Kill(); } catch { }
+                return;
+            }
+            foreach (var line in text.Split('\n'))
+            {
+                var match = Regex.Match(line.TrimEnd('\r'), @"^\s*[VAS][A-Z.]{5}\s+(\S+)");
+                if (match.Success) _encoders.Add(match.Groups[1].Value);
+            }
+        }
+        catch
+        {
+            _encoders.Clear();
+        }
+    }
+
+    private List<string> AvailableVideoCodecs()
+    {
+        var codecs = new List<string>();
+        if (_encoders.Contains("libx264")) codecs.Add("h264");
+        if (_encoders.Contains("libx265")) codecs.Add("h265");
+        if (_encoders.Contains("libvpx-vp9")) codecs.Add("vp9");
+        if (_encoders.Contains("libvpx")) codecs.Add("vp8");
+        if (_encoders.Contains("libsvtav1") || _encoders.Contains("libaom-av1")) codecs.Add("av1");
+        return codecs;
+    }
+
+    private List<string> AvailableAudioCodecs()
+    {
+        var codecs = new List<string>();
+        if (_encoders.Contains("aac")) codecs.Add("aac");
+        if (_encoders.Contains("libopus") || _encoders.Contains("opus")) codecs.Add("opus");
+        return codecs;
+    }
+
+    private string? EncoderFor(string codec)
+    {
+        if (_encoders.Count == 0)
+        {
+            // Encoder probing failed but FFmpeg exists; let FFmpeg report real errors.
+            return codec switch
+            {
+                "h264" => "libx264",
+                "h265" => "libx265",
+                "av1" => "libsvtav1",
+                "vp9" => "libvpx-vp9",
+                "vp8" => "libvpx",
+                _ => null,
+            };
+        }
+        return codec switch
+        {
+            "h264" => _encoders.Contains("libx264") ? "libx264" : null,
+            "h265" => _encoders.Contains("libx265") ? "libx265" : null,
+            "vp9" => _encoders.Contains("libvpx-vp9") ? "libvpx-vp9" : null,
+            "vp8" => _encoders.Contains("libvpx") ? "libvpx" : null,
+            "av1" => _encoders.Contains("libsvtav1") ? "libsvtav1"
+                : _encoders.Contains("libaom-av1") ? "libaom-av1" : null,
+            _ => null,
+        };
+    }
+
+    private static string OneOf(string? value, IEnumerable<string> allowed, string fallback)
+    {
+        return !string.IsNullOrWhiteSpace(value) && allowed.Contains(value) ? value : fallback;
     }
 
     private void CleanupOldJobs()

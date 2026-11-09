@@ -159,6 +159,11 @@ internal sealed class SettingsForm : Form
                 }
                 return;
             }
+            if (action == "open-folder")
+            {
+                OpenFolder(doc.RootElement);
+                return;
+            }
             if (action == "settings-updated" || action == "background-image" ||
                 action == "save-archive" || action == "archive-import")
             {
@@ -169,6 +174,48 @@ internal sealed class SettingsForm : Form
         {
             // Ignore malformed bridge messages.
         }
+    }
+
+    private static void OpenFolder(JsonElement element)
+    {
+        var kind = element.TryGetProperty("kind", out var kindElement) ? kindElement.GetString() : "save";
+        var path = element.TryGetProperty("path", out var pathElement) ? pathElement.GetString() : null;
+        string? folder = null;
+        if (!string.IsNullOrWhiteSpace(path))
+        {
+            var trimmed = path.Trim();
+            if (Directory.Exists(trimmed)) folder = trimmed;
+            else
+            {
+                try
+                {
+                    var current = Path.GetDirectoryName(trimmed);
+                    while (!string.IsNullOrEmpty(current))
+                    {
+                        if (Directory.Exists(current)) { folder = current; break; }
+                        current = Path.GetDirectoryName(current);
+                    }
+                }
+                catch { /* fall through to defaults */ }
+            }
+        }
+        folder ??= kind == "export"
+            ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads")
+            : Path.Combine(AppPaths.Root, "Saves");
+        if (!Directory.Exists(folder))
+        {
+            try { Directory.CreateDirectory(folder); } catch { folder = AppPaths.Root; }
+        }
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = "explorer.exe",
+                UseShellExecute = true,
+                ArgumentList = { folder },
+            });
+        }
+        catch { /* explorer is a convenience */ }
     }
 
     public void PostJson(string json)
