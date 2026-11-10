@@ -28,6 +28,7 @@ export class Visualizer {
     this.running = false;
     this.exportMode = false;
     this._exportFps = 60;
+    this._captureFps = 60;
     this.animClock = 0;
     this.lastTs = 0;
     this.fps = 0;
@@ -82,9 +83,10 @@ export class Visualizer {
     window.removeEventListener('resize', this._onResize);
   }
 
-  setExportMode(on, width = 1920, height = 1080, fps = 60) {
+  setExportMode(on, width = 1920, height = 1080, fps = 60, captureFps = fps) {
     this.exportMode = !!on;
     this._exportFps = fps;
+    this._captureFps = Math.max(1, Number(captureFps) || fps);
     this.overlay.style.display = on ? 'none' : '';
     if (on) {
       this.canvas.width = width;
@@ -456,7 +458,11 @@ export class Visualizer {
   }
 
   _previewTargetFps() {
-    if (this.exportMode) return Math.max(1, Number(this._exportFps) || 60);
+    // Throttling the export loop to a non-divisor of the refresh rate (e.g. 54)
+    // halves the paint rate to 30 and FFmpeg then duplicates half the frames.
+    // Run every animation frame instead; captureStream(fps) caps the output rate
+    // and the recording rate is matched by the measured playback rate.
+    if (this.exportMode) return 0;
     const value = Number(this.state.settings.previewFps);
     return Number.isFinite(value) && value > 0 ? value : 0;
   }
@@ -496,9 +502,13 @@ export class Visualizer {
     if (!this.lastTs) this.lastTs = ts;
     let dt = (ts - this.lastTs) / 1000;
     this.lastTs = ts;
+    // During slowed export the wall clock runs faster than media time; scale
+    // dt so time-driven effects and ballistics stay in sync with the audio.
+    if (this.exportMode) dt *= clamp(this.engine?.playbackRate || 1, 0.05, 4);
     if (dt > 0.1) dt = 0.1;
     this._lastDrawTs = ts;
     this.animClock += dt;
+    this.frameCount = (this.frameCount || 0) + 1;
     this._fpsAccum += dt;
     this._fpsFrames += 1;
     this._fpsTimer += dt;
@@ -779,7 +789,7 @@ export class Visualizer {
     const titleSize = Math.min(w * 0.068, bandH * 0.24);
     ctx.fillStyle = primaryColor;
     ctx.font = `700 ${titleSize}px "Bahnschrift", "Microsoft YaHei UI", sans-serif`;
-    ctx.fillText(`{${title}}`, tx, bandTop + bandH * 0.34, tw);
+    ctx.fillText(title, tx, bandTop + bandH * 0.34, tw);
     ctx.fillStyle = accent;
     ctx.fillRect(tx, bandTop + bandH * 0.4, Math.min(tw * 0.45, w * 0.22), 2);
 
@@ -905,10 +915,19 @@ export class Visualizer {
         const title = p.title || cue.value || 'Title';
         const author = p.author || 'Artist';
         const origin = p.origin || 'Origin';
+        const st = clamp(Number(auto('sizeTitle', p.sizeTitle ?? 38)) || 38, 6, 240);
+        const sa = clamp(Number(auto('sizeAuthor', p.sizeAuthor ?? 15)) || 15, 6, 240);
+        const so = clamp(Number(auto('sizeOrigin', p.sizeOrigin ?? 10)) || 10, 6, 240);
         ctx.save();
         ctx.globalAlpha = alpha;
+        // Gaps scale with the three font sizes so defaults (38/15/10) keep the
+        // original 54/88/112 baselines while larger type stays separated.
+        const titleBase = 54 * (st / 38);
+        const gap1 = 34 * ((st / 38 + sa / 15) / 2);
+        const gap2 = 24 * ((sa / 15 + so / 10) / 2);
+        const originBase = titleBase + gap1 + gap2;
         const bw = Math.min(w * 0.62, 760);
-        const bh = Math.min(h * 0.42, 300);
+        const bh = Math.max(Math.min(h * 0.42, 300), Math.min(h * 0.9, originBase + so * 1.5 + 16));
         const ox = Number(auto('x', p.x ?? 0));
         const oy = Number(auto('y', p.y ?? 0));
         const sx = clamp((Number(auto('scaleX', p.scaleX ?? 100)) || 100) / 100, 0.2, 4);
@@ -924,14 +943,14 @@ export class Visualizer {
         ctx.strokeRect(x + .5, y + .5, bw - 1, bh - 1);
         ctx.textAlign = 'center';
         ctx.fillStyle = '#ffffff';
-        ctx.font = '700 38px "Bahnschrift", "Microsoft YaHei UI", sans-serif';
-        ctx.fillText(title, 0, y + 54, bw - 40);
+        ctx.font = `700 ${st}px "Bahnschrift", "Microsoft YaHei UI", sans-serif`;
+        ctx.fillText(title, 0, y + titleBase, bw - 40);
         ctx.fillStyle = rgbaSafe(p.accent || this.state.settings.accent, .92);
-        ctx.font = '600 15px "Cascadia Code", monospace';
-        ctx.fillText(author, 0, y + 88, bw - 40);
+        ctx.font = `600 ${sa}px "Cascadia Code", monospace`;
+        ctx.fillText(author, 0, y + titleBase + gap1, bw - 40);
         ctx.fillStyle = 'rgba(255,255,255,.55)';
-        ctx.font = '10px "Cascadia Code", monospace';
-        ctx.fillText(origin, 0, y + 112, bw - 40);
+        ctx.font = `${so}px "Cascadia Code", monospace`;
+        ctx.fillText(origin, 0, y + originBase, bw - 40);
         ctx.restore();
       } else if (cue.type === 'batch') {
         // Action groups are expanded by the editor; the call marker itself is silent.

@@ -314,9 +314,17 @@ function drawLoudness(ctx, mod, body, frame, st, env) {
   const p = 12;
   const x = body.x + p, y = body.y + p;
   const w = body.w - p * 2, h = body.h - p * 2;
+  if (w < 90 || h < 46) return;
+  const compact = h < 168;
   const mainW = w * 0.56;
   const targetLufs = Number(modOpt(mod, 'target', -14));
   const historyLength = Math.round(modNum(mod, 'history', 180, 40, 180));
+
+  // Reserve a footer strip and keep the history band above it, so readouts
+  // can never sit on top of the graph on short cards.
+  const footH = 13;
+  const histH = compact ? clamp(Math.round(h * 0.19), 16, 22) : clamp(Math.round(h * 0.17), 22, 30);
+  const histY = y + h - footH - histH;
 
   // History.
   if (!st.history) st.history = [];
@@ -324,8 +332,6 @@ function drawLoudness(ctx, mod, body, frame, st, env) {
     st.history.push(frame.lufsS);
     if (st.history.length > historyLength) st.history.shift();
   }
-  const histH = 30;
-  const histY = y + h - histH;
   ctx.strokeStyle = 'rgba(255,255,255,.06)';
   ctx.lineWidth = 1;
   ctx.beginPath();
@@ -377,14 +383,14 @@ function drawLoudness(ctx, mod, body, frame, st, env) {
   ctx.fillStyle = '#f7e8ee';
   ctx.textAlign = 'left';
   ctx.textBaseline = 'middle';
-  ctx.fillText(mainText, x, y + 34);
+  ctx.fillText(mainText, x, y + 33);
   const nw = ctx.measureText(mainText).width;
   mono(ctx, 8, '500');
   ctx.fillStyle = rgba(accent, 0.78);
-  ctx.fillText('LUFS', x + nw + 5, y + 30);
+  ctx.fillText('LUFS', x + nw + 5, y + 29);
 
   // Mini target ruler.
-  const meterY = y + 59;
+  const meterY = y + (compact ? 55 : 66);
   const meterW = mainW - 8;
   ctx.fillStyle = 'rgba(255,255,255,.07)';
   ctx.fillRect(x, meterY, meterW, 3);
@@ -403,58 +409,83 @@ function drawLoudness(ctx, mod, body, frame, st, env) {
   ctx.textAlign = 'right';
   ctx.fillText('0', x + meterW, meterY + 10);
 
-  // Right column: true peak and integrated.
-  const rx = x + mainW + 8;
-  const rw = w - mainW - 8;
+  // Right column: true peak and integrated. Every unit shares the value's
+  // measured width, so negative readouts can't grow into the unit text.
+  const rx = x + mainW + 10;
+  const rw = w - mainW - 10;
   const dividerX = x + mainW + 1;
   ctx.strokeStyle = 'rgba(255,255,255,.075)';
   ctx.beginPath();
   ctx.moveTo(dividerX, y);
-  ctx.lineTo(dividerX, y + h - 5);
+  ctx.lineTo(dividerX, y + h - footH - 2);
   ctx.stroke();
+  if (rw < 46) return;
+
+  const tpLabelY = y + 9;
+  const tpValueY = y + (compact ? 24 : 32);
+  const tpBarY = tpValueY + 6;
+  const intLabelY = y + (compact ? 41 : 56);
+  const intValueY = y + (compact ? 56 : 77);
+  const lrY = y + (compact ? 69 : 93);
 
   sans(ctx, 6.5, '600');
   ctx.fillStyle = 'rgba(255,255,255,.32)';
   ctx.textAlign = 'left';
-  spacedText(ctx, 'TRUE PEAK', rx + 8, y + 9, 0.7);
+  spacedText(ctx, 'TRUE PEAK', rx + 8, tpLabelY, 0.7);
   mono(ctx, 17, '400');
   ctx.fillStyle = '#f3dfe8';
   const tp = frame.truePeakDb;
-  ctx.fillText(tp <= -59.5 ? '−∞' : tp.toFixed(1), rx + 8, y + 31);
+  const tpText = tp <= -59.5 ? '−∞' : tp.toFixed(1);
+  ctx.fillText(tpText, rx + 8, tpValueY);
+  const tpW = ctx.measureText(tpText).width;
   mono(ctx, 6.5, '400');
   ctx.fillStyle = 'rgba(255,255,255,.3)';
-  ctx.fillText('dBTP', rx + 8 + (tp <= -59.5 ? 17 : 29), y + 31);
+  ctx.fillText('dBTP', rx + 10 + tpW, tpValueY);
 
-  const barY = y + 42;
   const tpN = dbToNorm(tp, -24, 0);
   ctx.fillStyle = 'rgba(255,255,255,.07)';
-  ctx.fillRect(rx + 8, barY, rw - 16, 2);
+  ctx.fillRect(rx + 8, tpBarY, rw - 16, 2);
   ctx.fillStyle = tp > -1 ? '#ff6f86' : rgba(accent, 0.8);
-  ctx.fillRect(rx + 8, barY, (rw - 16) * tpN, 2);
+  ctx.fillRect(rx + 8, tpBarY, (rw - 16) * tpN, 2);
 
   sans(ctx, 6.5, '600');
   ctx.fillStyle = 'rgba(255,255,255,.32)';
-  spacedText(ctx, 'INTEGRATED', rx + 8, y + 56, 0.7);
+  spacedText(ctx, 'INTEGRATED', rx + 8, intLabelY, 0.7);
   mono(ctx, 14, '400');
   ctx.fillStyle = rgba(accent, 0.9);
   const intText = frame.lufsI <= -59.5 ? '−∞' : frame.lufsI.toFixed(1);
-  ctx.fillText(intText, rx + 8, y + 73);
+  ctx.fillText(intText, rx + 8, intValueY);
+  const intW = ctx.measureText(intText).width;
   mono(ctx, 6.5, '400');
   ctx.fillStyle = 'rgba(255,255,255,.3)';
-  ctx.fillText('LUFS-I', rx + 8 + (frame.lufsI <= -59.5 ? 17 : 26), y + 73);
+  ctx.fillText('LUFS-I', rx + 10 + intW, intValueY);
 
-  // Peak hold indicator meters.
-  mono(ctx, 6, '400');
+  // L / R readouts live in the same reserved top block, never on the graph.
+  mono(ctx, 6.5, '500');
   ctx.fillStyle = 'rgba(255,255,255,.24)';
-  ctx.fillText(`L ${fmtDb(ampToDb(frame.rmsL), 0)}`, rx + 8, y + 89);
-  ctx.fillText(`R ${fmtDb(ampToDb(frame.rmsR), 0)}`, rx + 8, y + 98);
+  const lText = `L ${fmtDb(ampToDb(frame.rmsL), 0)}`;
+  const rText = `R ${fmtDb(ampToDb(frame.rmsR), 0)}`;
+  ctx.textAlign = 'left';
+  if (rw >= 104) {
+    ctx.fillText(lText, rx + 8, lrY);
+    ctx.fillText(rText, rx + 8 + Math.min(rw * 0.5, 52), lrY);
+  } else if (lrY + 10 < histY) {
+    ctx.fillText(lText, rx + 8, lrY);
+    ctx.fillText(rText, rx + 8, lrY + 10);
+  }
 
+  // Footer strip below the history.
   sans(ctx, 6, '500');
   ctx.fillStyle = 'rgba(255,255,255,.22)';
-  ctx.fillText('K-WEIGHTED · 400 ms', x, y + h - 2);
-  ctx.textAlign = 'right';
-  ctx.fillStyle = rgba(accent, 0.55);
-  ctx.fillText('AES17 / ITU-R BS.1770', x + w, y + h - 2);
+  ctx.textAlign = 'left';
+  const leftFoot = 'K-WEIGHTED · 400 ms';
+  ctx.fillText(leftFoot, x, y + h - 2);
+  const leftW = ctx.measureText(leftFoot).width;
+  if (w - leftW > 96) {
+    ctx.textAlign = 'right';
+    ctx.fillStyle = rgba(accent, 0.55);
+    ctx.fillText('AES17 / ITU-R BS.1770', x + w, y + h - 2);
+  }
 }
 
 function drawDial(ctx, mod, body, frame, st, env) {
@@ -462,8 +493,13 @@ function drawDial(ctx, mod, body, frame, st, env) {
   const p = 10;
   const x = body.x + p, y = body.y + p;
   const w = body.w - p * 2, h = body.h - p * 2;
-  const cx = x + w / 2, cy = y + h * 0.60;
-  const radius = Math.min(w * 0.42, h * 0.52);
+  if (w < 60 || h < 46) return;
+  // Keep the arc clear of the bottom readout strip so scale labels and the
+  // dB value never share the same baseline.
+  const footH = 14;
+  const dialH = Math.max(24, h - footH);
+  const cx = x + w / 2, cy = y + dialH * 0.58;
+  const radius = Math.min(w * 0.42, dialH * 0.52);
   const start = Math.PI * 0.79, end = Math.PI * 2.21;
   const val = clamp(dbToNorm(ampToDb(frame.rms), -40, 3), 0, 1);
   const ballistics = modOpt(mod, 'ballistics', 'medium');
@@ -832,8 +868,15 @@ function drawSpectrum(ctx, mod, body, frame, st, env) {
   if (showGrid) {
     const gridHz = [20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000];
     mono(ctx, 5.5, '400');
-    ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
+    const labelFor = (hz) => (hz >= 1000 ? `${hz / 1000}k` : String(hz));
+    const k10 = labelFor(10000);
+    const k20 = labelFor(20000);
+    const w10 = ctx.measureText(k10).width;
+    const w20 = ctx.measureText(k20).width;
+    const x10 = x + (Math.log(10000 / 24) / Math.log(20000 / 24)) * w;
+    const show10k = x + w - w20 - 10 > x10 + w10 / 2;
+    ctx.textAlign = 'center';
     for (const hz of gridHz) {
       const t = Math.log(hz / 24) / Math.log(20000 / 24);
       const gx = Math.round(x + t * w) + 0.5;
@@ -843,10 +886,15 @@ function drawSpectrum(ctx, mod, body, frame, st, env) {
       ctx.moveTo(gx, y);
       ctx.lineTo(gx, floorY);
       ctx.stroke();
-      if (hz === 20 || hz === 100 || hz === 1000 || hz === 10000) {
+      const labelled = hz === 20 || hz === 100 || hz === 1000 || (hz === 10000 && show10k);
+      if (labelled) {
         ctx.fillStyle = 'rgba(255,255,255,.27)';
-        const label = hz >= 1000 ? `${hz / 1000}k` : String(hz);
-        ctx.fillText(label, gx, floorY + 3);
+        // The 20 Hz tick sits on the left edge: left-align it so it can't be
+        // clipped into a stray "0" next to the explicit endpoint label.
+        const anchor = hz === 20 ? 'left' : 'center';
+        ctx.textAlign = anchor;
+        ctx.fillText(labelFor(hz), hz === 20 ? x : gx, floorY + 3);
+        ctx.textAlign = 'center';
       }
     }
     ctx.strokeStyle = 'rgba(255,255,255,.12)';
@@ -895,11 +943,12 @@ function drawSpectrum(ctx, mod, body, frame, st, env) {
   ctx.textAlign = 'right';
   ctx.textBaseline = 'top';
   ctx.fillText(`${Math.round(frame.peakHz)} Hz`, x + w, y);
+  if (showGrid) {
+    ctx.textAlign = 'right';
+    ctx.fillStyle = 'rgba(255,255,255,.24)';
+    ctx.fillText('20k', x + w, floorY + 3);
+  }
   ctx.textAlign = 'left';
-  ctx.fillStyle = 'rgba(255,255,255,.24)';
-  ctx.fillText('20', x, floorY + 3);
-  ctx.textAlign = 'right';
-  ctx.fillText('20k', x + w, floorY + 3);
 }
 
 function drawSpectrogram(ctx, mod, body, frame, st, env) {
@@ -1367,10 +1416,12 @@ function drawRhythm(ctx, mod, body, frame, st, env) {
   sans(ctx, 36, '300');
   ctx.fillStyle = '#f6e4eb';
   ctx.textAlign = 'left';
-  ctx.fillText(bpm ? bpm.toFixed(1) : '—', x, y + 43);
+  const bpmText = bpm ? bpm.toFixed(1) : '—';
+  ctx.fillText(bpmText, x, y + 43);
+  const bpmWidth = ctx.measureText(bpmText).width;
   mono(ctx, 8, '500');
   ctx.fillStyle = rgba(accent, 0.72);
-  ctx.fillText('BPM', x + (bpm ? ctx.measureText(`${bpm.toFixed(1)}`).width : 0) + 18, y + 36);
+  ctx.fillText('BPM', x + bpmWidth + 7, y + 38);
 
   // Beat dots.
   const dotY = y + 62;
@@ -1819,19 +1870,41 @@ function drawPianoRoll(ctx, mod, body, frame, st, env) {
     ctx.fillRect(x - 18, yy, 18, Math.max(0.5, rowH - 0.3));
   }
 
-  // Time grid.
+  // Time grid. Pick the coarsest tick that still fits the measured label
+  // width so the timestamps never collide in narrow or zoomed-out modules.
+  const footerLeft = `${midi.trackCount} TRACKS · ${midi.noteCount} NOTES`;
+  const footerBpm = `${displayBpm.toFixed(1)}${autoSpeed && syncAudioLength ? ' AUDIO-SYNC' : ''}`;
+  const footerRight = `BPM ${footerBpm} · ${signature.numerator}/${signature.denominator}`;
   if (showGrid) {
-    const firstGrid = Math.ceil(startT / 2) * 2;
-    for (let t = firstGrid; t <= endT; t += 2) {
+    mono(ctx, 5.8, '400');
+    const footerLeftRight = x + ctx.measureText(footerLeft).width + 10;
+    const footerRightLeft = x + w - ctx.measureText(footerRight).width - 10;
+    mono(ctx, 5, '400');
+    let labelW = 0;
+    for (const sample of ['00:00', '00:00:00']) labelW = Math.max(labelW, ctx.measureText(sample).width);
+    const minGap = labelW + 12;
+    const tickSteps = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600];
+    let tickStep = tickSteps[tickSteps.length - 1];
+    for (const step of tickSteps) {
+      if ((step / windowSec) * w >= minGap) { tickStep = step; break; }
+    }
+    const firstGrid = Math.ceil(startT / tickStep) * tickStep;
+    let lastRight = -Infinity;
+    for (let t = firstGrid; t <= endT; t += tickStep) {
       const px = x + ((t - startT) / windowSec) * w;
       ctx.strokeStyle = 'rgba(255,255,255,.055)';
       ctx.beginPath();
       ctx.moveTo(px + 0.5, y); ctx.lineTo(px + 0.5, y + h);
       ctx.stroke();
-      mono(ctx, 5, '400');
+      const label = formatShortTime(t);
+      const labelWidth = ctx.measureText(label).width;
+      const labelX = px + 2;
+      if (labelX < footerLeftRight || labelX + labelWidth > footerRightLeft) continue;
+      if (labelX < lastRight + 6) continue;
+      lastRight = labelX + labelWidth;
       ctx.fillStyle = 'rgba(255,255,255,.18)';
       ctx.textAlign = 'left';
-      ctx.fillText(formatShortTime(t), px + 2, y + h + 8);
+      ctx.fillText(label, labelX, y + h + 8);
     }
   }
 
@@ -1945,11 +2018,10 @@ function drawPianoRoll(ctx, mod, body, frame, st, env) {
   mono(ctx, 5.8, '400');
   ctx.fillStyle = 'rgba(255,255,255,.25)';
   ctx.textAlign = 'left';
-  ctx.fillText(`${midi.trackCount} TRACKS · ${midi.noteCount} NOTES`, x, y + h + 9);
+  ctx.fillText(footerLeft, x, y + h + 9);
   ctx.textAlign = 'right';
   ctx.fillStyle = rgba(accent, 0.62);
-  const bpmLabel = `${displayBpm.toFixed(1)}${autoSpeed && syncAudioLength ? ' AUDIO-SYNC' : ''}`;
-  ctx.fillText(`BPM ${bpmLabel} · ${signature.numerator}/${signature.denominator}`, x + w, y + h + 9);
+  ctx.fillText(footerRight, x + w, y + h + 9);
 }
 
 // ── Export dispatcher ───────────────────────────────────────────────────────

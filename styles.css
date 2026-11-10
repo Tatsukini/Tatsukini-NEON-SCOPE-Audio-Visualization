@@ -687,7 +687,14 @@ body.exporting .stage-watermark { display: none !important; }
 .progress-track { height: 4px; border-radius: 4px; background: rgba(255,255,255,.08); overflow: hidden; }
 .progress-fill { width: 0; height: 100%; background: linear-gradient(90deg, var(--accent-solid), color-mix(in srgb, var(--accent-solid), #fff 36%)); box-shadow: 0 0 14px rgba(var(--accent-rgb), .55); transition: width .15s linear; }
 .progress-meta { display: flex; justify-content: space-between; margin-top: 7px; font: 8px var(--mono); color: #796470; }
-.progress-hint { text-align: center; font-size: 8.5px; line-height: 1.6; color: #705c69; margin: 19px 0 16px; }
+.export-log-wrap { margin-top: 14px; border: 1px solid rgba(255,255,255,.07); border-radius: 6px; background: #09050d; overflow: hidden; }
+.export-log-head { display: flex; align-items: center; justify-content: space-between; padding: 6px 9px; border-bottom: 1px solid rgba(255,255,255,.055); font: 7px var(--mono); letter-spacing: .08em; color: #6d5865; }
+.export-log-head em { font-style: normal; color: var(--accent); letter-spacing: .04em; }
+.export-log { margin: 0; padding: 8px 9px 10px; height: 112px; overflow: auto; white-space: pre-wrap; word-break: break-all; font: 8px/1.55 var(--mono); color: #9a8391; scrollbar-width: thin; }
+.export-log::-webkit-scrollbar { width: 5px; }
+.export-log::-webkit-scrollbar-thumb { background: rgba(255,255,255,.14); border-radius: 4px; }
+.progress-hint { text-align: center; font-size: 8.5px; line-height: 1.6; color: #705c69; margin: 12px 0 16px; }
+body.exporting #exportModal .modal-foot { display: none; }
 .help-card { width: min(740px, 94vw); }
 .help-body { padding-top: 19px; }
 .help-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px 25px; margin-bottom: 18px; }

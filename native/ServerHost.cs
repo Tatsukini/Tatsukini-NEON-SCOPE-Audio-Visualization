@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
@@ -26,6 +27,45 @@ internal sealed class ServerHost : IAsyncDisposable
     private readonly string _tempRoot;
     private readonly IFileProvider _fileProvider;
     private readonly HashSet<string> _encoders = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _hwVendors = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, ConvertLogJob> _convertJobs = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, Process> _convertProcs = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, (string Path, DateTime At)> _audioSources = new(StringComparer.OrdinalIgnoreCase);
+
+    private sealed class ConvertLogJob
+    {
+        private readonly List<string> _lines = new();
+        public bool Done;
+        public bool Cancelled;
+        public string? Error;
+        public DateTime UpdatedAt = DateTime.UtcNow;
+
+        public void Push(string text)
+        {
+            lock (_lines)
+            {
+                foreach (var part in text.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
+                {
+                    var line = part.Trim();
+                    if (line.Length == 0) continue;
+                    _lines.Add(line);
+                }
+                if (_lines.Count > 220) _lines.RemoveRange(0, _lines.Count - 220);
+            }
+            UpdatedAt = DateTime.UtcNow;
+        }
+
+        public void Reset()
+        {
+            lock (_lines) _lines.Clear();
+            UpdatedAt = DateTime.UtcNow;
+        }
+
+        public string[] Snapshot()
+        {
+            lock (_lines) return _lines.ToArray();
+        }
+    }
 
     private static readonly Dictionary<string, string> ContainerTypes = new()
     {
@@ -59,6 +99,40 @@ internal sealed class ServerHost : IAsyncDisposable
     {
         ["h264"] = 51, ["h265"] = 51, ["vp9"] = 63, ["vp8"] = 63, ["av1"] = 63,
     };
+
+    private static readonly Dictionary<string, Dictionary<string, string>> HwEncoders = new()
+    {
+        ["nvidia"] = new() { ["h264"] = "h264_nvenc", ["h265"] = "hevc_nvenc", ["av1"] = "av1_nvenc" },
+        ["amd"] = new() { ["h264"] = "h264_amf", ["h265"] = "hevc_amf", ["av1"] = "av1_amf" },
+        ["intel"] = new() { ["h264"] = "h264_qsv", ["h265"] = "hevc_qsv", ["av1"] = "av1_qsv" },
+    };
+
+    private static readonly Dictionary<string, string> SoftwareEncoders = new()
+    {
+        ["h264"] = "libx264", ["h265"] = "libx265", ["vp9"] = "libvpx-vp9", ["vp8"] = "libvpx",
+    };
+
+    private static readonly Dictionary<string, int> NvencPreset = new()
+    {
+        ["ultrafast"] = 1, ["superfast"] = 2, ["veryfast"] = 3, ["faster"] = 4, ["fast"] = 4,
+        ["medium"] = 5, ["slow"] = 6, ["slower"] = 7, ["veryslow"] = 7,
+    };
+
+    private static readonly Dictionary<string, string> AmfQuality = new()
+    {
+        ["ultrafast"] = "speed", ["superfast"] = "speed", ["veryfast"] = "speed",
+        ["faster"] = "balanced", ["fast"] = "balanced", ["medium"] = "balanced",
+        ["slow"] = "quality", ["slower"] = "quality", ["veryslow"] = "quality",
+    };
+
+    private static readonly Dictionary<string, string> QsvPreset = new()
+    {
+        ["ultrafast"] = "veryfast", ["superfast"] = "veryfast", ["veryfast"] = "veryfast",
+        ["faster"] = "faster", ["fast"] = "fast", ["medium"] = "medium",
+        ["slow"] = "slow", ["slower"] = "slower", ["veryslow"] = "veryslow",
+    };
+
+    private static readonly string[] EncoderVendors = { "auto", "software", "nvidia", "amd", "intel" };
 
     public string BaseUrl { get; private set; } = string.Empty;
     public string? FfmpegPath { get; private set; }
@@ -105,7 +179,78 @@ internal sealed class ServerHost : IAsyncDisposable
             platform = "win32",
             codecs = AvailableVideoCodecs(),
             audioCodecs = AvailableAudioCodecs(),
+            encoders = _encoders.OrderBy(name => name, StringComparer.OrdinalIgnoreCase).ToArray(),
+            hwVendors = _hwVendors.OrderBy(name => name, StringComparer.OrdinalIgnoreCase).ToArray(),
         }));
+
+        app.MapPost("/api/convert/cancel", (string? id) =>
+        {
+            var key = Regex.Replace(id ?? string.Empty, "[^A-Za-z0-9._-]", string.Empty);
+            if (key.Length > 64) key = key.Substring(0, 64);
+            var killed = false;
+            if (key.Length > 0 && _convertProcs.TryGetValue(key, out var process))
+            {
+                try { process.Kill(entireProcessTree: true); killed = true; } catch { }
+                _convertProcs.TryRemove(key, out _);
+            }
+            if (key.Length > 0 && _convertJobs.TryGetValue(key, out var job))
+            {
+                job.Cancelled = true;
+                job.Done = true;
+                job.Error = "已取消";
+                job.Push("已取消（客户端请求）");
+            }
+            return Results.Json(new { ok = true, killed });
+        }).DisableAntiforgery();
+
+        app.MapPost("/api/audio-source", async (HttpContext context) =>
+        {
+            var id = Regex.Replace(context.Request.Query["id"].FirstOrDefault() ?? string.Empty,
+                "[^A-Za-z0-9._-]", string.Empty);
+            if (id.Length > 64) id = id.Substring(0, 64);
+            if (id.Length == 0) return Results.Json(new { error = "缺少任务 id" }, statusCode: 400);
+            var ext = Regex.Replace(context.Request.Headers["X-Audio-Ext"].FirstOrDefault() ?? "bin",
+                "[^A-Za-z0-9]", string.Empty);
+            if (ext.Length == 0) ext = "bin";
+            if (ext.Length > 5) ext = ext.Substring(0, 5);
+            Directory.CreateDirectory(_tempRoot);
+            PruneAudioSources();
+            var target = Path.Combine(_tempRoot, $"audio-{id}.{ext}");
+            try
+            {
+                await using (var file = new FileStream(target, FileMode.Create, FileAccess.Write,
+                    FileShare.None, 1024 * 1024, true))
+                {
+                    await context.Request.Body.CopyToAsync(file, context.RequestAborted);
+                }
+                var info = new FileInfo(target);
+                if (info.Length < 1024)
+                {
+                    info.Delete();
+                    return Results.Json(new { error = "音频数据为空" }, statusCode: 400);
+                }
+                _audioSources[id] = (target, DateTime.UtcNow);
+                return Results.Json(new { ok = true, bytes = info.Length });
+            }
+            catch (Exception ex)
+            {
+                try { if (File.Exists(target)) File.Delete(target); } catch { }
+                return Results.Json(new { error = "音频上传失败：" + ex.Message }, statusCode: 500);
+            }
+        }).DisableAntiforgery();
+
+        app.MapGet("/api/convert/log", (string? id) =>
+        {
+            PruneConvertJobs();
+            ConvertLogJob? job = null;
+            if (!string.IsNullOrWhiteSpace(id)) _convertJobs.TryGetValue(id, out job);
+            return Results.Json(new
+            {
+                lines = job?.Snapshot() ?? Array.Empty<string>(),
+                done = job?.Done ?? false,
+                error = job?.Error,
+            });
+        });
 
         app.MapPost("/api/convert", (Delegate)HandleConvertAsync)
             .DisableAntiforgery();
@@ -171,7 +316,10 @@ internal sealed class ServerHost : IAsyncDisposable
         var outputName = SanitizeFileName(context.Request.Headers["X-Output-Name"].FirstOrDefault());
         var container = OneOf(context.Request.Headers["X-Container"].FirstOrDefault(), ContainerTypes.Keys, "mp4");
         var codec = OneOf(context.Request.Headers["X-Codec"].FirstOrDefault(), new[] { "h264", "h265", "av1", "vp9", "vp8" }, "h264");
-        var encoder = EncoderFor(codec);
+        var requestedVendor = OneOf(
+            (context.Request.Headers["X-Encoder"].FirstOrDefault() ?? "auto").ToLowerInvariant(),
+            EncoderVendors, "auto");
+        var encoder = ResolveEncoder(codec, requestedVendor);
         if (encoder == null)
         {
             return Results.Json(new { error = $"当前 FFmpeg 不支持 {codec.ToUpperInvariant()} 编码，请改用其他编码或更新 FFmpeg。" },
@@ -225,6 +373,36 @@ internal sealed class ServerHost : IAsyncDisposable
         var inputPath = Path.Combine(jobDir, "input.webm");
         var outputPath = Path.Combine(jobDir, "output." + container);
 
+        var logId = Regex.Replace(context.Request.Headers["X-Log-Id"].FirstOrDefault() ?? string.Empty,
+            "[^A-Za-z0-9._-]", string.Empty);
+        if (logId.Length > 64) logId = logId.Substring(0, 64);
+        ConvertLogJob? logJob = null;
+        if (logId.Length > 0)
+        {
+            PruneConvertJobs();
+            logJob = _convertJobs.GetOrAdd(logId, _ => new ConvertLogJob());
+            logJob.Reset();
+        }
+
+        var playbackRate = 1.0;
+        if (double.TryParse(context.Request.Headers["X-Playback-Rate"].FirstOrDefault(),
+                System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var parsedRate))
+        {
+            playbackRate = Math.Clamp(parsedRate, 0.05, 1.0);
+        }
+        var retime = playbackRate < 0.995;
+        logJob?.Push($"retime {playbackRate:F4}x  fps {fps}  codec {codec}");
+        logJob?.Push($"encoder {encoder}  vendor {requestedVendor}  hardware {(EncoderKind(encoder) == "software" ? "no" : "yes")}");
+
+        string? originalAudio = null;
+        if ((context.Request.Headers["X-Audio-Original"].FirstOrDefault() ?? string.Empty) == "1"
+            && logId.Length > 0 && _audioSources.TryRemove(logId, out var audioEntry)
+            && File.Exists(audioEntry.Path))
+        {
+            originalAudio = audioEntry.Path;
+        }
+        logJob?.Push(originalAudio != null ? "audio source: original file" : "audio source: recorded stream");
+
         try
         {
             await using (var file = new FileStream(inputPath, FileMode.Create, FileAccess.Write, FileShare.None, 1024 * 1024, true))
@@ -240,76 +418,162 @@ internal sealed class ServerHost : IAsyncDisposable
                     statusCode: StatusCodes.Status400BadRequest);
             }
 
-            var args = new List<string>
+            List<string> BuildArgs(string videoEncoder)
             {
-                "-hide_banner", "-loglevel", "error", "-y",
-                "-i", inputPath,
-                "-map", "0:v:0", "-map", "0:a:0?",
-                "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
-            };
-
-            if (encoder == "libx264" || encoder == "libx265")
-            {
-                args.AddRange(new[] { "-c:v", encoder, "-preset", preset, "-crf", crf.ToString() });
-                if (encoder == "libx265") args.AddRange(new[] { "-tag:v", "hvc1" });
-            }
-            else if (encoder == "libsvtav1")
-            {
-                args.AddRange(new[] { "-c:v", "libsvtav1", "-preset", SvtPreset.GetValueOrDefault(preset, 6).ToString(), "-crf", crf.ToString() });
-            }
-            else if (encoder == "libaom-av1")
-            {
-                args.AddRange(new[] { "-c:v", "libaom-av1", "-cpu-used", "6", "-row-mt", "1", "-crf", crf.ToString(), "-b:v", "0" });
-            }
-            else
-            {
-                args.AddRange(new[]
+                var list = new List<string>
                 {
-                    "-c:v", encoder, "-crf", crf.ToString(), "-b:v", "0",
-                    "-cpu-used", VpxSpeed.GetValueOrDefault(preset, 4).ToString(), "-row-mt", "1",
+                    "-hide_banner", "-loglevel", "info", "-stats", "-stats_period", "1", "-y",
+                    "-i", inputPath,
+                };
+                if (originalAudio != null) list.AddRange(new[] { "-i", originalAudio });
+                list.AddRange(new[]
+                {
+                    "-map", "0:v:0", "-map", originalAudio != null ? "1:a:0" : "0:a:0?",
+                    "-vf", $"{(retime ? string.Create(System.Globalization.CultureInfo.InvariantCulture, $"setpts={playbackRate:F4}*PTS,") : string.Empty)}scale=trunc(iw/2)*2:trunc(ih/2)*2",
                 });
+                if (retime) list.AddRange(new[] { "-r", fps.ToString() });
+                list.AddRange(VideoEncoderArgs(videoEncoder, preset, crf));
+                if (NeedsHvc1Tag(videoEncoder)) list.AddRange(new[] { "-tag:v", "hvc1" });
+                list.AddRange(new[] { "-pix_fmt", "yuv420p", "-g", gopFrames.ToString() });
+                if (retime && originalAudio == null)
+                {
+                    list.AddRange(new[] { "-af", string.Create(System.Globalization.CultureInfo.InvariantCulture, $"atempo={1 / playbackRate:F4}") });
+                }
+                if (container == "mp4" || container == "mov") list.AddRange(new[] { "-movflags", "+faststart" });
+                list.AddRange(new[] { "-c:a", audioEncoder, "-b:a", $"{audioBitrate}k" });
+                list.AddRange(new[] { "-ar", audioCodec == "opus" ? "48000" : sampleRate.ToString() });
+                list.AddRange(new[] { "-shortest", outputPath });
+                return list;
             }
 
-            args.AddRange(new[] { "-pix_fmt", "yuv420p", "-g", gopFrames.ToString() });
-            if (container == "mp4" || container == "mov") args.AddRange(new[] { "-movflags", "+faststart" });
-            args.AddRange(new[] { "-c:a", audioEncoder, "-b:a", $"{audioBitrate}k" });
-            args.AddRange(new[] { "-ar", audioCodec == "opus" ? "48000" : sampleRate.ToString() });
-            args.AddRange(new[] { "-shortest", outputPath });
-
-            var psi = new ProcessStartInfo
+            async Task<(int Code, string ErrorText, string? StartError)> RunAttemptAsync(string videoEncoder)
             {
-                FileName = FfmpegPath,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                WindowStyle = ProcessWindowStyle.Hidden,
-            };
-            foreach (var arg in args) psi.ArgumentList.Add(arg);
+                var psi = new ProcessStartInfo
+                {
+                    FileName = FfmpegPath,
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    WindowStyle = ProcessWindowStyle.Hidden,
+                };
+                foreach (var arg in BuildArgs(videoEncoder)) psi.ArgumentList.Add(arg);
 
-            using var process = Process.Start(psi);
-            if (process == null)
+                Process? process;
+                try
+                {
+                    process = Process.Start(psi);
+                }
+                catch (Exception ex)
+                {
+                    return (-1, ex.Message, ex.Message);
+                }
+                if (process == null) return (-1, string.Empty, "无法启动 FFmpeg 进程。");
+                if (logId.Length > 0) _convertProcs[logId] = process;
+                try
+                {
+                    var errorBuffer = new StringBuilder();
+                    var readTask = Task.Run(async () =>
+                    {
+                        var buffer = new char[4096];
+                        var pending = new StringBuilder();
+                        try
+                        {
+                            while (true)
+                            {
+                                var read = await process.StandardError.ReadAsync(buffer, 0, buffer.Length);
+                                if (read <= 0) break;
+                                var text = new string(buffer, 0, read);
+                                if (errorBuffer.Length < 8000) errorBuffer.Append(text);
+                                if (errorBuffer.Length > 8000) errorBuffer.Remove(0, errorBuffer.Length - 8000);
+                                if (logJob == null) continue;
+                                pending.Append(text);
+                                if (pending.Length > 64 * 1024) pending.Remove(0, pending.Length - 8192);
+                                var cut = pending.ToString().LastIndexOfAny(new[] { '\r', '\n' });
+                                if (cut >= 0)
+                                {
+                                    logJob.Push(pending.ToString(0, cut));
+                                    pending.Remove(0, cut + 1);
+                                }
+                            }
+                        }
+                        catch
+                        {
+                            // Process closed mid-read; the exit code below decides the outcome.
+                        }
+                        if (logJob != null && pending.Length > 0) logJob.Push(pending.ToString());
+                    });
+
+                    using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted);
+                    timeoutCts.CancelAfter(TimeSpan.FromMinutes(Math.Min(60, 15 / playbackRate)));
+                    try
+                    {
+                        await process.WaitForExitAsync(timeoutCts.Token);
+                    }
+                    catch
+                    {
+                        try { process.Kill(entireProcessTree: true); } catch { }
+                        throw;
+                    }
+
+                    await readTask;
+                    return (process.ExitCode, errorBuffer.ToString(), null);
+                }
+                finally
+                {
+                    if (logId.Length > 0) _convertProcs.TryRemove(logId, out _);
+                    process.Dispose();
+                }
+            }
+
+            var fallback = EncoderKind(encoder) == "software" ? null : ResolveEncoder(codec, "software");
+            var attempts = fallback != null && fallback != encoder
+                ? new[] { encoder, fallback }
+                : new[] { encoder };
+            var code = -1;
+            var errorText = string.Empty;
+            string? startError = null;
+            for (var attempt = 0; attempt < attempts.Length; attempt++)
             {
+                if (logJob?.Cancelled == true) break;
+                var current = attempts[attempt];
+                if (attempt > 0) logJob?.Push($"硬件编码失败，回退软件编码 {current}");
+                var result = await RunAttemptAsync(current);
+                code = result.Code;
+                errorText = result.ErrorText;
+                startError = result.StartError;
+                if (startError != null) break;
+                if (logJob != null) { logJob.Done = true; logJob.Error = code == 0 ? null : $"FFmpeg exit {code}"; }
+                if (code == 0)
+                {
+                    if (attempt > 0) logJob?.Push($"已回退到 {current} 完成编码");
+                    break;
+                }
+                if (logJob?.Cancelled == true) break;
+                if (attempt + 1 < attempts.Length) logJob?.Push($"{current} 失败（exit {code}），尝试软件编码…");
+            }
+
+            if (logJob?.Cancelled == true)
+            {
+                logJob.Done = true;
+                logJob.Error = "已取消";
                 TryDeleteDirectory(jobDir);
-                return Results.Json(new { error = "无法启动 FFmpeg 进程。" },
+                return Results.Json(new { error = "已取消" }, statusCode: 499);
+            }
+            if (startError != null)
+            {
+                if (logJob != null) { logJob.Done = true; logJob.Error = startError; }
+                TryDeleteDirectory(jobDir);
+                return Results.Json(new { error = startError },
                     statusCode: StatusCodes.Status500InternalServerError);
             }
-
-            var errorTask = process.StandardError.ReadToEndAsync();
-            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted);
-            timeoutCts.CancelAfter(TimeSpan.FromMinutes(15));
-            try
+            if (logJob != null)
             {
-                await process.WaitForExitAsync(timeoutCts.Token);
+                logJob.Done = true;
+                logJob.Error = code == 0 ? null : $"FFmpeg exit {code}";
+                if (code == 0) logJob.Push("封装完成");
             }
-            catch
-            {
-                try { process.Kill(entireProcessTree: true); } catch { }
-                throw;
-            }
-
-            var errorText = await errorTask;
-            if (process.ExitCode != 0 || !File.Exists(outputPath))
+            if (code != 0 || !File.Exists(outputPath))
             {
                 AppPaths.Log("FFmpeg failed: " + errorText);
                 TryDeleteDirectory(jobDir);
@@ -333,15 +597,49 @@ internal sealed class ServerHost : IAsyncDisposable
         }
         catch (OperationCanceledException)
         {
+            if (logJob != null) { logJob.Done = true; logJob.Error = "转码已取消"; }
             TryDeleteDirectory(jobDir);
             return Results.StatusCode(499);
         }
         catch (Exception ex)
         {
+            if (logJob != null && !logJob.Cancelled)
+            {
+                logJob.Done = true;
+                logJob.Error = ex.Message;
+                logJob.Push("error: " + ex.Message);
+            }
             AppPaths.Log("Convert error: " + ex);
             TryDeleteDirectory(jobDir);
             return Results.Json(new { error = "转码服务异常：" + ex.Message },
                 statusCode: StatusCodes.Status500InternalServerError);
+        }
+        finally
+        {
+            if (originalAudio != null)
+            {
+                try { if (File.Exists(originalAudio)) File.Delete(originalAudio); } catch { }
+            }
+        }
+    }
+
+    private void PruneAudioSources()
+    {
+        var cutoff = DateTime.UtcNow.AddMinutes(-30);
+        foreach (var pair in _audioSources)
+        {
+            if (pair.Value.At > cutoff) continue;
+            if (!_audioSources.TryRemove(pair.Key, out var entry)) continue;
+            try { if (File.Exists(entry.Path)) File.Delete(entry.Path); } catch { }
+        }
+    }
+
+    private void PruneConvertJobs()
+    {
+        var cutoff = DateTime.UtcNow.AddMinutes(-10);
+        foreach (var pair in _convertJobs)
+        {
+            if (pair.Value.UpdatedAt < cutoff) _convertJobs.TryRemove(pair.Key, out _);
         }
     }
 
@@ -499,7 +797,64 @@ internal sealed class ServerHost : IAsyncDisposable
             FfmpegVersion = string.Empty;
         }
 
-        if (FfmpegPath != null) DetectEncoders();
+        if (FfmpegPath != null)
+        {
+            DetectEncoders();
+            DetectHwVendors();
+        }
+    }
+
+    private void DetectHwVendors()
+    {
+        _hwVendors.Clear();
+        if (FfmpegPath == null) return;
+        foreach (var pair in HwEncoders)
+        {
+            if (!pair.Value.TryGetValue("h264", out var name)) continue;
+            if (_encoders.Count > 0 && !_encoders.Contains(name)) continue;
+            if (ProbeEncoder(name)) _hwVendors.Add(pair.Key);
+        }
+    }
+
+    private bool ProbeEncoder(string name)
+    {
+        // A full FFmpeg build lists every encoder it was compiled with, including
+        // GPUs that are not installed. Encode two tiny frames to check for real.
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = FfmpegPath,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                WindowStyle = ProcessWindowStyle.Hidden,
+            };
+            foreach (var arg in new[]
+            {
+                "-hide_banner", "-loglevel", "error", "-nostdin",
+                "-f", "lavfi", "-i", "nullsrc=s=320x240:d=0.1",
+                "-frames:v", "2", "-pix_fmt", "yuv420p", "-c:v", name, "-f", "null", "-",
+            })
+            {
+                psi.ArgumentList.Add(arg);
+            }
+            using var process = Process.Start(psi);
+            if (process == null) return false;
+            process.StandardOutput.ReadToEnd();
+            process.StandardError.ReadToEnd();
+            if (!process.WaitForExit(6000))
+            {
+                try { process.Kill(entireProcessTree: true); } catch { }
+                return false;
+            }
+            return process.ExitCode == 0;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private void DetectEncoders()
@@ -529,7 +884,10 @@ internal sealed class ServerHost : IAsyncDisposable
             foreach (var line in text.Split('\n'))
             {
                 var match = Regex.Match(line.TrimEnd('\r'), @"^\s*[VAS][A-Z.]{5}\s+(\S+)");
-                if (match.Success) _encoders.Add(match.Groups[1].Value);
+                if (match.Success && Regex.IsMatch(match.Groups[1].Value, @"^[A-Za-z0-9_.-]{2,}$"))
+                {
+                    _encoders.Add(match.Groups[1].Value);
+                }
             }
         }
         catch
@@ -541,11 +899,12 @@ internal sealed class ServerHost : IAsyncDisposable
     private List<string> AvailableVideoCodecs()
     {
         var codecs = new List<string>();
-        if (_encoders.Contains("libx264")) codecs.Add("h264");
-        if (_encoders.Contains("libx265")) codecs.Add("h265");
+        if (_encoders.Contains("libx264") || _encoders.Contains("h264_nvenc") || _encoders.Contains("h264_amf") || _encoders.Contains("h264_qsv")) codecs.Add("h264");
+        if (_encoders.Contains("libx265") || _encoders.Contains("hevc_nvenc") || _encoders.Contains("hevc_amf") || _encoders.Contains("hevc_qsv")) codecs.Add("h265");
         if (_encoders.Contains("libvpx-vp9")) codecs.Add("vp9");
         if (_encoders.Contains("libvpx")) codecs.Add("vp8");
-        if (_encoders.Contains("libsvtav1") || _encoders.Contains("libaom-av1")) codecs.Add("av1");
+        if (_encoders.Contains("libsvtav1") || _encoders.Contains("libaom-av1")
+            || _encoders.Contains("av1_nvenc") || _encoders.Contains("av1_amf") || _encoders.Contains("av1_qsv")) codecs.Add("av1");
         return codecs;
     }
 
@@ -557,31 +916,71 @@ internal sealed class ServerHost : IAsyncDisposable
         return codecs;
     }
 
-    private string? EncoderFor(string codec)
+    private static string EncoderKind(string name)
     {
-        if (_encoders.Count == 0)
+        if (name.EndsWith("_nvenc", StringComparison.OrdinalIgnoreCase)) return "nvidia";
+        if (name.EndsWith("_amf", StringComparison.OrdinalIgnoreCase)) return "amd";
+        if (name.EndsWith("_qsv", StringComparison.OrdinalIgnoreCase)) return "intel";
+        return "software";
+    }
+
+    private bool EncoderAvailable(string name)
+    {
+        return _encoders.Count == 0 || _encoders.Contains(name);
+    }
+
+    private string? ResolveEncoder(string codec, string vendor)
+    {
+        if (vendor != "software" && (vendor != "auto" || _encoders.Count > 0))
         {
-            // Encoder probing failed but FFmpeg exists; let FFmpeg report real errors.
-            return codec switch
+            var order = vendor == "auto"
+                ? new[] { "nvidia", "amd", "intel" }.Where(v => _hwVendors.Contains(v))
+                : new[] { vendor };
+            foreach (var candidate in order)
             {
-                "h264" => "libx264",
-                "h265" => "libx265",
-                "av1" => "libsvtav1",
-                "vp9" => "libvpx-vp9",
-                "vp8" => "libvpx",
-                _ => null,
-            };
+                if (!HwEncoders.TryGetValue(candidate, out var map)) continue;
+                if (!map.TryGetValue(codec, out var name)) continue;
+                if (EncoderAvailable(name)) return name;
+            }
         }
-        return codec switch
+        if (codec == "av1")
         {
-            "h264" => _encoders.Contains("libx264") ? "libx264" : null,
-            "h265" => _encoders.Contains("libx265") ? "libx265" : null,
-            "vp9" => _encoders.Contains("libvpx-vp9") ? "libvpx-vp9" : null,
-            "vp8" => _encoders.Contains("libvpx") ? "libvpx" : null,
-            "av1" => _encoders.Contains("libsvtav1") ? "libsvtav1"
-                : _encoders.Contains("libaom-av1") ? "libaom-av1" : null,
-            _ => null,
+            if (EncoderAvailable("libsvtav1")) return "libsvtav1";
+            if (EncoderAvailable("libaom-av1")) return "libaom-av1";
+            return _encoders.Count == 0 ? "libsvtav1" : null;
+        }
+        if (!SoftwareEncoders.TryGetValue(codec, out var software)) return null;
+        return EncoderAvailable(software) ? software : null;
+    }
+
+    private string[] VideoEncoderArgs(string name, string preset, int crf)
+    {
+        var kind = EncoderKind(name);
+        if (kind == "nvidia")
+        {
+            return new[] { "-c:v", name, "-preset", $"p{NvencPreset.GetValueOrDefault(preset, 5)}", "-rc", "vbr", "-cq", crf.ToString(), "-b:v", "0" };
+        }
+        if (kind == "amd")
+        {
+            return new[] { "-c:v", name, "-quality", AmfQuality.GetValueOrDefault(preset, "balanced"), "-rc", "cqp", "-qp_i", crf.ToString(), "-qp_p", crf.ToString(), "-qp_b", crf.ToString() };
+        }
+        if (kind == "intel")
+        {
+            return new[] { "-c:v", name, "-preset", QsvPreset.GetValueOrDefault(preset, "medium"), "-global_quality", crf.ToString() };
+        }
+        return name switch
+        {
+            "libx264" or "libx265" => new[] { "-c:v", name, "-preset", preset, "-crf", crf.ToString() },
+            "libsvtav1" => new[] { "-c:v", "libsvtav1", "-preset", SvtPreset.GetValueOrDefault(preset, 6).ToString(), "-crf", crf.ToString() },
+            "libaom-av1" => new[] { "-c:v", "libaom-av1", "-cpu-used", "6", "-row-mt", "1", "-crf", crf.ToString(), "-b:v", "0" },
+            _ => new[] { "-c:v", name, "-crf", crf.ToString(), "-b:v", "0", "-cpu-used", VpxSpeed.GetValueOrDefault(preset, 4).ToString(), "-row-mt", "1" },
         };
+    }
+
+    private static bool NeedsHvc1Tag(string name)
+    {
+        return name.StartsWith("hevc_", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(name, "libx265", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string OneOf(string? value, IEnumerable<string> allowed, string fallback)

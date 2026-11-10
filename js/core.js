@@ -259,6 +259,9 @@ export const AUTOMATION_PROPERTIES = {
   mash: {
     x: { label: 'X 偏移', min: -960, max: 960, step: 1, kind: 'number' },
     y: { label: 'Y 偏移', min: -540, max: 540, step: 1, kind: 'number' },
+    sizeTitle: { label: '标题字号', min: 6, max: 240, step: 1, kind: 'number' },
+    sizeAuthor: { label: '作者字号', min: 6, max: 240, step: 1, kind: 'number' },
+    sizeOrigin: { label: '来源字号', min: 6, max: 240, step: 1, kind: 'number' },
     scaleX: { label: '横向延展', min: 20, max: 400, step: 1, kind: 'number' },
     scaleY: { label: '纵向延展', min: 20, max: 400, step: 1, kind: 'number' },
     opacity: { label: '不透明度', min: 0, max: 1, step: 0.01, kind: 'number' },

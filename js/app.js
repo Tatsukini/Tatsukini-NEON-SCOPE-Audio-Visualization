@@ -28,7 +28,7 @@ const DEMO_ASSET_VERSION = '2026-11-04-3';
 const DEMO_VERSION_KEY = 'neon-scope.demo-asset-version';
 const EXPORT_DEFAULTS = {
   quality: 1080, fps: 60, bitrate: 24, format: 'mp4', range: 'full',
-  codec: 'h264', crf: 'auto', preset: 'medium',
+  codec: 'h264', encoder: 'auto', crf: 'auto', preset: 'medium',
   audioCodec: 'aac', audioBitrate: 192, sampleRate: 48000, gop: 2,
   advancedOpen: false,
 };
@@ -348,6 +348,8 @@ class NeonScopeApp {
       animationCues: [],
       ffmpegAvailable: false,
       ffmpegCodecs: [],
+      ffmpegEncoders: [],
+      ffmpegHwVendors: [],
       exporting: false,
     };
     this.exportSettings = { ...EXPORT_DEFAULTS };
@@ -809,13 +811,15 @@ class NeonScopeApp {
       startExportBtn: $('#startExportBtn'), cancelExportBtn: $('#cancelExportBtn'), qualityGrid: $('#qualityGrid'),
       fpsSeg: $('#fpsSeg'), formatSeg: $('#formatSeg'), bitrateSelect: $('#bitrateSelect'), rangeSelect: $('#rangeSelect'),
       exportAdvanced: $('#exportAdvanced'), exportAdvancedBtn: $('#exportAdvancedBtn'), exportAdvancedReset: $('#exportAdvancedReset'),
-      fpsInput: $('#fpsInput'), bitrateInput: $('#bitrateInput'), codecSelect: $('#codecSelect'), crfSelect: $('#crfSelect'),
+      fpsInput: $('#fpsInput'), bitrateInput: $('#bitrateInput'), codecSelect: $('#codecSelect'),
+      encoderSelect: $('#encoderSelect'), encoderHint: $('#encoderHint'), crfSelect: $('#crfSelect'),
       presetSelect: $('#presetSelect'), gopInput: $('#gopInput'), audioCodecSelect: $('#audioCodecSelect'),
       audioBitrateSelect: $('#audioBitrateSelect'), sampleRateSelect: $('#sampleRateSelect'),
       exportSummaryQuality: $('#exportSummaryQuality'), exportSummaryDuration: $('#exportSummaryDuration'),
       exportSummarySize: $('#exportSummarySize'), exportSummaryEncoder: $('#exportSummaryEncoder'),
       exportWarning: $('#exportWarning'), progressFill: $('#progressFill'), progressTime: $('#progressTime'),
       progressPercent: $('#progressPercent'), progressTitle: $('#progressTitle'), progressHint: $('#progressHint'),
+      exportLog: $('#exportLog'), exportLogState: $('#exportLogState'),
       alphaNotice: $('#alphaNotice'), alphaNoticeBtn: $('#alphaNoticeBtn'),
       helpModal: $('#helpModal'), toastStack: $('#toastStack'), fitBtn: $('#fitBtn'), theaterBtn: $('#theaterBtn'),
       stageTitle: $('.stage-title'), stageFooter: $('.stage-footer'),
@@ -1628,7 +1632,7 @@ class NeonScopeApp {
     d.exportAdvancedReset.addEventListener('click', () => {
       const es = this.exportSettings;
       Object.assign(es, {
-        fps: 60, bitrate: 24, crf: 'auto', preset: 'medium', gop: 2,
+        fps: 60, bitrate: 24, encoder: 'auto', crf: 'auto', preset: 'medium', gop: 2,
         codec: this._defaultCodec(es.format),
         audioCodec: this._containerAudio(es.format)[0],
         audioBitrate: 192, sampleRate: 48000,
@@ -1648,6 +1652,11 @@ class NeonScopeApp {
     });
     d.codecSelect.addEventListener('change', () => {
       this.exportSettings.codec = d.codecSelect.value;
+      this._syncExportUI();
+      this._persist();
+    });
+    d.encoderSelect.addEventListener('change', () => {
+      this.exportSettings.encoder = d.encoderSelect.value;
       this._syncExportUI();
       this._persist();
     });
@@ -2168,6 +2177,7 @@ class NeonScopeApp {
       const rightTrim = !!e.target.closest('.tl-resize');
       const canMoveTrack = !leftTrim && !rightTrim;
       const startX = e.clientX;
+      const startY = e.clientY;
       const startTime = cue.time;
       const startDuration = cue.duration;
       const startTrack = Number.isInteger(cue.track) ? cue.track : 0;
@@ -2223,7 +2233,7 @@ class NeonScopeApp {
         markHistory(ev);
         const delta = (ev.clientX - startX) / Math.max(0.001, screenPps);
         if (rightTrim) {
-          let end = snap(startDuration + delta);
+          let end = snap(startTime + startDuration + delta);
           const hit = nearestTarget(end);
           if (hit) { end = hit.target; this._showTimelineGuide(end); } else { this._hideTimelineGuide(); }
           cue.duration = clamp(end - cue.time, 0.1, 60);
@@ -3568,6 +3578,7 @@ class NeonScopeApp {
     for (const [key, el] of fields) {
       el.addEventListener('input', () => {
         this.state.info[key] = el.value;
+        if (key === 'bpm') this.audio.setManualBpm(el.value);
         this._persist();
       });
     }
@@ -3696,6 +3707,7 @@ class NeonScopeApp {
     this.dom.keyframeEditorAdd.addEventListener('click', () => this._addAutomationKey());
     this.dom.keyframeEditorDelete.addEventListener('click', () => this._deleteAutomationKey());
     this.dom.keyframeKeyList.addEventListener('change', (e) => this._onAutomationListChange(e));
+    this.dom.keyframeKeyList.addEventListener('input', (e) => this._onAutomationFieldInput(e));
     this.dom.keyframeKeyList.addEventListener('click', (e) => {
       const del = e.target.closest('[data-kf-delete]');
       if (del) {
@@ -3706,9 +3718,30 @@ class NeonScopeApp {
         return;
       }
       const row = e.target.closest('[data-kf-row]');
-      if (row) {
-        this._kfSelectedKey = Number(row.dataset.kfRow);
+      if (!row) return;
+      // Never rebuild the list while a native picker or text caret is active:
+      // replacing the focused input cancels color picking and loses edits.
+      if (e.target.closest('input, select, label')) {
+        const index = Number(row.dataset.kfRow);
+        if (this._kfSelectedKey !== index) {
+          this._kfSelectedKey = index;
+          this._syncKeyframeSelection();
+        }
+        return;
+      }
+      const index = Number(row.dataset.kfRow);
+      if (this._kfSelectedKey !== index) {
+        this._kfSelectedKey = index;
         this._renderKeyframeEditor();
+      }
+    });
+    this.dom.keyframeKeyList.addEventListener('focusin', (e) => {
+      const row = e.target.closest('[data-kf-row]');
+      if (!row) return;
+      const index = Number(row.dataset.kfRow);
+      if (this._kfSelectedKey !== index) {
+        this._kfSelectedKey = index;
+        this._syncKeyframeSelection();
       }
     });
     this.dom.keyframeEditorModal.addEventListener('click', (e) => {
@@ -3779,6 +3812,9 @@ class NeonScopeApp {
     if (prop === 'x') return p.x ?? 0;
     if (prop === 'y') return p.y ?? (cue.type === 'subtitle' ? 360 : 0);
     if (prop === 'size') return p.size ?? (cue.type === 'subtitle' ? 26 : 86);
+    if (prop === 'sizeTitle') return p.sizeTitle ?? 38;
+    if (prop === 'sizeAuthor') return p.sizeAuthor ?? 15;
+    if (prop === 'sizeOrigin') return p.sizeOrigin ?? 10;
     if (prop === 'fadeIn') return p.fadeIn ?? 0.35;
     if (prop === 'fadeOut') return p.fadeOut ?? 0.35;
     if (prop === 'lineGap') return p.lineGap ?? 8;
@@ -3851,6 +3887,41 @@ class NeonScopeApp {
       </div>`).join('');
   }
 
+  _syncKeyframeSelection() {
+    for (const row of this.dom.keyframeKeyList?.querySelectorAll('[data-kf-row]') || []) {
+      row.classList.toggle('selected', Number(row.dataset.kfRow) === this._kfSelectedKey);
+    }
+    for (const point of this.dom.keyframeGraph?.querySelectorAll('[data-kf-point]') || []) {
+      point.classList.toggle('selected', Number(point.dataset.kfPoint) === this._kfSelectedKey);
+    }
+  }
+
+  /** Update key rows in place so the focused input (color picker / caret) survives. */
+  _syncKeyframeRows() {
+    const keys = this._ensureAutomation();
+    const cue = this._automationCue();
+    const spec = cue ? this._automationSpec(cue, this._kfProp) : null;
+    if (!keys || !spec) return;
+    const rows = [...this.dom.keyframeKeyList.querySelectorAll('[data-kf-row]')];
+    if (rows.length !== keys.length) {
+      this._renderKeyframeEditor();
+      return;
+    }
+    keys.forEach((key, index) => {
+      const row = rows[index];
+      row.classList.toggle('selected', index === this._kfSelectedKey);
+      const timeInput = row.querySelector('[data-kf-field="time"]');
+      if (timeInput && document.activeElement !== timeInput) timeInput.value = Number(key.t).toFixed(2);
+      const valueInput = row.querySelector('[data-kf-field="value"]');
+      if (valueInput && document.activeElement !== valueInput) {
+        valueInput.value = spec.kind === 'color' ? key.v : Number(key.v).toFixed(3);
+      }
+    });
+    for (const point of this.dom.keyframeGraph.querySelectorAll('[data-kf-point]')) {
+      point.classList.toggle('selected', Number(point.dataset.kfPoint) === this._kfSelectedKey);
+    }
+  }
+
   _renderAutomationGraph(cue, keys, spec, span) {
     const W = 720, H = 300, L = 44, R = 12, T = 16, B = 26;
     const plotW = W - L - R;
@@ -3914,53 +3985,86 @@ class NeonScopeApp {
     const cue = this._automationCue();
     const data = this._automationPointFromEvent(e);
     if (!cue || !data) return;
+    e.preventDefault();
     const point = e.target.closest('[data-kf-point]');
     let historyPushed = false;
-    if (!point) {
+    let key = null;
+    if (point) {
+      key = data.keys[clamp(Number(point.dataset.kfPoint), 0, data.keys.length - 1)] || null;
+    } else {
       this._pushAnimationHistory();
       historyPushed = true;
-    }
-    let index;
-    if (point) {
-      index = Number(point.dataset.kfPoint);
-    } else {
-      const keys = data.keys;
-      const kind = data.spec.kind;
-      const value = kind === 'color'
-        ? automationValueAt(keys, data.t, this._automationBase(cue, this._kfProp, data.spec), 'color')
+      const value = data.spec.kind === 'color'
+        ? automationValueAt(data.keys, data.t, this._automationBase(cue, this._kfProp, data.spec), 'color')
         : data.value;
-      const existing = keys.findIndex((key) => Math.abs(key.t - data.t) < 0.02);
-      const entry = { t: Math.round(data.t * 100) / 100, v: value };
-      if (existing >= 0) keys[existing] = entry; else keys.push(entry);
-      keys.sort((a, b) => a.t - b.t);
-      index = keys.findIndex((key) => Math.abs(key.t - entry.t) < 0.001);
+      const existing = data.keys.findIndex((item) => Math.abs(item.t - data.t) < 0.02);
+      if (existing >= 0) {
+        key = data.keys[existing];
+        key.v = value;
+      } else {
+        key = { t: Math.round(data.t * 100) / 100, v: value };
+        data.keys.push(key);
+      }
+      data.keys.sort((a, b) => a.t - b.t);
+      this._renderKeyframeEditor();
     }
-    this._kfSelectedKey = index;
+    if (!key) return;
+    this._kfSelectedKey = data.keys.indexOf(key);
     const snap = (v) => Math.round(v * 100) / 100;
     const move = (ev) => {
+      ev.preventDefault();
       if (!historyPushed) {
         historyPushed = true;
         this._pushAnimationHistory();
       }
       const next = this._automationPointFromEvent(ev);
-      if (!next) return;
-      const key = data.keys[index];
-      if (!key) return;
+      if (!next || !data.keys.includes(key)) return;
       key.t = snap(clamp(next.t, 0, next.span));
-      if (data.spec.kind !== 'color') key.v = next.value;
+      if (next.spec.kind !== 'color') key.v = next.value;
       data.keys.sort((a, b) => a.t - b.t);
       this._kfSelectedKey = data.keys.indexOf(key);
-      this._renderKeyframeEditor();
+      this._renderAutomationGraph(cue, data.keys, next.spec, next.span);
+      this._syncKeyframeRows();
       this._renderTimeline();
     };
     const up = () => {
       document.removeEventListener('pointermove', move);
       document.removeEventListener('pointerup', up);
+      document.removeEventListener('pointercancel', up);
+      this._renderKeyframeEditor();
+      this._renderTimeline();
       this._persist();
     };
     document.addEventListener('pointermove', move);
     document.addEventListener('pointerup', up);
-    this._renderKeyframeEditor();
+    document.addEventListener('pointercancel', up);
+    this._syncKeyframeSelection();
+  }
+
+  _onAutomationFieldInput(e) {
+    const row = e.target.closest('[data-kf-row]');
+    if (!row) return;
+    const field = e.target.dataset.kfField;
+    if (field !== 'time' && field !== 'value') return;
+    const cue = this._automationCue();
+    const keys = this._ensureAutomation();
+    const spec = cue ? this._automationSpec(cue, this._kfProp) : null;
+    if (!cue || !keys || !spec) return;
+    const index = clamp(Number(row.dataset.kfRow), 0, keys.length - 1);
+    const key = keys[index];
+    if (!key) return;
+    if (field === 'value') {
+      key.v = spec.kind === 'color' ? e.target.value : (Number(e.target.value) || 0);
+    } else {
+      key.t = clamp(Number(e.target.value) || 0, 0, this._automationSpan(cue));
+    }
+    const span = this._automationSpan(cue);
+    this._renderAutomationGraph(cue, keys, spec, span);
+    this._kfSelectedKey = index;
+    this._syncKeyframeSelection();
+    this._renderTimeline();
+    clearTimeout(this._kfPersistTimer);
+    this._kfPersistTimer = setTimeout(() => this._persist(), 220);
   }
 
   _addAutomationKey() {
@@ -4043,6 +4147,7 @@ class NeonScopeApp {
     this.dom.infoAlbum.value = info.album || '';
     this.dom.infoGenre.value = info.genre || '';
     this.dom.infoBpm.value = info.bpm || '';
+    this.audio?.setManualBpm(info.bpm);
     this.dom.infoTrackNo.value = info.trackNo || '';
     this.dom.infoOverlay.checked = !!info.show;
     if (info.cover) {
@@ -4125,6 +4230,9 @@ class NeonScopeApp {
       set('hold', cue.duration);
       set('x', p.x ?? 0);
       set('y', p.y ?? 0);
+      set('sizeTitle', p.sizeTitle ?? 38);
+      set('sizeAuthor', p.sizeAuthor ?? 15);
+      set('sizeOrigin', p.sizeOrigin ?? 10);
       set('scaleX', p.scaleX ?? 100);
       set('scaleY', p.scaleY ?? 100);
     }
@@ -4298,6 +4406,9 @@ class NeonScopeApp {
         this._actionField('y', 'Y（绝对）', { type: 'number', value: '0', step: 1 }),
       ].join('');
       const page2 = [
+        this._actionField('sizeTitle', '标题字号', { type: 'number', value: '38', min: 6, max: 240, step: 1 }),
+        this._actionField('sizeAuthor', '作者字号', { type: 'number', value: '15', min: 6, max: 240, step: 1 }),
+        this._actionField('sizeOrigin', '来源字号', { type: 'number', value: '10', min: 6, max: 240, step: 1 }),
         this._actionField('scaleX', '横向延展（%）', { type: 'number', value: '100', min: 20, max: 400, step: 1 }),
         this._actionField('scaleY', '纵向延展（%）', { type: 'number', value: '100', min: 20, max: 400, step: 1 }),
         `<button class="mini-action action-builder-reset" data-action-reset type="button">恢复为原本设置</button>`,
@@ -4355,7 +4466,7 @@ class NeonScopeApp {
       return `${time} subtitle text=${this._actionArg(this._actionFieldValue('text') || 'Subtitle')} duration=${this._actionFieldValue('duration') || '4'} x=${this._actionFieldValue('x') || '0'} y=${this._actionFieldValue('y') || '360'} size=${this._actionFieldValue('size') || '26'} fadeIn=${this._actionFieldValue('fadeIn') || '0.35'} fadeOut=${this._actionFieldValue('fadeOut') || '0.35'} lineGap=${this._actionFieldValue('lineGap') || '8'} scaleX=${this._actionFieldValue('scaleX') || '100'} scaleY=${this._actionFieldValue('scaleY') || '100'} role=${this._actionFieldValue('role') || 'main'}`;
     }
     if (type === 'mash') {
-      return `${time} mash title=${this._actionArg(this._actionFieldValue('title') || 'Title')} author=${this._actionArg(this._actionFieldValue('author') || 'Artist')} origin=${this._actionArg(this._actionFieldValue('origin') || 'Origin')} hold=${this._actionFieldValue('hold') || '3'} x=${this._actionFieldValue('x') || '0'} y=${this._actionFieldValue('y') || '0'} scaleX=${this._actionFieldValue('scaleX') || '100'} scaleY=${this._actionFieldValue('scaleY') || '100'}`;
+      return `${time} mash title=${this._actionArg(this._actionFieldValue('title') || 'Title')} author=${this._actionArg(this._actionFieldValue('author') || 'Artist')} origin=${this._actionArg(this._actionFieldValue('origin') || 'Origin')} hold=${this._actionFieldValue('hold') || '3'} x=${this._actionFieldValue('x') || '0'} y=${this._actionFieldValue('y') || '0'} sizeTitle=${this._actionFieldValue('sizeTitle') || '38'} sizeAuthor=${this._actionFieldValue('sizeAuthor') || '15'} sizeOrigin=${this._actionFieldValue('sizeOrigin') || '10'} scaleX=${this._actionFieldValue('scaleX') || '100'} scaleY=${this._actionFieldValue('scaleY') || '100'}`;
     }
     if (type === 'batch') {
       const split = this._actionFieldValue('split') || 'false';
@@ -7520,7 +7631,47 @@ class NeonScopeApp {
   }
 
   _directExportAvailable(es = this.exportSettings) {
-    return es.crf === 'auto' && !!pickDirectMime(es.format, es.codec);
+    return es.crf === 'auto' && es.encoder === 'auto' && !!pickDirectMime(es.format, es.codec);
+  }
+
+  _hwEncoderMap() {
+    return {
+      nvidia: { h264: 'h264_nvenc', h265: 'hevc_nvenc', av1: 'av1_nvenc' },
+      amd: { h264: 'h264_amf', h265: 'hevc_amf', av1: 'av1_amf' },
+      intel: { h264: 'h264_qsv', h265: 'hevc_qsv', av1: 'av1_qsv' },
+    };
+  }
+
+  _resolveEncoderName(codec, vendor) {
+    const list = this.state.ffmpegEncoders || [];
+    const has = (name) => list.includes(name);
+    if (vendor !== 'software' && list.length) {
+      const map = this._hwEncoderMap();
+      const detected = this.state.ffmpegHwVendors || [];
+      const order = vendor === 'auto'
+        ? ['nvidia', 'amd', 'intel'].filter((v) => detected.includes(v))
+        : [vendor];
+      for (const v of order) {
+        const name = map[v]?.[codec];
+        if (name && has(name)) return name;
+      }
+    }
+    if (codec === 'av1') {
+      if (has('libsvtav1')) return 'libsvtav1';
+      if (has('libaom-av1')) return 'libaom-av1';
+      return null;
+    }
+    const software = { h264: 'libx264', h265: 'libx265', vp9: 'libvpx-vp9', vp8: 'libvpx' }[codec];
+    return software && has(software) ? software : null;
+  }
+
+  _availableHwVendors() {
+    const list = this.state.ffmpegEncoders || [];
+    const detected = this.state.ffmpegHwVendors || [];
+    return Object.entries(this._hwEncoderMap())
+      .filter(([vendor, map]) => detected.includes(vendor)
+        && (!list.length || Object.values(map).some((name) => list.includes(name))))
+      .map(([vendor]) => vendor);
   }
 
   _normalizeExportSettings() {
@@ -7541,6 +7692,7 @@ class NeonScopeApp {
       es.crf = String(es.crf);
     }
     es.preset = ['ultrafast', 'fast', 'medium', 'slow', 'veryslow'].includes(es.preset) ? es.preset : 'medium';
+    if (!['auto', 'software', 'nvidia', 'amd', 'intel'].includes(es.encoder)) es.encoder = 'auto';
     if (!this._containerAudio(es.format).includes(es.audioCodec)) {
       es.audioCodec = this._containerAudio(es.format)[0];
     }
@@ -7597,6 +7749,34 @@ class NeonScopeApp {
       option.title = allowed ? (option.disabled ? '当前环境不支持该编码' : '') : '该封装格式不支持此编码';
     }
     d.codecSelect.value = es.codec;
+    const hwVendors = this._availableHwVendors();
+    const hwLabels = { nvidia: 'NVIDIA NVENC', amd: 'AMD AMF', intel: 'Intel QSV' };
+    const encoderUsable = (vendor) => vendor === 'auto' || vendor === 'software'
+      || (hwVendors.includes(vendor) && !!this._resolveEncoderName(es.codec, vendor));
+    if (!encoderUsable(es.encoder)) es.encoder = 'auto';
+    for (const option of d.encoderSelect.options) {
+      const vendor = option.value;
+      option.disabled = vendor === 'auto' || vendor === 'software'
+        ? false
+        : !hwVendors.includes(vendor) || !this._resolveEncoderName(es.codec, vendor);
+      option.title = option.disabled && vendor !== 'auto' && vendor !== 'software'
+        ? `当前 FFmpeg 或显卡不支持 ${es.codec.toUpperCase()} 的该硬件编码`
+        : '';
+    }
+    d.encoderSelect.value = es.encoder;
+    if (d.encoderHint) {
+      let hint;
+      if (!this.state.ffmpegAvailable) {
+        hint = '未检测到 FFmpeg，硬件编码不可用；将使用浏览器直录或回退 WebM。';
+      } else if (!hwVendors.length) {
+        hint = '未检测到可用的硬件编码器，将使用软件编码（CPU）。';
+      } else if (es.codec === 'vp8' || es.codec === 'vp9') {
+        hint = 'VP8 / VP9 仅提供软件编码，硬件选项已禁用。';
+      } else {
+        hint = `已检测到 ${hwVendors.map((v) => hwLabels[v]).join(' · ')}；硬件编码失败时会自动回退软件编码。`;
+      }
+      d.encoderHint.textContent = hint;
+    }
     d.crfSelect.value = String(es.crf);
     d.presetSelect.value = es.preset;
     const allowedAudio = this._containerAudio(es.format);
@@ -7613,13 +7793,23 @@ class NeonScopeApp {
     const bytes = (es.bitrate * 1_000_000 / 8 + es.audioBitrate * 1000 / 8) * duration;
     d.exportSummarySize.textContent = humanBytes(bytes);
     const direct = this._directExportAvailable(es);
-    const mode = direct ? 'DIRECT' : 'FFMPEG';
+    const encoderName = direct ? '' : this._resolveEncoderName(es.codec, es.encoder);
+    const mode = direct
+      ? 'DIRECT'
+      : encoderName?.endsWith('_nvenc') ? 'FFMPEG · NVENC'
+        : encoderName?.endsWith('_amf') ? 'FFMPEG · AMF'
+          : encoderName?.endsWith('_qsv') ? 'FFMPEG · QSV'
+            : encoderName ? 'FFMPEG · CPU' : 'FFMPEG';
     d.exportSummaryEncoder.textContent = `${EXPORT_CODEC_LABELS[es.codec]} / ${es.audioCodec.toUpperCase()} · ${es.format.toUpperCase()} · ${mode}`;
     d.exportPresetLabel.textContent = this._exportPresetLabel();
 
     const warning = [];
     if (!direct && !this.state.ffmpegAvailable) {
       warning.push('当前组合需要 FFmpeg 转码，但未检测到 FFmpeg；导出会自动回退为 WebM 直录。');
+    }
+    if (es.encoder !== 'auto' && es.encoder !== 'software'
+      && this.state.ffmpegAvailable && !this._resolveEncoderName(es.codec, es.encoder)) {
+      warning.push('所选硬件编码器不支持当前视频编码，将自动改用软件编码。');
     }
     if (es.format === 'mkv' || es.format === 'mov') {
       warning.push(`${es.format.toUpperCase()} 需要通过本机 FFmpeg 封装，转码时间会明显长于直录。`);
@@ -7658,6 +7848,8 @@ class NeonScopeApp {
     this.dom.progressTime.textContent = `00:00 / ${formatShortTime(duration)}`;
     this.dom.progressTitle.textContent = '正在初始化渲染管线…';
     this.dom.progressHint.textContent = '请保持此标签页处于前台，录制期间请勿切换窗口。';
+    if (this.dom.exportLog) this.dom.exportLog.textContent = '等待录制开始…';
+    if (this.dom.exportLogState) this.dom.exportLogState.textContent = '初始化…';
     this.dom.cancelExportBtn.disabled = false;
     this.audio.stop();
 
@@ -7675,6 +7867,16 @@ class NeonScopeApp {
         this.dom.progressHint.textContent = p.message || '';
         this.dom.exportVeilTime.textContent = formatShortTime(p.time || 0);
       },
+      onLog: ({ lines, done, error }) => {
+        const pre = this.dom.exportLog;
+        if (pre) {
+          pre.textContent = lines?.length ? lines.join('\n') : '等待 FFmpeg 输出…';
+          pre.scrollTop = pre.scrollHeight;
+        }
+        if (this.dom.exportLogState) {
+          this.dom.exportLogState.textContent = error ? 'FAILED' : done ? 'DONE' : 'RUNNING';
+        }
+      },
     });
 
     let result = null;
@@ -7688,12 +7890,17 @@ class NeonScopeApp {
         range: this.exportSettings.range,
         filename,
         codec: this.exportSettings.codec,
+        encoder: this.exportSettings.encoder,
         crf: this.exportSettings.crf,
         preset: this.exportSettings.preset,
         audioCodec: this.exportSettings.audioCodec,
         audioBitrate: this.exportSettings.audioBitrate,
         sampleRate: this.exportSettings.sampleRate,
         gop: this.exportSettings.gop,
+        ffmpegAvailable: !!this.state.ffmpegAvailable,
+        audioSource: this.audioAsset?.bytes?.byteLength
+          ? { bytes: this.audioAsset.bytes, type: this.audioAsset.type || 'audio/mpeg' }
+          : null,
       });
       if (result?.cancelled) {
         this._toast('已取消导出');
@@ -7765,7 +7972,11 @@ class NeonScopeApp {
   _closeModal(name) {
     if (!name) return;
     if (name === 'settings') this._stopHardwareMonitor();
-    if (name === 'keyframeEditor') this._closeKeyframeMenu();
+    if (name === 'keyframeEditor') {
+      clearTimeout(this._kfPersistTimer);
+      this._closeKeyframeMenu();
+      this._persist();
+    }
     if (name === 'export' && this.state.exporting) return;
     if (name === 'shortcuts' && this._keyCapture) this._cancelKeyCapture();
     if (name === 'settings' && this._standaloneSettings) {
@@ -7797,6 +8008,8 @@ class NeonScopeApp {
     const info = await checkFfmpeg();
     this.state.ffmpegAvailable = info.ok;
     this.state.ffmpegCodecs = info.codecs || [];
+    this.state.ffmpegEncoders = info.encoders || [];
+    this.state.ffmpegHwVendors = info.hwVendors || [];
     this.dom.footerFfmpeg.textContent = info.ok ? 'READY · MP4' : 'WEBM ONLY';
     this.dom.footerFfmpeg.style.color = info.ok ? 'var(--lime)' : 'var(--muted)';
     this._syncExportUI();
@@ -7946,6 +8159,9 @@ function parseAnimationScript(text) {
       base.params.origin = tokens.origin || 'Origin';
       base.params.x = num('x', 0);
       base.params.y = num('y', 0);
+      base.params.sizeTitle = clamp(num('sizeTitle', 38), 6, 240);
+      base.params.sizeAuthor = clamp(num('sizeAuthor', 15), 6, 240);
+      base.params.sizeOrigin = clamp(num('sizeOrigin', 10), 6, 240);
       base.params.scaleX = clamp(num('scaleX', 100), 20, 400);
       base.params.scaleY = clamp(num('scaleY', 100), 20, 400);
       base.duration = Math.max(0.1, base.duration);
@@ -8008,7 +8224,7 @@ function serializeAnimationCues(cues) {
       return `${t} call ${p.batch || cue.value || 'batch-name'} split=${split}${role} x=${p.x ?? 0.5} y=${p.y ?? 0.95}`;
     }
     if (cue.type === 'mash') {
-      return `${t} mash title="${String(p.title || cue.value || 'Title').replace(/"/g, '\\"')}" author="${String(p.author || 'Artist').replace(/"/g, '\\"')}" origin="${String(p.origin || 'Origin').replace(/"/g, '\\"')}" hold=${Number(cue.duration).toFixed(2)} x=${p.x ?? 0} y=${p.y ?? 0} scaleX=${Number(p.scaleX ?? 100).toFixed(1)} scaleY=${Number(p.scaleY ?? 100).toFixed(1)}`;
+      return `${t} mash title="${String(p.title || cue.value || 'Title').replace(/"/g, '\\"')}" author="${String(p.author || 'Artist').replace(/"/g, '\\"')}" origin="${String(p.origin || 'Origin').replace(/"/g, '\\"')}" hold=${Number(cue.duration).toFixed(2)} x=${p.x ?? 0} y=${p.y ?? 0} sizeTitle=${Number(p.sizeTitle ?? 38).toFixed(1)} sizeAuthor=${Number(p.sizeAuthor ?? 15).toFixed(1)} sizeOrigin=${Number(p.sizeOrigin ?? 10).toFixed(1)} scaleX=${Number(p.scaleX ?? 100).toFixed(1)} scaleY=${Number(p.scaleY ?? 100).toFixed(1)}`;
     }
     if (cue.type === 'color') {
       return `${t} color bg=${p.bg || '#DCDCE8'} primary=${p.primary || '#0F1C4A'} accent=${p.accent || '#DE9FCA'} ink=${p.ink || '#0a0a0a'} chartFollow=${p.chartFollow || 'custom'} duration=${Number(cue.duration).toFixed(2)} fadeIn=${Number(p.fadeIn || 0).toFixed(2)} fadeOut=${Number(p.fadeOut || 0).toFixed(2)}`;

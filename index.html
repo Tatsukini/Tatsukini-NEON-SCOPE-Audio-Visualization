@@ -545,6 +545,16 @@
               </select>
             </label>
             <label class="export-adv-field">
+              <span>编码器 <em>ENCODER</em></span>
+              <select id="encoderSelect" class="select">
+                <option value="auto" selected>自动 · 优先硬件</option>
+                <option value="software">软件 · CPU</option>
+                <option value="nvidia">NVIDIA NVENC</option>
+                <option value="amd">AMD AMF</option>
+                <option value="intel">Intel Quick Sync</option>
+              </select>
+            </label>
+            <label class="export-adv-field">
               <span>画质 <em>CRF</em></span>
               <select id="crfSelect" class="select">
                 <option value="auto">自动 · 按码率 / 直录</option>
@@ -596,7 +606,8 @@
               </select>
             </label>
           </div>
-          <p class="export-adv-note">CRF 为「自动」时优先使用浏览器直录；指定 CRF、容器或非原生编码时，会调用本机 FFmpeg 转码（需已安装 FFmpeg）。</p>
+          <p class="export-adv-note" id="encoderHint">硬件编码需要 FFmpeg 支持对应显卡（NVENC / AMF / QSV），不可用时会自动回退软件编码；VP8/VP9 仅支持软件编码。</p>
+          <p class="export-adv-note">CRF 为「自动」且编码器为「自动」时优先使用浏览器直录；指定 CRF、容器或编码器时，会调用本机 FFmpeg 转码（需已安装 FFmpeg）。</p>
         </div>
 
         <div class="export-summary">
@@ -616,6 +627,10 @@
         </div>
         <div class="progress-track"><div class="progress-fill" id="progressFill"></div></div>
         <div class="progress-meta"><span id="progressTime">00:00 / 00:00</span><span id="progressPercent">0%</span></div>
+        <div class="export-log-wrap">
+          <div class="export-log-head"><span>FFMPEG / ENCODE LOG</span><em id="exportLogState">等待任务…</em></div>
+          <pre class="export-log" id="exportLog" aria-live="polite">等待录制开始…</pre>
+        </div>
         <p class="progress-hint" id="progressHint">请保持此标签页处于前台，实时渲染中。导出完成前请勿切换页面。</p>
         <button class="btn ghost full" id="cancelExportBtn">取消导出</button>
       </div>
@@ -1414,7 +1429,7 @@
     <div class="alpha-card">
       <div class="alpha-mark" aria-hidden="true">!</div>
       <div class="alpha-body">
-        <div class="alpha-kicker">ALPHA BUILD / V0.1.2_1109_alpha</div>
+        <div class="alpha-kicker">ALPHA BUILD / V0.1.3_1110_alpha_canary</div>
         <h2 id="alphaNoticeTitle">注意！这是 NEON//SCOPE 的 Alpha 测试版本。</h2>
         <p>Alpha 测试版本不代表最终产品的最终质量。感谢您的理解和支持，祝你好运！</p>
         <div class="alpha-foot">

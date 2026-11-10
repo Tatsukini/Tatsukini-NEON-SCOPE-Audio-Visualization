@@ -62,6 +62,8 @@ export class AudioEngine {
     this.playing = false;
     this.loop = false;
     this.volume = 0.78;
+    this.playbackRate = 1;
+    this.manualBpm = 0;
     this._offset = 0;
     this._startCtx = 0;
     this._source = null;
@@ -108,6 +110,21 @@ export class AudioEngine {
   }
 
   setLoop(v) { this.loop = !!v; }
+
+  setPlaybackRate(rate) {
+    const value = clamp(Number(rate) || 1, 0.05, 4);
+    this.playbackRate = value;
+    if (this._source) {
+      try { this._source.playbackRate.value = value; } catch { /* noop */ }
+    }
+  }
+
+  setManualBpm(value) {
+    const bpm = Number(value);
+    this.manualBpm = Number.isFinite(bpm) && bpm > 0 ? clamp(bpm, 20, 300) : 0;
+    if (this.manualBpm) this.beat.phase = (this.getTime() * this.manualBpm / 60) % 1;
+    return this.manualBpm;
+  }
 
   setFftSize(v) {
     const size = [1024, 2048, 4096, 8192, 16384].includes(Number(v)) ? Number(v) : 8192;
@@ -177,6 +194,7 @@ export class AudioEngine {
     const src = this.ctx.createBufferSource();
     src.buffer = this.buffer;
     src.loop = this.loop && this.duration > 0.2;
+    src.playbackRate.value = this.playbackRate;
     src.connect(this.master);
     src.connect(this.splitter);
     const at = this.ctx.currentTime + 0.02;
@@ -239,7 +257,7 @@ export class AudioEngine {
   getTime() {
     if (!this.buffer) return 0;
     if (!this.playing) return clamp(this._offset, 0, this.duration);
-    let t = this._offset + (this.ctx.currentTime - this._startCtx);
+    let t = this._offset + (this.ctx.currentTime - this._startCtx) * this.playbackRate;
     if (this.loop && this.duration > 0) {
       t = ((t % this.duration) + this.duration) % this.duration;
     }
@@ -372,7 +390,7 @@ export class AudioEngine {
       energy,
       beatPulse: this.beat.pulse,
       beatPhase: this.beat.phase,
-      bpm: this.track?.bpm || this.beat.bpm || 0,
+      bpm: this.manualBpm || this.track?.bpm || this.beat.bpm || 0,
       fade: 1,
     };
     this._lastFrame = frame;
@@ -396,13 +414,23 @@ export class AudioEngine {
       correlation: 0, balance: 0,
       lufsS: -60, lufsI: -60, truePeakDb: -60, truePeak: 0,
       low: 0, mid: 0, high: 0, centroid: 0, peakHz: 0, spectrumPeak: 0,
-      energy: 0, beatPulse: 0, beatPhase: 0, bpm: this.track?.bpm || 0, fade: 1,
+      energy: 0, beatPulse: 0, beatPhase: 0,
+      bpm: this.manualBpm || this.track?.bpm || 0, fade: 1,
     };
   }
 
   _detectBeat(time, lowEnergy, dt) {
     const b = this.beat;
     b.pulse = Math.max(0, b.pulse - dt * 4.8);
+    if (this.manualBpm) {
+      // Manual BPM locks phase to the project timeline so every beat-driven
+      // module shares the same grid, even when nothing is playing yet.
+      const previous = b.phase;
+      b.phase = ((time * this.manualBpm / 60) % 1 + 1) % 1;
+      if (b.phase < previous) b.pulse = 1;
+      if (!this.playing) return;
+      return;
+    }
     b.phase = (b.phase + dt * (b.bpm / 60 || 0.5)) % 1;
     if (!this.playing) return;
     b.avgLow = b.avgLow * 0.965 + lowEnergy * 0.035;
