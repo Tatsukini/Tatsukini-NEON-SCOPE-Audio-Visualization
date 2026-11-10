@@ -1,0 +1,71 @@
+name: 功能建议
+description: 提议新功能、改进现有功能或新的可视化 / 导出能力
+title: "[Feature] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢建议。请先搜索已有 Issue，避免重复；描述越具体，越容易评估。
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: 需求 / 痛点
+      description: 现在遇到了什么限制？希望解决什么问题？
+      placeholder: 目前导出 ... 时，无法 ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 期望的方案
+      description: 你希望功能如何工作？可以描述交互、参数或界面位置。
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 替代方案
+      description: 是否尝试过其他做法或现有功能绕过？
+    validations:
+      required: false
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: 涉及模块
+      multiple: true
+      options:
+        - 视频导出
+        - 可视化模块 / 插件
+        - MIDI 与钢琴卷帘
+        - 动画时间轴 / 关键帧
+        - 工程存档 / 舞台排版
+        - 设置 / 界面
+        - 性能
+        - 文档
+        - 其他
+    validations:
+      required: true
+
+  - type: dropdown
+    id: contribution
+    attributes:
+      label: 是否愿意参与实现
+      options:
+        - 愿意提交 Pull Request
+        - 愿意协助测试
+        - 仅提出建议
+    validations:
+      required: true
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: 补充说明
+      description: 参考作品、草图、截图或其他项目的实现都可以贴在这里。
+    validations:
+      required: false
