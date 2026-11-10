@@ -1,4 +1,4 @@
-NEON//SCOPE  V0.1.3_1110_alpha_canary  (Windows x64)
+NEON//SCOPE  V0.1.3_1110_alpha_GPLver  (Windows x64)
 
 启动：
   双击 NEON-SCOPE.exe
@@ -93,5 +93,7 @@ NEON//SCOPE  V0.1.3_1110_alpha_canary  (Windows x64)
   - 4K / 60FPS 对性能要求较高，建议先使用 1080P。
   - 启用降速录制、硬件编码或手动指定码率 / 预设 / CRF 时，需要系统已安装
     FFmpeg 并加入 PATH，否则会回退为原生实时录制。
+  - 本程序以 GNU General Public License v3.0 或更高版本（GPL-3.0-or-later）发布；
+    许可证全文见仓库根目录 LICENSE，示例素材不在 GPL 范围内（见 NOTICE）。
 
 

@@ -1,8 +1,8 @@
 # NEON//SCOPE
 
-[![Release](https://img.shields.io/badge/release-V0.1.3__1110__alpha__canary-orange)](https://github.com/Tatsukini/Tatsukini-NEON-SCOPE-Audio-Visualization/releases/tag/V0.1.3_1110_alpha_canary)
+[![Release](https://img.shields.io/badge/release-V0.1.3__1110__alpha__GPLver-orange)](https://github.com/Tatsukini/Tatsukini-NEON-SCOPE-Audio-Visualization/releases/tag/V0.1.3_1110_alpha_GPLver)
 
-> 当前为 **Alpha 测试版本 V0.1.3_1110_alpha_canary**。启动时会显示 Alpha 提示，确认后进入工作台。
+> 当前为 **Alpha 测试版本 V0.1.3_1110_alpha_GPLver**。启动时会显示 Alpha 提示，确认后进入工作台。
 
 实时音频 / MIDI 可视化工作台。导入音频或 MIDI，在仪表盘上自由编排模块，实时渲染并导出带音频的视频；支持第三方插件扩展模块。
 
@@ -238,9 +238,9 @@ For the SignPath Foundation program, this project is built automatically from th
 
 ## License / 许可证
 
-源代码使用 MIT License，见 [LICENSE](LICENSE)。
+源代码使用 GNU General Public License v3.0 或更高版本（GPL-3.0-or-later），见 [LICENSE](LICENSE)。
 
-`assets/` 下的示例音频、MIDI、字体和图片仍归各自作者所有，不包含在 MIT 许可范围内；详见 [NOTICE](NOTICE)。
+`assets/` 下的示例音频、MIDI、字体和图片仍归各自作者所有，不包含在 GPL 许可范围内；详见 [NOTICE](NOTICE)。
 
 ## Privacy / 隐私
 

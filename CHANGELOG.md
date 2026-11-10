@@ -2,6 +2,18 @@
 
 本文件自 `V0.1.3_1110_alpha_canary` 起维护。
 
+## V0.1.3_1110_alpha_GPLver — 2026-11-10
+
+### 许可
+
+- 源码许可证由 MIT 改为 GNU General Public License v3.0 或更高版本（GPL-3.0-or-later）。程序代码与 `V0.1.3_1110_alpha_canary` 相同，本版主要变更即许可证。
+- `assets/` 下的示例音频、MIDI、字体和图片不在 GPL 范围内，仍归各自作者所有，详见 `NOTICE`。
+- 已发布的 `V0.1.3_1110_alpha_canary` 仍按 MIT 提供，许可证变更不追溯既往版本。
+
+### 构建
+
+- EXE 与便携 ZIP 已重新构建；ZIP 内新增 `LICENSE` 与 `NOTICE`，应用内「许可与版权声明」增加本程序的 GPL 条目。
+
 ## V0.1.3_1110_alpha_canary — 2026-11-10
 
 ### 新增

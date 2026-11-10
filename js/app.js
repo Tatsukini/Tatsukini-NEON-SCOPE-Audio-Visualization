@@ -1892,6 +1892,13 @@ class NeonScopeApp {
     if (!this.dom.licenseList) return;
     const items = [
       {
+        name: 'NEON//SCOPE（本程序）',
+        copyright: 'Copyright © 2026 Tatsukini.',
+        license: '以 GNU General Public License v3.0 或更高版本发布（GPL-3.0-or-later）。',
+        source: 'https://github.com/Tatsukini/Tatsukini-NEON-SCOPE-Audio-Visualization',
+        doc: 'https://www.gnu.org/licenses/gpl-3.0.html',
+      },
+      {
         name: '.NET Runtime / Windows Forms / ASP.NET Core',
         copyright: 'Copyright © .NET Foundation and contributors.',
         license: 'Licensed under the MIT License.',

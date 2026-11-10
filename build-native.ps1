@@ -37,6 +37,8 @@ Get-ChildItem $dist -Filter "*.xml" -ErrorAction SilentlyContinue | Remove-Item 
 Get-ChildItem $dist -Directory -Filter "NEONScopeData" -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force
 
 Copy-Item (Join-Path $root "EXE使用说明.txt") (Join-Path $dist "使用说明.txt") -Force
+Copy-Item (Join-Path $root "LICENSE") $dist -Force
+Copy-Item (Join-Path $root "NOTICE") $dist -Force
 # Ship editable demo assets beside the EXE; the native server overlays these on
 # the embedded fallback so the ZIP remains a complete portable package.
 $assetDist = Join-Path $dist "assets"
