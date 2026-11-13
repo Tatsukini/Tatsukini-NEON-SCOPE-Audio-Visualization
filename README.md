@@ -1,8 +1,8 @@
 # NEON//SCOPE
 
-[![Release](https://img.shields.io/badge/release-V0.1.4__Alpha__Canary__1114__4-orange)](https://github.com/Tatsukini/Tatsukini-NEON-SCOPE-Audio-Visualization-Canary/releases/tag/V0.1.4_Alpha_Canary_1114_4)
+[![Release](https://img.shields.io/badge/release-V0.1.4__Alpha__Canary__1114__5-orange)](https://github.com/Tatsukini/Tatsukini-NEON-SCOPE-Audio-Visualization-Canary/releases/tag/V0.1.4_Alpha_Canary_1114_5)
 
-> 当前为 **Alpha 测试版本 V0.1.4_Alpha_Canary_1114_4**。启动时会显示 Alpha 提示，确认后进入工作台。
+> 当前为 **Alpha 测试版本 V0.1.4_Alpha_Canary_1114_5**。启动时会显示 Alpha 提示，确认后进入工作台。
 
 实时音频 / MIDI 可视化工作台。导入音频或 MIDI，在仪表盘上自由编排模块，实时渲染并导出带音频的视频；支持第三方插件扩展模块。
 
@@ -26,7 +26,7 @@
 - 依赖系统自带的 **Microsoft Edge WebView2 Runtime**。如果系统没有，程序会提示下载地址。
 - 首次运行可能出现 Windows SmartScreen 提示（程序未签名），选择“更多信息 → 仍要运行”。
 - 导出的视频默认保存到 `下载 / Downloads` 文件夹。
-- 布局、主色和偏好设置会自动保存；工程状态默认不跨启动恢复，可在设置 → 文件中开启自动存档恢复。
+- 布局、主色和偏好设置会自动保存；工程状态默认不跨启动恢复，可在设置 → 文件中开启自动存档恢复。首次勾选自动存档会立即存档，退出前会等待存档写完。
 
 项目根目录下同时提供 `NEON-SCOPE-win64.zip` 作为压缩分发版本（内含 EXE、使用说明与可替换的 `assets` 示例素材）。
 
@@ -88,7 +88,7 @@ node server.mjs
 - **RGBA 色盘 + 主题预设**：使用色相/明度/饱和度面板 + RGB/A 数值选择主题色、模块色或纯色背景；支持透明度，并提供 MAGENTA / CYAN / AMBER / VIOLET 快捷预设。
 - **桌面设置窗口**：EXE 中点击右侧栏底部「设置」会打开独立的原生桌面窗口（不是软件内弹层）；网页版回退为同功能设置弹层。设置修改会实时同步回主窗口。
 - **界面缩放**：70%–150% 全局 UI 缩放，**设置窗口自身也会同步缩放**；达到较大缩放时会自动切换紧凑布局，避免顶栏、侧栏和按钮重叠。
-- **三种界面风格**：NEON GRID（当前霓虹仪表盘）、VIDI STUDIO（深色青色霓虹剪辑台）、CATBOT PAPER（浅色直角几何编辑界面），在设置 →「界面」切换。
+- **三种界面风格**：NEON GRID（当前霓虹仪表盘）、VIDI STUDIO（深色青色霓虹剪辑台）、CATBOT PAPER（浅色直角几何编辑界面），在设置 →「界面」切换。三套风格的输入框与下拉框尺寸统一：CATBOT 为直角几何，NEON GRID / VIDI STUDIO 为圆角霓虹描边。
 - **明暗模式**：设置 →「界面」提供跟随主题 / 深色 / 浅色三个选项；浅色模式适用于全部主题，深色模式也让 CATBOT PAPER 拥有深色版本。
 - **主题色 / 背景色联动**：CATBOT PAPER 的纸张底色由背景色自动调和，强调色、选中态、品牌标记和设置按钮跟随主题色；浅色模式的纸张底色同样会随背景色变化。
 - **信息编辑面板**：初始隐藏，可从顶部九宫格面板菜单启用；编辑歌曲名、艺术家、专辑、流派、BPM、封面，并可把信息卡叠加进预览和导出。填写的 BPM 会立即覆盖节拍引擎与节奏类模块的 BPM 显示（留空则恢复自动检测 / 音轨 BPM）。

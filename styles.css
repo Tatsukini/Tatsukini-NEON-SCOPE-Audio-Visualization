@@ -2747,3 +2747,124 @@ body[data-ui-mode="light"] .hw-meter canvas, body[data-ui-theme="catbot"] .hw-me
 .plugin-card-actions button { font: 6px var(--mono); }
 .plugin-empty { padding: 16px 8px; border: 1px dashed rgba(255,255,255,.12); border-radius: 5px; text-align: center; color: var(--dim); font: 6px var(--mono); }
 .settings-zoom { margin-left: auto; margin-right: 10px; font: 6px var(--mono); letter-spacing: .06em; color: var(--dim); white-space: nowrap; }
+
+/* ── Unified form controls ──────────────────────────────
+   Every text field, number field and dropdown shares one
+   geometry. CATBOT squares it off; NEON and VIDI wrap it in
+   the same rounded neon shell in their own accent. */
+body :is(input[type="text"], input[type="number"], input[type="search"],
+  input[type="email"], input[type="url"], input[type="password"], input[type="tel"], select) {
+  height: 28px !important;
+  min-height: 28px !important;
+  padding: 0 8px !important;
+  border-radius: 6px !important;
+  font-size: 9px !important;
+  line-height: normal !important;
+  outline: none;
+  transition: border-color .15s ease, box-shadow .15s ease, background-color .15s ease;
+}
+body textarea {
+  border-radius: 6px !important;
+  font-size: 9px !important;
+}
+/* Paired action buttons follow the same control height. */
+body .path-row .mini-action,
+body .ui-font-row .mini-action,
+body .kf-editor-toolbar .mini-action,
+body .timeline-selection .mini-action { height: 28px; }
+
+/* NEON GRID — rounded neon, accent glow on focus. */
+body[data-ui-theme="neon"]:not([data-ui-mode="light"]) :is(input[type="text"], input[type="number"],
+  input[type="search"], input[type="email"], input[type="url"], input[type="password"], input[type="tel"], select) {
+  background-color: #0e0a14 !important;
+  border-color: rgba(255, 255, 255, .10) !important;
+  color: #c9b6c1;
+  color-scheme: dark;
+}
+body[data-ui-theme="neon"]:not([data-ui-mode="light"]) :is(input[type="text"], input[type="number"],
+  input[type="search"], input[type="email"], input[type="url"], input[type="password"], input[type="tel"], select):focus {
+  border-color: rgba(var(--accent-rgb), .55) !important;
+  box-shadow: 0 0 0 3px rgba(var(--accent-rgb), .10), 0 0 14px rgba(var(--accent-rgb), .16);
+}
+body[data-ui-theme="neon"]:not([data-ui-mode="light"]) :is(input, textarea)::placeholder { color: #6b5865; }
+body[data-ui-theme="neon"]:not([data-ui-mode="light"]) select option { background: #0e0a14; color: #c9b6c1; }
+
+/* VIDI STUDIO — rounded neon, cyan edge. */
+body[data-ui-theme="vidi"]:not([data-ui-mode="light"]) :is(input[type="text"], input[type="number"],
+  input[type="search"], input[type="email"], input[type="url"], input[type="password"], input[type="tel"], select) {
+  background-color: #081119 !important;
+  border-color: rgba(78, 224, 255, .20) !important;
+  color: #bfe9f2;
+  color-scheme: dark;
+}
+body[data-ui-theme="vidi"]:not([data-ui-mode="light"]) :is(input[type="text"], input[type="number"],
+  input[type="search"], input[type="email"], input[type="url"], input[type="password"], input[type="tel"], select):focus {
+  border-color: rgba(78, 224, 255, .62) !important;
+  box-shadow: 0 0 0 3px rgba(37, 219, 255, .12), 0 0 16px rgba(37, 219, 255, .20);
+}
+body[data-ui-theme="vidi"]:not([data-ui-mode="light"]) :is(input, textarea)::placeholder { color: #4d7480; }
+body[data-ui-theme="vidi"]:not([data-ui-mode="light"]) select option { background: #081119; color: #bfe9f2; }
+
+/* CATBOT — sharp right angles, flat paper fill. */
+body[data-ui-theme="catbot"]:not([data-ui-mode="dark"]) :is(input[type="text"], input[type="number"],
+  input[type="search"], input[type="email"], input[type="url"], input[type="password"], input[type="tel"], select) {
+  border-radius: 0 !important;
+  background-color: var(--paper-card) !important;
+  border-color: #cfc6db !important;
+  color: #2b2341 !important;
+  color-scheme: light;
+}
+body[data-ui-theme="catbot"]:not([data-ui-mode="dark"]) :is(input[type="text"], input[type="number"],
+  input[type="search"], input[type="email"], input[type="url"], input[type="password"], input[type="tel"], select):focus {
+  border-color: #a75f8a !important;
+  box-shadow: none;
+}
+body[data-ui-theme="catbot"]:not([data-ui-mode="dark"]) textarea { border-radius: 0 !important; }
+body[data-ui-theme="catbot"]:not([data-ui-mode="dark"]) :is(input, textarea)::placeholder { color: #9c93ab; }
+body[data-ui-theme="catbot"]:not([data-ui-mode="dark"]) select option { background: #ffffff; color: #2b2341; }
+
+/* CATBOT dark — same sharp geometry on the dark paper surface. */
+body[data-ui-mode="dark"][data-ui-theme="catbot"] :is(input[type="text"], input[type="number"],
+  input[type="search"], input[type="email"], input[type="url"], input[type="password"], input[type="tel"], select) {
+  border-radius: 0 !important;
+  background-color: var(--ui-dark-bg-2) !important;
+  border-color: var(--ui-dark-line) !important;
+  color: #ecdeea !important;
+  color-scheme: dark;
+}
+body[data-ui-mode="dark"][data-ui-theme="catbot"] :is(input[type="text"], input[type="number"],
+  input[type="search"], input[type="email"], input[type="url"], input[type="password"], input[type="tel"], select):focus {
+  border-color: var(--accent-solid) !important;
+  box-shadow: 0 0 0 2px rgba(var(--accent-rgb), .18);
+}
+body[data-ui-mode="dark"][data-ui-theme="catbot"] textarea { border-radius: 0 !important; }
+body[data-ui-mode="dark"][data-ui-theme="catbot"] :is(input, textarea)::placeholder { color: #8f8091; }
+
+/* CATBOT action buttons that sit beside a field follow the same shell. */
+body[data-ui-theme="catbot"]:not([data-ui-mode="dark"]) .path-row .mini-action,
+body[data-ui-theme="catbot"]:not([data-ui-mode="dark"]) .ui-font-row .mini-action {
+  border-radius: 0;
+  border-color: #cfc6db;
+  background: var(--paper-card);
+  color: #4e4562;
+}
+body[data-ui-mode="dark"][data-ui-theme="catbot"] .path-row .mini-action,
+body[data-ui-mode="dark"][data-ui-theme="catbot"] .ui-font-row .mini-action {
+  border-radius: 0;
+  border-color: var(--ui-dark-line);
+  background: var(--ui-dark-bg-2);
+  color: #d8cbe0;
+}
+
+/* Search fields sit inside their own shell — stay invisible. */
+body[data-ui-theme][data-ui-mode] .shortcut-search input {
+  height: 100% !important;
+  min-height: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background-color: transparent !important;
+  box-shadow: none !important;
+  color-scheme: normal;
+}
+body[data-ui-mode="light"] .shortcut-search input { color: #3a304f; }

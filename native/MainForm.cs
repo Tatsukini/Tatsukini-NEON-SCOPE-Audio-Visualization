@@ -27,6 +27,7 @@ internal sealed class MainForm : Form
     private bool _allowClose;
     private NotifyIcon? _tray;
     private bool _trayHintShown;
+    private TaskCompletionSource<bool>? _autosaveFlush;
 
     public MainForm()
     {
@@ -251,6 +252,9 @@ internal sealed class MainForm : Form
                 case "archive-import":
                     if (doc.RootElement.TryGetProperty("archive", out var archive))
                         PostToMain($"{{\"action\":\"archive-import\",\"archive\":{archive.GetRawText()}}}");
+                    break;
+                case "autosave-flushed":
+                    _autosaveFlush?.TrySetResult(true);
                     break;
             }
         }
@@ -629,14 +633,17 @@ internal sealed class MainForm : Form
         {
             // Persist the latest project before tearing the WebView down so an
             // enabled autosave restore resumes exactly where the user left off.
+            // ExecuteScriptAsync cannot await a promise returned by the page, so
+            // the page signals completion with a second web message instead.
             try
             {
                 var core = _webView?.CoreWebView2;
                 if (core != null)
                 {
-                    var flush = core.ExecuteScriptAsync(
-                        "window.neonScope && window.neonScope._flushAutoSave ? window.neonScope._flushAutoSave() : null");
-                    await Task.WhenAny(flush, Task.Delay(TimeSpan.FromSeconds(6)));
+                    _autosaveFlush = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+                    core.PostWebMessageAsJson("{\"action\":\"flush-autosave\"}");
+                    await Task.WhenAny(_autosaveFlush.Task, Task.Delay(TimeSpan.FromSeconds(8)));
+                    _autosaveFlush = null;
                 }
             }
             catch (Exception ex)

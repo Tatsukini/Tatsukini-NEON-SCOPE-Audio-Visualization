@@ -526,6 +526,12 @@ class NeonScopeApp {
       } else if (data?.action === 'archive-restore-request') {
         this._skipUnloadSave = true;
         location.reload();
+      } else if (data?.action === 'flush-autosave') {
+        // The host tears the WebView down as soon as this returns, so the
+        // save must complete before answering.
+        this._flushAutoSave()
+          .catch(() => {})
+          .finally(() => window.chrome.webview.postMessage({ action: 'autosave-flushed' }));
       }
     });
   }
@@ -1488,6 +1494,12 @@ class NeonScopeApp {
         this._autoSaveTimer = null;
       }
       this._persist();
+      if (d.autoSave.checked) {
+        // Turning autosave on mid-session writes one snapshot immediately;
+        // waiting a full interval would lose short sessions entirely.
+        this._autoSaveDirty = true;
+        this._autoSaveTick();
+      }
     });
     d.uiScale.addEventListener('input', () => {
       this._setUiScale(Number(d.uiScale.value), { silent: true });
