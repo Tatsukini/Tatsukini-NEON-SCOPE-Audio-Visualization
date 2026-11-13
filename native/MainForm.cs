@@ -627,6 +627,23 @@ internal sealed class MainForm : Form
         Text = "NEON//SCOPE — 正在关闭…";
         try
         {
+            // Persist the latest project before tearing the WebView down so an
+            // enabled autosave restore resumes exactly where the user left off.
+            try
+            {
+                var core = _webView?.CoreWebView2;
+                if (core != null)
+                {
+                    var flush = core.ExecuteScriptAsync(
+                        "window.neonScope && window.neonScope._flushAutoSave ? window.neonScope._flushAutoSave() : null");
+                    await Task.WhenAny(flush, Task.Delay(TimeSpan.FromSeconds(6)));
+                }
+            }
+            catch (Exception ex)
+            {
+                AppPaths.Log("Final autosave flush failed: " + ex.Message);
+            }
+
             _lifetime.Cancel();
             if (_settingsForm != null && !_settingsForm.IsDisposed)
             {

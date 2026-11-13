@@ -6012,6 +6012,17 @@ class NeonScopeApp {
     }
   }
 
+  async _flushAutoSave() {
+    if (this._standaloneSettings || !this.state.settings.autoSave) return false;
+    const start = performance.now();
+    while (this._autoSaveBusy && performance.now() - start < 4000) {
+      await new Promise((resolve) => setTimeout(resolve, 120));
+    }
+    this._autoSaveDirty = true;
+    await this._autoSaveTick();
+    return !this._autoSaveDirty;
+  }
+
   async _restoreAutosaveArchive() {
     try {
       if (this._isNative) {
