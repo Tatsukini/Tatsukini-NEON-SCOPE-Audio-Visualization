@@ -2249,8 +2249,8 @@ function drawMidiOC(ctx, mod, body, frame, st, env) {
   const textColor = palette.text || '#f7eef3';
   const midi = env.midiMerged
     || ((env.midiLayers || []).find((layer) => layer.id === mod.options?.midiId) || env.midi);
-  const originX = STAGE_W / 2 + modNum(mod, 'x', 0, -STAGE_W, STAGE_W);
-  const originY = STAGE_H / 2 + modNum(mod, 'y', 0, -STAGE_H, STAGE_H);
+  const originX = Number(mod.x) + (Number(mod.w) || 640) / 2 + modNum(mod, 'x', 0, -STAGE_W, STAGE_W);
+  const originY = Number(mod.y) + (Number(mod.h) || 260) / 2 + modNum(mod, 'y', 0, -STAGE_H, STAGE_H);
   const detect = modNum(mod, 'detect', 1, 0.1, 10);
   const fadeIn = modNum(mod, 'fadeIn', 0.3, 0, 2);
   const fadeOut = modNum(mod, 'fadeOut', 0.5, 0, 2);

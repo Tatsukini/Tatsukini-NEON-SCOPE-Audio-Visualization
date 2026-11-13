@@ -217,8 +217,8 @@ const MODULE_OPTIONS = {
   ],
   midiOC: [
     { key: 'detect', label: '识别范围', type: 'range', min: 0.1, max: 10, step: 0.1, default: 1, unit: ' s' },
-    { key: 'x', label: '绝对 X 坐标', type: 'number', min: -960, max: 960, step: 1, default: 0 },
-    { key: 'y', label: '绝对 Y 坐标', type: 'number', min: -540, max: 540, step: 1, default: 0 },
+    { key: 'x', label: 'X 偏移', type: 'number', min: -960, max: 960, step: 1, default: 0 },
+    { key: 'y', label: 'Y 偏移', type: 'number', min: -540, max: 540, step: 1, default: 0 },
     { key: 'showIncrease', label: '显示增加 (+)', type: 'toggle', default: true },
     { key: 'increaseColor', label: '增加颜色', type: 'color', default: SCHEME_COLORS[0] },
     { key: 'showDecrease', label: '显示减少 (−)', type: 'toggle', default: true },
