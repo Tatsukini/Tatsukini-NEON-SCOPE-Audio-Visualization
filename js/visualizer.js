@@ -620,10 +620,14 @@ export class Visualizer {
     const layered = !this.exportMode && renderArchitecture !== 'direct' && computeArchitecture !== 'main';
     this.layerFrame++;
     for (const mod of sorted) {
-      const accent = this._moduleAccent(mod);
-      if (previewOptimized) this._drawModulePreview(ctx, mod, accent, frame, palette, renderArchitecture, computeArchitecture);
-      else if (layered) this._drawModuleLayered(ctx, mod, accent, frame, palette, renderArchitecture, computeArchitecture);
-      else this._drawModuleSafe(ctx, mod, accent, frame, palette);
+      try {
+        const accent = this._moduleAccent(mod);
+        if (previewOptimized) this._drawModulePreview(ctx, mod, accent, frame, palette, renderArchitecture, computeArchitecture);
+        else if (layered) this._drawModuleLayered(ctx, mod, accent, frame, palette, renderArchitecture, computeArchitecture);
+        else this._drawModuleSafe(ctx, mod, accent, frame, palette);
+      } catch (err) {
+        this._reportModuleError(mod, err);
+      }
     }
     if (previewOptimized) this._drawOverlayCached(ctx, w, h, s);
     else this._drawOverlayEffects(ctx, w, h, frame, s);
@@ -1175,27 +1179,35 @@ export class Visualizer {
     const due = keyChanged || refsChanged
       || (cadence > 0 && (cadence === 1 || this.layerFrame % cadence === 0));
     if (due) {
-      const lctx = layer.getContext('2d', { alpha: true });
-      lctx.setTransform(1, 0, 0, 1, 0, 0);
-      const frameless = mod.type === 'midiOC' && mod.options?.frame !== true;
-      if (frameless) {
-        lctx.clearRect(0, 0, width, height);
-      } else {
-        const chrome = this._chromeLayer(mod, color, palette);
-        lctx.globalCompositeOperation = 'copy';
-        lctx.drawImage(chrome.canvas, 0, 0);
-        lctx.globalCompositeOperation = 'source-over';
+      try {
+        const lctx = layer.getContext('2d', { alpha: true });
+        lctx.setTransform(1, 0, 0, 1, 0, 0);
+        const frameless = mod.type === 'midiOC' && mod.options?.frame !== true;
+        if (frameless) {
+          lctx.clearRect(0, 0, width, height);
+        } else {
+          const chrome = this._chromeLayer(mod, color, palette);
+          lctx.globalCompositeOperation = 'copy';
+          lctx.drawImage(chrome.canvas, 0, 0);
+          lctx.globalCompositeOperation = 'source-over';
+        }
+        lctx.save();
+        lctx.translate(-rx + MODULE_LAYER_PAD, -ry + MODULE_LAYER_PAD);
+        this._drawModuleSafe(lctx, mod, color, frame, palette, moduleCardBody(mod, palette.chart || color, palette));
+        lctx.restore();
+        entry.key = this._moduleCacheKey(mod, color, palette);
+        entry.options = mod.options;
+        entry.info = this.state.info;
+        entry.track = this.engine.track?.name || '';
+        entry.duration = this.engine.duration || 0;
+        entry.cover = cover;
+      } catch (err) {
+        this._reportModuleError(mod, err);
+        this.chromeLayers.delete(mod.id);
+        this.modulePreviews.delete(mod.id);
+        this._drawModuleSafe(ctx, mod, color, frame, palette, moduleCardBody(mod, palette.chart || color, palette));
+        return;
       }
-      lctx.save();
-      lctx.translate(-rx + MODULE_LAYER_PAD, -ry + MODULE_LAYER_PAD);
-      this._drawModuleSafe(lctx, mod, color, frame, palette, moduleCardBody(mod, palette.chart || color, palette));
-      lctx.restore();
-      entry.key = this._moduleCacheKey(mod, color, palette);
-      entry.options = mod.options;
-      entry.info = this.state.info;
-      entry.track = this.engine.track?.name || '';
-      entry.duration = this.engine.duration || 0;
-      entry.cover = cover;
     }
     ctx.drawImage(layer, rx - MODULE_LAYER_PAD, ry - MODULE_LAYER_PAD, width, height);
   }
@@ -1257,6 +1269,14 @@ export class Visualizer {
     ctx.drawImage(layer, mod.x, mod.y, mod.w, mod.h);
   }
 
+  _reportModuleError(mod, err) {
+    if (!this.moduleErrorLog) this.moduleErrorLog = new Set();
+    const key = `${mod.id}:${mod.type}`;
+    if (this.moduleErrorLog.has(key)) return;
+    this.moduleErrorLog.add(key);
+    console.error('[NEON//SCOPE] Module render failure:', mod.type, err);
+  }
+
   _drawModuleSafe(ctx, mod, color, frame, palette, cardBody = null) {
     try {
       drawVisualModule(ctx, mod, color, {
@@ -1272,7 +1292,7 @@ export class Visualizer {
         cardBody,
       });
     } catch (err) {
-      console.error('[NEON//SCOPE] Module render failure:', mod.type, err);
+      this._reportModuleError(mod, err);
     }
   }
 

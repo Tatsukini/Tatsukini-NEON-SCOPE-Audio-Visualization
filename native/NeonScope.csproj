@@ -9,8 +9,8 @@
     <RootNamespace>NeonScope</RootNamespace>
     <AssemblyName>NEON-SCOPE</AssemblyName>
     <ApplicationIcon>app.ico</ApplicationIcon>
-    <Version>0.1.4.8</Version>
-    <FileVersion>0.1.4.8</FileVersion>
+    <Version>0.1.4.9</Version>
+    <FileVersion>0.1.4.9</FileVersion>
     <Product>NEON//SCOPE</Product>
     <AssemblyTitle>NEON//SCOPE Audio Visualizer</AssemblyTitle>
     <Description>Realtime audio and MIDI visualizer with video export.</Description>
