@@ -2220,8 +2220,6 @@ function midiOCStateAt(track, time) {
   return last;
 }
 
-const MIDIOC_LANE_PALETTE = [SCHEME_COLORS[3], '#b9ff8a', '#ff8a6b', SCHEME_COLORS[1], SCHEME_COLORS[2], SCHEME_COLORS[0]];
-
 function midiOCFitText(ctx, text, maxW) {
   if (ctx.measureText(text).width <= maxW) return text;
   let out = text;
@@ -2229,64 +2227,25 @@ function midiOCFitText(ctx, text, maxW) {
   return `${out}…`;
 }
 
-function midiOCDrawLanes(ctx, rows, cfg) {
-  const { laneX, laneW, top, rowH, t0, t1, upColor, downColor, showUp, showDown, palette } = cfg;
-  const span = Math.max(0.001, t1 - t0);
-  const laneRight = laneX + laneW;
-  const mapX = (t) => laneX + ((t - t0) / span) * laneW;
-
-  for (let i = 0; i < rows.length; i += 1) {
-    const track = rows[i];
-    const color = palette[i % palette.length];
-    const laneY = top + i * rowH + 5;
-    const laneH = rowH - 10;
-
-    for (const interval of track.intervals) {
-      if (interval.end < t0) continue;
-      if (interval.start > t1) break;
-      const x = mapX(interval.start);
-      const x2 = mapX(interval.end);
-      const cx = Math.max(laneX, x);
-      const cx2 = Math.min(laneRight, x2);
-      if (cx2 - cx < 0.5) continue;
-      roundRect(ctx, cx, laneY, cx2 - cx, laneH, 1);
-      ctx.fillStyle = rgba(color, 0.14);
-      ctx.fill();
-      ctx.fillStyle = rgba(color, 0.5);
-      ctx.fillRect(cx + 0.5, laneY, Math.max(1, cx2 - cx - 1), 0.9);
-      if (showUp && x >= laneX) {
-        ctx.fillStyle = rgba(upColor, 0.95);
-        ctx.fillRect(x, laneY, 1.8, laneH);
-      }
-      if (showDown && x2 <= laneRight) {
-        ctx.fillStyle = rgba(downColor, 0.95);
-        ctx.fillRect(x2 - 1.8, laneY, 1.8, laneH);
-      }
+function midiOCVisualState(track, time, cfg) {
+  const last = midiOCStateAt(track, time);
+  if (!last) return null;
+  const age = Math.max(0, time - last.t);
+  if (last.kind === 'up') {
+    if (cfg.showUp && age <= cfg.fadeIn) {
+      return { sign: '+', color: cfg.upColor, alpha: cfg.fadeIn > 0 ? clamp(age / cfg.fadeIn, 0, 1) : 1 };
     }
-
-    const minPitch = Number.isFinite(track.minPitch) ? track.minPitch : 60;
-    const maxPitch = Number.isFinite(track.maxPitch) ? track.maxPitch : 60;
-    const pitchSpan = maxPitch - minPitch;
-    ctx.fillStyle = rgba(color, 0.88);
-    let drawn = 0;
-    for (const note of track.notes) {
-      if (drawn > 4000) break;
-      if (note.end < t0) continue;
-      if (note.start > t1) break;
-      const nx = mapX(note.start);
-      const nw = Math.max(0.7, mapX(note.end) - nx);
-      const pitch = Number(note.pitch) || 60;
-      const pitchT = pitchSpan > 0 ? (pitch - minPitch) / pitchSpan : 0.5;
-      const ny = laneY + laneH - 2 - pitchT * (laneH - 6);
-      ctx.fillRect(nx, ny, nw, 1.3);
-      drawn += 1;
-    }
+    if (cfg.showHold) return { sign: '', color: cfg.holdColor, alpha: 1 };
+    return null;
   }
+  if (cfg.showDown && age <= cfg.fadeOut) {
+    return { sign: '−', color: cfg.downColor, alpha: cfg.fadeOut > 0 ? clamp(1 - age / cfg.fadeOut, 0, 1) : 1 };
+  }
+  return null;
 }
 
 function drawMidiOC(ctx, mod, body, frame, st, env) {
   const palette = env.palette || {};
-  const accent = body.accent || palette.chart || SCHEME_COLORS[0];
   const textColor = palette.text || '#f7eef3';
   const midi = env.midiMerged
     || ((env.midiLayers || []).find((layer) => layer.id === mod.options?.midiId) || env.midi);
@@ -2333,30 +2292,16 @@ function drawMidiOC(ctx, mod, body, frame, st, env) {
       const meta = (midi.tracks || []).find((item) => item.index === index) || midi.tracks?.[index] || {};
       const notes = notesByTrack.get(index) || [];
       const intervals = midiOCIntervals(notes, index, detect);
-      let minPitch = Infinity;
-      let maxPitch = -Infinity;
-      for (const note of notes) {
-        const pitch = Number(note.pitch);
-        if (!Number.isFinite(pitch)) continue;
-        if (pitch < minPitch) minPitch = pitch;
-        if (pitch > maxPitch) maxPitch = pitch;
-      }
       st.tracks.push({
         index,
         name: meta.name || meta.trackName || midi.trackNames?.[index] || `Track ${index + 1}`,
         intervals,
-        notes,
-        minPitch,
-        maxPitch,
         events: midiOCEvents(intervals, detect),
       });
     }
   }
 
-  const windowSec = modNum(mod, 'window', 12, 2, 60);
-  const rowH = 26;
-  const fitRows = Math.max(1, Math.floor(Math.max(rowH, (mod.h || 220) - 6) / rowH));
-  const rows = st.tracks.filter((track) => track.intervals.length).slice(0, Math.min(maxRows, fitRows));
+  const rows = st.tracks.filter((track) => track.intervals.length).slice(0, maxRows);
   if (!rows.length) {
     ctx.save();
     mono(ctx, 9, '500');
@@ -2367,106 +2312,32 @@ function drawMidiOC(ctx, mod, body, frame, st, env) {
     return;
   }
 
-  const stripW = clamp(Math.round(mod.w - 16), 220, 1200);
-  const left = Math.round(originX - stripW / 2);
-  const right = left + stripW;
+  const cfg = { showUp, showDown, showHold, upColor, downColor, holdColor, fadeIn, fadeOut };
+  const moduleW = Math.max(80, Number(mod.w) || 640);
+  const moduleH = Math.max(40, Number(mod.h) || 260);
+  const rowH = clamp(moduleH / rows.length, 16, 40);
+  const fontSize = Math.max(10, Math.round(rowH * 0.64));
+  const left = Math.round(originX - moduleW / 2) + 6;
+  const right = Math.round(originX + moduleW / 2) - 6;
   const top = Math.round(originY - (rows.length * rowH) / 2);
-  const boxW = 42;
-  const boxH = 12;
-  const signX = left;
-  const nameX = left + 18;
-  const nameW = 90;
-  const laneX = nameX + nameW + 6;
-  const laneW = Math.max(24, right - boxW - 6 - laneX);
-  const laneH = rows.length * rowH;
-  const winStart = time - windowSec / 2;
-  const winEnd = time + windowSec / 2;
-  const span = Math.max(0.001, winEnd - winStart);
-  const lanePalette = MIDIOC_LANE_PALETTE;
 
   ctx.save();
-  midiOCDrawLanes(ctx, rows, {
-    laneX, laneW, top, rowH, t0: winStart, t1: winEnd, upColor, downColor, showUp, showDown, palette: lanePalette,
-  });
-
-  if (showHold) {
-    ctx.fillStyle = rgba(holdColor, 0.9);
-    for (let i = 0; i < rows.length; i += 1) {
-      const active = rows[i].intervals.find((interval) => interval.start <= time && interval.end >= time);
-      if (!active) continue;
-      const ax = laneX + ((active.start - winStart) / span) * laneW;
-      const aw = Math.max(1, ((active.end - active.start) / span) * laneW);
-      const x0 = Math.max(laneX, ax);
-      const x1 = Math.min(laneX + laneW, ax + aw);
-      if (x1 <= x0) continue;
-      ctx.fillRect(x0, top + i * rowH + rowH - 6, x1 - x0, 1.6);
-    }
-  }
-
-  ctx.strokeStyle = rgba(textColor, 0.32);
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(Math.round(laneX + laneW / 2) + 0.5, top);
-  ctx.lineTo(Math.round(laneX + laneW / 2) + 0.5, top + laneH);
-  ctx.stroke();
-
-  mono(ctx, 7, '600');
   ctx.textAlign = 'left';
-  ctx.textBaseline = 'alphabetic';
-  ctx.fillStyle = rgba(accent, 0.62);
-  ctx.fillText(`MIDI O/C · ${rows.length} TRACKS · Δ ${detect.toFixed(1)} s`, left, top - 10);
-
+  ctx.textBaseline = 'middle';
+  mono(ctx, fontSize, '700');
   for (let i = 0; i < rows.length; i += 1) {
     const track = rows[i];
+    const state = midiOCVisualState(track, time, cfg);
+    if (!state) continue;
+    const label = String(track.name || `TRACK ${track.index + 1}`).toUpperCase();
+    const signText = state.sign ? `${state.sign} ` : '';
+    const signW = signText ? ctx.measureText(signText).width : 0;
     const rowCenter = top + i * rowH + rowH / 2;
-    const last = midiOCStateAt(track, time);
-    const holding = last?.kind === 'up';
-    let sign = '';
-    let color = accent;
-    let alpha = 0;
-    if (holding) {
-      const age = time - last.t;
-      if (showUp && age <= fadeIn) {
-        sign = '+';
-        color = upColor;
-        alpha = fadeIn > 0 ? clamp(age / fadeIn, 0, 1) : 1;
-      } else if (showHold) {
-        sign = '=';
-        color = holdColor;
-        alpha = 0.88;
-      }
-    } else if (last?.kind === 'down') {
-      const age = time - last.t;
-      if (showDown && age <= fadeOut) {
-        sign = '−';
-        color = downColor;
-        alpha = fadeOut > 0 ? 1 - age / fadeOut : (age < 0.05 ? 1 : 0);
-      }
-    }
-
-    if (sign) {
-      mono(ctx, 13, '700');
-      ctx.textAlign = 'left';
-      ctx.textBaseline = 'middle';
-      ctx.fillStyle = rgba(color, alpha);
-      ctx.shadowColor = rgba(color, alpha * 0.7);
-      ctx.shadowBlur = 7;
-      ctx.fillText(sign, signX, rowCenter + 0.5);
-      ctx.shadowBlur = 0;
-
-      roundRect(ctx, right - boxW, rowCenter - boxH / 2, boxW, boxH, 1.5);
-      ctx.fillStyle = rgba(color, alpha * 0.16);
-      ctx.fill();
-      ctx.strokeStyle = rgba(color, alpha * 0.55);
-      ctx.lineWidth = 0.8;
-      ctx.stroke();
-    }
-
-    mono(ctx, 7, '500');
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'middle';
-    ctx.fillStyle = rgba(lanePalette[i % lanePalette.length], holding ? 0.95 : 0.42);
-    ctx.fillText(midiOCFitText(ctx, track.name, nameW), nameX, rowCenter + 0.5);
+    ctx.fillStyle = rgba(state.color, state.alpha);
+    ctx.shadowColor = rgba(state.color, state.alpha * 0.65);
+    ctx.shadowBlur = Math.round(rowH * 0.28);
+    if (signText) ctx.fillText(signText, left, rowCenter);
+    ctx.fillText(midiOCFitText(ctx, label, Math.max(8, right - left - signW)), left + signW, rowCenter);
   }
   ctx.restore();
 }
