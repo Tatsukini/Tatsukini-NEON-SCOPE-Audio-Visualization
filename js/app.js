@@ -729,6 +729,7 @@ class NeonScopeApp {
       s.computeArchitecture = ['deferred', 'quality', 'main'].includes(s.computeArchitecture) ? s.computeArchitecture : 'deferred';
       s.renderArchitecture = ['adaptive', 'performance', 'direct'].includes(s.renderArchitecture) ? s.renderArchitecture : 'adaptive';
       s.dynamicResolution = s.dynamicResolution !== false;
+      s.previewOptimize = s.previewOptimize !== false;
       s.autoSaveInterval = clamp(Number(s.autoSaveInterval) || 360, 10, 86400);
       s.restoreAutosave = s.restoreAutosave === true;
       s.sfx = s.sfx !== false;
@@ -813,7 +814,7 @@ class NeonScopeApp {
       bgContain: $('#bgContain'), removeBgBtn: $('#removeBgBtn'), bgEnergy: $('#bgEnergy'), bgEnergyOut: $('#bgEnergyOut'),
       rendererMode: $('#rendererMode'), sensitivity: $('#sensitivity'), sensitivityOut: $('#sensitivityOut'),
       smoothing: $('#smoothing'), smoothingOut: $('#smoothingOut'), fftSize: $('#fftSize'), previewScale: $('#previewScale'), previewScaleOut: $('#previewScaleOut'), watermarkToggle: $('#watermarkToggle'),
-      hardwareAuto: $('#hardwareAuto'), hardwareInfo: $('#hardwareInfo'), computeArchitecture: $('#computeArchitecture'), renderArchitecture: $('#renderArchitecture'), dynamicResolution: $('#dynamicResolution'),
+      hardwareAuto: $('#hardwareAuto'), hardwareInfo: $('#hardwareInfo'), computeArchitecture: $('#computeArchitecture'), renderArchitecture: $('#renderArchitecture'), dynamicResolution: $('#dynamicResolution'), previewOptimize: $('#previewOptimize'),
       hwFpsValue: $('#hwFpsValue'), hwFrameValue: $('#hwFrameValue'),
       hwHeapValue: $('#hwHeapValue'), hwResValue: $('#hwResValue'), hwCpuValue: $('#hwCpuValue'), hwGpuValue: $('#hwGpuValue'),
       hwVramValue: $('#hwVramValue'), hwFpsChart: $('#hwFpsChart'), hwFrameChart: $('#hwFrameChart'),
@@ -965,6 +966,7 @@ class NeonScopeApp {
       s.computeArchitecture = ['deferred', 'quality', 'main'].includes(s.computeArchitecture) ? s.computeArchitecture : 'deferred';
       s.renderArchitecture = ['adaptive', 'performance', 'direct'].includes(s.renderArchitecture) ? s.renderArchitecture : 'adaptive';
       s.dynamicResolution = s.dynamicResolution !== false;
+      s.previewOptimize = s.previewOptimize !== false;
       s.uiScale = clamp(Number(s.uiScale) || 100, 70, 150);
       s.previewFps = [0, 10, 15, 20, 24, 30, 45, 60, 90, 120, 144, 165, 240].includes(Number(s.previewFps)) ? Number(s.previewFps) : 60;
       s.previewVsync = s.previewVsync !== false;
@@ -1479,6 +1481,11 @@ class NeonScopeApp {
     d.dynamicResolution.addEventListener('change', () => {
       this.state.settings.dynamicResolution = d.dynamicResolution.checked;
       this._persist();
+    });
+    d.previewOptimize?.addEventListener('change', () => {
+      this.state.settings.previewOptimize = d.previewOptimize.checked;
+      this._persist();
+      this._toast(`预览优化 · ${d.previewOptimize.checked ? '开启（导出不受影响）' : '关闭'}`, 'info', 2000);
     });
     for (const [key, select] of [['computeArchitecture', d.computeArchitecture], ['renderArchitecture', d.renderArchitecture]]) {
       select.addEventListener('change', () => {
@@ -7816,6 +7823,7 @@ class NeonScopeApp {
     if (this.dom.computeArchitecture) this.dom.computeArchitecture.value = s.computeArchitecture || 'deferred';
     if (this.dom.renderArchitecture) this.dom.renderArchitecture.value = s.renderArchitecture || 'adaptive';
     if (this.dom.dynamicResolution) this.dom.dynamicResolution.checked = s.dynamicResolution !== false;
+    if (this.dom.previewOptimize) this.dom.previewOptimize.checked = s.previewOptimize !== false;
   }
 
   _startHardwareMonitor() {
@@ -7903,6 +7911,7 @@ class NeonScopeApp {
     s.computeArchitecture = 'deferred';
     s.renderArchitecture = 'performance';
     s.dynamicResolution = true;
+    s.previewOptimize = true;
     const tiers = [1024, 2048, 4096, 8192, 16384];
     const index = tiers.indexOf(Number(s.fftSize));
     s.fftSize = tiers[Math.max(0, index - 1)];
@@ -7935,6 +7944,7 @@ class NeonScopeApp {
     s.computeArchitecture = 'deferred';
     s.renderArchitecture = 'adaptive';
     s.dynamicResolution = true;
+    s.previewOptimize = true;
     s.cpuBudget = 100;
     s.gpuBudget = 100;
     s.memBudget = 80;
@@ -7977,6 +7987,7 @@ class NeonScopeApp {
     if (d.computeArchitecture) d.computeArchitecture.value = s.computeArchitecture || 'deferred';
     if (d.renderArchitecture) d.renderArchitecture.value = s.renderArchitecture || 'adaptive';
     if (d.dynamicResolution) d.dynamicResolution.checked = s.dynamicResolution !== false;
+    if (d.previewOptimize) d.previewOptimize.checked = s.previewOptimize !== false;
     for (const [key, input, output] of [
       ['cpuBudget', d.cpuBudget, d.cpuBudgetOut],
       ['gpuBudget', d.gpuBudget, d.gpuBudgetOut],

@@ -867,9 +867,9 @@ body[data-ui-theme="catbot"] .autosave-track { background: rgba(36,29,60,.1); }
 .window-foot-note { margin-right: auto; font: 7.5px var(--mono); color: #5e4c58; letter-spacing: .04em; }
 
 .settings-window { width: min(780px, 94%); height: min(680px, 92%); max-height: calc(100% - 12px); }
-.settings-layout { flex: 1 1 auto; min-height: 0; display: grid; grid-template-columns: 150px minmax(0, 1fr); }
+.settings-layout { flex: 1 1 auto; min-height: 0; display: grid; grid-template-columns: var(--settings-nav-w, 150px) minmax(0, 1fr); }
 .settings-nav {
-  display: flex; flex-direction: column;
+  display: flex; flex-direction: column; min-height: 0; overflow-y: auto;
   gap: 4px; padding: 14px 10px;
   border-right: 1px solid rgba(255,255,255,.06);
   background: rgba(255,255,255,.012);
@@ -881,10 +881,11 @@ body[data-ui-theme="catbot"] .autosave-track { background: rgba(36,29,60,.1); }
   border: 1px solid transparent;
   transition: .14s ease;
 }
-.settings-nav-btn span { font: 7px var(--mono); color: #54434e; width: 14px; }
+.settings-nav-btn .settings-nav-num { font: 7px var(--mono); color: #54434e; width: 14px; }
+.settings-nav-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .settings-nav-btn:hover { color: #d6c4cd; background: rgba(255,255,255,.04); }
 .settings-nav-btn.active { color: var(--accent); border-color: rgba(var(--accent-rgb), .22); background: rgba(var(--accent-rgb), .06); }
-.settings-nav-btn.active span { color: var(--accent); }
+.settings-nav-btn.active .settings-nav-num { color: var(--accent); }
 .settings-nav-btn.accent { margin-top: 4px; border-color: rgba(255,255,255,.065); }
 .settings-nav-spacer { flex: 1; }
 .settings-content { min-height: 0; overflow-y: auto; padding: 23px 25px 28px; }
@@ -1067,12 +1068,12 @@ body[data-ui-theme="catbot"] .autosave-track { background: rgba(36,29,60,.1); }
 .module-menu.hidden { display: none !important; }
 
 @media (max-width: 760px) {
-  .settings-layout { grid-template-columns: 1fr; }
-  .settings-nav { flex-direction: row; overflow-x: auto; border-right: 0; border-bottom: 1px solid rgba(255,255,255,.06); padding: 7px; }
-  .settings-nav-btn { flex: 0 0 auto; height: 30px; }
-  .settings-nav-btn span { display: none; }
-  .settings-nav-spacer { display: none; }
-  .settings-nav-btn.accent { margin-top: 0; }
+  .settings-layout { --settings-nav-w: 56px; }
+  .settings-nav { gap: 3px; padding: 9px 6px; border-right: 1px solid rgba(255,255,255,.06); }
+  .settings-nav-btn { flex: 0 0 auto; height: 36px; justify-content: center; gap: 0; padding: 0; }
+  .settings-nav-num { width: auto; font-size: 8px; }
+  .settings-nav-label { display: none; }
+  .settings-nav-btn.accent { margin-top: 4px; }
   .settings-content { padding: 16px; }
   .color-picker-body { grid-template-columns: 1fr; }
 }
@@ -2368,7 +2369,7 @@ body[data-ui-theme="catbot"] .window-title h2, body[data-ui-theme="catbot"] .mod
 body[data-ui-theme="catbot"] .eyebrow { color: #8a7f99; }
 body[data-ui-theme="catbot"] .settings-nav { background: #eee7f7; border-color: #d6cee0; }
 body[data-ui-theme="catbot"] .settings-nav-btn { color: #655b78; border-radius: 0; }
-body[data-ui-theme="catbot"] .settings-nav-btn span { color: #9489a2; }
+body[data-ui-theme="catbot"] .settings-nav-btn .settings-nav-num { color: #9489a2; }
 body[data-ui-theme="catbot"] .settings-nav-btn:hover { background: #e8dff3; color: #302647; }
 body[data-ui-theme="catbot"] .settings-nav-btn.active { background: #f2d8e6; border-color: #c99bb5; color: #281d3e; }
 body[data-ui-theme="catbot"] .settings-panel-head h3 { color: #211936; }
@@ -2473,7 +2474,7 @@ body[data-ui-theme="catbot"] .brand-sub b { color: var(--accent-solid); }
 body[data-ui-theme="catbot"] .toggle-btn.active, body[data-ui-theme="catbot"] .settings-nav-btn.active {
   background: var(--paper-accent-soft); border-color: var(--paper-accent-line); color: #241c3c;
 }
-body[data-ui-theme="catbot"] .settings-nav-btn.active span { color: color-mix(in srgb, var(--accent-solid) 60%, #241c3c); }
+body[data-ui-theme="catbot"] .settings-nav-btn.active .settings-nav-num { color: color-mix(in srgb, var(--accent-solid) 60%, #241c3c); }
 body[data-ui-theme="catbot"] .theme-card.active { border-color: var(--paper-accent-line); box-shadow: 0 0 0 2px var(--paper-accent-soft) inset; }
 body[data-ui-theme="catbot"] .settings-fab {
   background: var(--accent-solid); border-color: var(--accent-solid); color: var(--accent-contrast);
@@ -2672,9 +2673,9 @@ body.settings-standalone #settingsWindow {
   animation: none;
 }
 body.settings-standalone #settingsWindow .window-head { display: none; }
-body.settings-standalone #settingsWindow .settings-layout { grid-template-columns: 168px minmax(0, 1fr); }
+body.settings-standalone #settingsWindow .settings-layout { --settings-nav-w: 168px; }
 body.settings-standalone #ui-root.ui-tight #settingsWindow .settings-layout,
-body.settings-standalone #ui-root.ui-ultra #settingsWindow .settings-layout { grid-template-columns: 140px minmax(0, 1fr); }
+body.settings-standalone #ui-root.ui-ultra #settingsWindow .settings-layout { --settings-nav-w: 140px; }
 body.settings-standalone #ui-root.ui-tight #settingsWindow .settings-content,
 body.settings-standalone #ui-root.ui-ultra #settingsWindow .settings-content { padding-left: 20px; padding-right: 20px; }
 body.settings-standalone #ui-root.ui-ultra #settingsWindow .settings-nav { padding-left: 7px; padding-right: 7px; }
@@ -2696,9 +2697,6 @@ body.settings-standalone[data-ui-theme="catbot"] #settingsWindow {
 body.settings-standalone[data-ui-theme="vidi"] { background: #050a0f; }
 body.settings-standalone[data-ui-theme="vidi"] #settingsModal { background: #050a0f; }
 body.settings-standalone[data-ui-theme="vidi"] #settingsWindow { background: #071019; }
-@media (max-width: 700px) {
-  body.settings-standalone #settingsWindow .settings-layout { grid-template-columns: 1fr; }
-}
 
 /* ── Scale-aware responsive density ───────────────────── */
 .ui-compact .workspace { grid-template-columns: 268px minmax(0, 1fr) 282px; }
@@ -2958,3 +2956,15 @@ body[data-ui-theme][data-ui-mode] .shortcut-search input {
   color-scheme: normal;
 }
 body[data-ui-mode="light"] .shortcut-search input { color: #3a304f; }
+
+/* Compact settings rail: the nav stays vertical at any width. Never flips
+   to a horizontal strip — high-DPI scaling made that trigger on wide screens. */
+@media (max-width: 760px) {
+  body.settings-standalone #settingsWindow .settings-layout,
+  body.settings-standalone #ui-root.ui-tight #settingsWindow .settings-layout,
+  body.settings-standalone #ui-root.ui-ultra #settingsWindow .settings-layout {
+    --settings-nav-w: 56px;
+  }
+  body.settings-standalone #settingsWindow .settings-nav { padding-top: 10px; padding-left: 6px; padding-right: 6px; }
+  body.settings-standalone #ui-root.ui-ultra #settingsWindow .settings-nav { padding-left: 6px; padding-right: 6px; }
+}

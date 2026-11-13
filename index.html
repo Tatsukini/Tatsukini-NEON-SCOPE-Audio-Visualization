@@ -702,16 +702,16 @@
       </div>
       <div class="settings-layout">
         <nav class="settings-nav">
-          <button class="settings-nav-btn active" data-settings-tab="appearance"><span>01</span>外观</button>
-          <button class="settings-nav-btn" data-settings-tab="background"><span>02</span>背景</button>
-          <button class="settings-nav-btn" data-settings-tab="interface"><span>03</span>界面</button>
-          <button class="settings-nav-btn" data-settings-tab="motion"><span>04</span>动效</button>
-          <button class="settings-nav-btn" data-settings-tab="engine"><span>05</span>硬件</button>
-          <button class="settings-nav-btn" data-settings-tab="plugins"><span>06</span>插件</button>
-          <button class="settings-nav-btn" data-settings-tab="files"><span>07</span>文件</button>
-          <button class="settings-nav-btn" data-settings-tab="about"><span>08</span>关于</button>
+          <button class="settings-nav-btn active" data-settings-tab="appearance" title="外观"><span class="settings-nav-num">01</span><span class="settings-nav-label">外观</span></button>
+          <button class="settings-nav-btn" data-settings-tab="background" title="背景"><span class="settings-nav-num">02</span><span class="settings-nav-label">背景</span></button>
+          <button class="settings-nav-btn" data-settings-tab="interface" title="界面"><span class="settings-nav-num">03</span><span class="settings-nav-label">界面</span></button>
+          <button class="settings-nav-btn" data-settings-tab="motion" title="动效"><span class="settings-nav-num">04</span><span class="settings-nav-label">动效</span></button>
+          <button class="settings-nav-btn" data-settings-tab="engine" title="硬件"><span class="settings-nav-num">05</span><span class="settings-nav-label">硬件</span></button>
+          <button class="settings-nav-btn" data-settings-tab="plugins" title="插件"><span class="settings-nav-num">06</span><span class="settings-nav-label">插件</span></button>
+          <button class="settings-nav-btn" data-settings-tab="files" title="文件"><span class="settings-nav-num">07</span><span class="settings-nav-label">文件</span></button>
+          <button class="settings-nav-btn" data-settings-tab="about" title="关于"><span class="settings-nav-num">08</span><span class="settings-nav-label">关于</span></button>
           <div class="settings-nav-spacer"></div>
-          <button class="settings-nav-btn accent" id="openShortcutsBtn"><span>⌘</span>快捷键</button>
+          <button class="settings-nav-btn accent" id="openShortcutsBtn" title="快捷键"><span class="settings-nav-num">⌘</span><span class="settings-nav-label">快捷键</span></button>
         </nav>
         <div class="settings-content">
           <section class="settings-panel" data-settings-panel="appearance">
@@ -998,6 +998,8 @@
               </select>
             </label>
             <p class="section-help">基础信息等静态模块缓存；声谱图、钢琴卷帘、克拉尼等慢模块分帧更新；电平、频谱、示波器等快模块保持逐帧。</p>
+            <label class="check-row compact"><input type="checkbox" id="previewOptimize" checked /><span>预览优化（CPU 预渲染静态图层，仅影响预览）</span></label>
+            <p class="section-help">模块外框、标题条、网格与暗角等不随音频变化的内容只绘制一次，之后逐帧复用；导出视频始终按完整质量逐帧绘制，不启用任何缓存或跳帧。</p>
             <label class="check-row compact"><input type="checkbox" id="dynamicResolution" checked /><span>动态分辨率（根据帧耗时自动升降）</span></label>
             <div class="setting-block">
               <div class="setting-block-head"><span>资源配额</span><em>SAFE BUDGETS</em></div>
@@ -1448,7 +1450,7 @@
     <div class="alpha-card">
       <div class="alpha-mark" aria-hidden="true">!</div>
       <div class="alpha-body">
-        <div class="alpha-kicker">ALPHA BUILD / V0.1.4_Alpha_Canary_1114_7</div>
+        <div class="alpha-kicker">ALPHA BUILD / V0.1.4_Alpha_Canary_1114_8</div>
         <h2 id="alphaNoticeTitle">注意！这是 NEON//SCOPE 的 Alpha 测试版本。</h2>
         <p>Alpha 测试版本不代表最终产品的最终质量。感谢您的理解和支持，祝你好运！</p>
         <div class="alpha-foot">

@@ -529,6 +529,7 @@ export const DEFAULT_SETTINGS = {
   renderArchitecture: 'adaptive',
   computeArchitecture: 'deferred',
   dynamicResolution: true,
+  previewOptimize: true,
   cpuBudget: 100,
   gpuBudget: 100,
   memBudget: 80,
