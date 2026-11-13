@@ -1,3 +1,4 @@
+// Copyright (C) 2026 Tatsukini
 /**
  * Built-in demo cue.
  *

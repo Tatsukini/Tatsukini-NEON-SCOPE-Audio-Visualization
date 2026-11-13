@@ -1,3 +1,4 @@
+// Copyright (C) 2026 Tatsukini
 import http from 'node:http';
 import { createReadStream, createWriteStream } from 'node:fs';
 import { mkdir, mkdtemp, rm, stat, readdir, rename } from 'node:fs/promises';

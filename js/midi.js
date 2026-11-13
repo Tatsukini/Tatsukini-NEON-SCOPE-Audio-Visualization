@@ -1,3 +1,4 @@
+// Copyright (C) 2026 Tatsukini
 /**
  * Standard MIDI File parser (format 0/1) + a small offline General-MIDI-ish
  * synthesizer. The synth is intentionally lightweight: one or two oscillators

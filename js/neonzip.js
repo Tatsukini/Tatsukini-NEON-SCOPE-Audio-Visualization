@@ -1,3 +1,4 @@
+// Copyright (C) 2026 Tatsukini
 // Minimal ZIP container used by .NEON project archives.
 // Supports stored and deflate-raw entries, UTF-8 names, and files < 4 GB.
 

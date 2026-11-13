@@ -1,3 +1,4 @@
+// Copyright (C) 2026 Tatsukini
 import {
   STAGE_W, STAGE_H, MODULE_DEFS, MODULE_ORDER, DEFAULT_SETTINGS,
   EXPORT_QUALITIES, LAYOUT_PRESETS, makeStudioLayout, makeScopeLayout, makeMinimalLayout,
@@ -1606,6 +1607,11 @@ class NeonScopeApp {
       else if (schema.type === 'color') value = normalizeHexInput(control.dataset.color8 || control.value, schema.default);
       else value = control.value;
       mod.options = { ...(mod.options || {}), [key]: value };
+      if (key === 'channel' && mod.type === 'scope' && (value === 'L' || value === 'R' || value === 'BOTH')) {
+        const base = String(mod.title || MODULE_DEFS[mod.type].code).toUpperCase().replace(/\s*·\s*(L|R|BOTH)\s*$/, '');
+        mod.title = `${base} · ${value}`;
+        d.selectedName.textContent = mod.title;
+      }
       if (schema.type === 'range') {
         const output = d.moduleOptions.querySelector(`[data-opt-output="${key}"]`);
         if (output) output.textContent = key === 'midiOffset'

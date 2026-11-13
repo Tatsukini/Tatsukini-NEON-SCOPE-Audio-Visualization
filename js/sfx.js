@@ -1,3 +1,4 @@
+// Copyright (C) 2026 Tatsukini
 // Procedural UI sound effects. Everything is synthesised on the fly so the
 // app keeps its zero-asset footprint and works offline.
 

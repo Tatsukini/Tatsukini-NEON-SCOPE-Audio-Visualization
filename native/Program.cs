@@ -1,3 +1,4 @@
+// Copyright (C) 2026 Tatsukini
 using System;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;

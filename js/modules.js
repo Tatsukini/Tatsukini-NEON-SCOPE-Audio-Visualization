@@ -1,3 +1,4 @@
+// Copyright (C) 2026 Tatsukini
 import {
   STAGE_W, STAGE_H, MODULE_DEFS, clamp, lerp, rgba, mixHex, lighten, darken, hexToRgb,
   luminance, roundRect, spacedText, formatShortTime, isHexColor, hexAlpha, SCHEME_COLORS,
@@ -80,6 +81,15 @@ function channelMode(mod) {
   if (/·\s*L\s*$/.test(t) || /\bL ONLY\b/.test(t)) return 'L';
   if (/·\s*R\s*$/.test(t) || /\bR ONLY\b/.test(t)) return 'R';
   return 'BOTH';
+}
+
+function moduleTitleText(mod, fallback) {
+  const raw = (mod.title || fallback || '').toUpperCase();
+  if (mod.type !== 'scope') return raw;
+  const setting = modOpt(mod, 'channel', 'auto');
+  if (setting !== 'L' && setting !== 'R' && setting !== 'BOTH') return raw;
+  const base = raw.replace(/\s*·\s*(L|R|BOTH)\s*$/i, '');
+  return `${base} · ${setting}`;
 }
 
 function modOpt(mod, key, fallback) {
@@ -175,7 +185,7 @@ function drawCard(ctx, mod, accent, env) {
   sans(ctx, 10.5, '700');
   ctx.fillStyle = titleText;
   ctx.textAlign = 'left';
-  const title = (mod.title || def.code).toUpperCase();
+  const title = moduleTitleText(mod, def.code);
   ctx.fillText(title, x + 23, y + HEAD_H / 2 + 0.7);
   ctx.restore();
 
@@ -2262,13 +2272,21 @@ function drawMidiOC(ctx, mod, body, frame, st, env) {
   const downColor = isHexColor(modOpt(mod, 'decreaseColor', SCHEME_COLORS[1])) ? modOpt(mod, 'decreaseColor', SCHEME_COLORS[1]) : SCHEME_COLORS[1];
   const holdColor = isHexColor(modOpt(mod, 'holdColor', SCHEME_COLORS[2])) ? modOpt(mod, 'holdColor', SCHEME_COLORS[2]) : SCHEME_COLORS[2];
   const time = Number(frame.time) || 0;
+  const moduleW = Math.max(80, Number(mod.w) || 640);
+  const moduleH = Math.max(40, Number(mod.h) || 260);
+  const framed = modOpt(mod, 'frame', false) === true;
+  const insetTop = framed ? HEAD_H + 2 : 0;
+  const bandTop = Number(mod.y) + insetTop;
+  const bandH = Math.max(24, moduleH - insetTop - (framed ? 3 : 0));
+  const bandCenterY = bandTop + bandH / 2 + modNum(mod, 'y', 0, -STAGE_H, STAGE_H);
+  const messageY = framed ? bandCenterY : originY;
 
   if (!midi || !midi.notes?.length) {
     ctx.save();
     mono(ctx, 9, '500');
     ctx.fillStyle = rgba(textColor, 0.42);
     ctx.textAlign = 'center';
-    ctx.fillText('等待 MIDI · MIDI O/C', originX, originY + 2);
+    ctx.fillText('等待 MIDI · MIDI O/C', originX, messageY + 2);
     ctx.restore();
     return;
   }
@@ -2307,19 +2325,19 @@ function drawMidiOC(ctx, mod, body, frame, st, env) {
     mono(ctx, 9, '500');
     ctx.fillStyle = rgba(textColor, 0.42);
     ctx.textAlign = 'center';
-    ctx.fillText('无音符 · MIDI O/C', originX, originY + 2);
+    ctx.fillText('无音符 · MIDI O/C', originX, messageY + 2);
     ctx.restore();
     return;
   }
 
   const cfg = { showUp, showDown, showHold, upColor, downColor, holdColor, fadeIn, fadeOut };
-  const moduleW = Math.max(80, Number(mod.w) || 640);
-  const moduleH = Math.max(40, Number(mod.h) || 260);
-  const rowH = clamp(moduleH / rows.length, 16, 40);
+  const rowH = clamp(bandH / rows.length, framed ? 10 : 16, 40);
   const fontSize = Math.max(10, Math.round(rowH * 0.64));
   const left = Math.round(originX - moduleW / 2) + 6;
   const right = Math.round(originX + moduleW / 2) - 6;
-  const top = Math.round(originY - (rows.length * rowH) / 2);
+  const centerY = messageY;
+  let top = Math.round(centerY - (rows.length * rowH) / 2);
+  if (framed) top = Math.max(Math.round(bandTop), top);
 
   ctx.save();
   ctx.textAlign = 'left';

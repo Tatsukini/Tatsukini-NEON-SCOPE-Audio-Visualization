@@ -1,3 +1,4 @@
+// Copyright (C) 2026 Tatsukini
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net;

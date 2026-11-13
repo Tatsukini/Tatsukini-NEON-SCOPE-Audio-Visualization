@@ -2,7 +2,7 @@
 
 **前沿测试频道 · 功能最先落地 · 不保证稳定**
 
-[![Canary build](https://img.shields.io/badge/canary-V0.1.4__Alpha__Canary__1114__10-e5397f)](https://github.com/Tatsukini/Tatsukini-NEON-SCOPE-Audio-Visualization-Canary/releases/tag/V0.1.4_Alpha_Canary_1114_10)
+[![Canary build](https://img.shields.io/badge/canary-V0.1.4__Alpha__Canary__1114__11-e5397f)](https://github.com/Tatsukini/Tatsukini-NEON-SCOPE-Audio-Visualization-Canary/releases/tag/V0.1.4_Alpha_Canary_1114_11)
 [![License](https://img.shields.io/badge/license-AGPL--3.0--or--later-1f6feb)](LICENSE)
 [![Stable channel](https://img.shields.io/badge/stable-V0.1.1_1104_alpha_Num.2-6e7681)](https://github.com/Tatsukini/Tatsukini-NEON-SCOPE-Audio-Visualization)
 
@@ -30,7 +30,7 @@ Canary 与稳定版共享同一套前端资源与桌面外壳，代码同源；�
 
 ## 界面测试图
 
-以下截图全部取自当前构建 `V0.1.4_Alpha_Canary_1114_10`，1920×1080，示例工程 `WHEN RAIN`。
+以下截图全部取自当前构建 `V0.1.4_Alpha_Canary_1114_11`，1920×1080，示例工程 `WHEN RAIN`。
 
 | 工作台 · 编辑与吸附 | 专注预览 · 无侧栏 |
 | --- | --- |
@@ -50,28 +50,30 @@ Canary 与稳定版共享同一套前端资源与桌面外壳，代码同源；�
 
 | 项目 | 值 |
 | --- | --- |
-| 构建号 | `V0.1.4_Alpha_Canary_1114_10` |
+| 构建号 | `V0.1.4_Alpha_Canary_1114_11` |
 | 通道 | Canary / Alpha |
-| 基于 | `V0.1.4_Alpha_Canary_1114_9` |
+| 基于 | `V0.1.4_Alpha_Canary_1114_10` |
 | 构建日期 | 2026-11-14 |
 | 许可 | AGPL-3.0-or-later（见 [LICENSE](LICENSE)、[NOTICE](NOTICE)） |
 | 可执行文件 | `dist\NEON-SCOPE.exe`、`NEON-SCOPE-win64.zip` |
 
 ### 本轮改动
 
-- **撤回预览分辨率自适应**：舞台不再在帧耗时偏高时自动降低预览分辨率（最低到 50%、画布宽最小 640），画布始终按 CSS 尺寸 × DPR 原生渲染，模糊消失；同时移除「预览优化」「动态分辨率」「预览渲染缩放」三个设置项及其缓存链路，预览与导出统一为直绘。
-- **模块渲染容错保留**：单个模块绘制异常仍只影响该模块当帧，不会中断后续模块循环。
+- **MIDI O/C 边框遮挡首行**：开启「显示面板边框」时，轨道行改为在 26px 标题栏以下的正文区域内居中排布，行高按正文高度重算；模块总宽高保持不变，未开边框时排布不变。
+- **OSCILLOSCOPE 标题跟随声道**：切换「显示声道」为仅左 / 仅右 / 双通道时同步改写标题后缀；绘制标题也按当前选项校正，旧工程中标题与设置不一致的模块同样显示正确。
 
 ### 测试重点
 
-1. **清晰度**：1920×1080 下舞台文字与谱线应保持锐利；播放 30 秒以上不应逐渐变糊。
-2. **帧率**：预览按原生分辨率直绘，帧率取决于机器与 FFT 设置；`设置 → 硬件 → FFT` 降低后帧率应上升。
+1. **MIDI O/C 边框**：开启面板边框，确认第一行完整显示在标题栏下方，最后一行不越过底边；模块尺寸不因开关边框而变化。
+2. **声道标题**：把 OSCILLOSCOPE 的显示声道依次切到 L / R / BOTH，确认舞台标题同步变为 `· L` / `· R` / `· BOTH`。
 3. **模块消失问题**：播放中切换主题、主色、扫描线、窗口尺寸，确认所有模块每帧都在；控制台不应出现 `Module render failure`。若出现，请记录模块类型与消息。
 
 ### 回归清单
 
 - [ ] 首次启动 → 确认 Alpha 提示 → 载入示例工程
 - [ ] 播放 30 秒，确认舞台保持锐利、所有模块都在
+- [ ] MIDI O/C 开关面板边框，确认首行在标题栏下方、末行不越界
+- [ ] OSCILLOSCOPE 切换 L / R / BOTH，确认标题同步
 - [ ] 修改模块位置 / 尺寸 / 标题 / 颜色，确认预览即时更新
 - [ ] 隐藏 / 独显模块后再「显示全部」，确认布局与内容一致
 - [ ] 导出 10 秒视频，检查慢模块逐帧变化、水印与片头片尾

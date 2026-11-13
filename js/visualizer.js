@@ -1,3 +1,4 @@
+// Copyright (C) 2026 Tatsukini
 import { STAGE_W, STAGE_H, clamp, formatTC, formatShortTime, mixHex, withAlpha, automationValueAt, resolveThemeColors, hexAlpha, isHexColor } from './core.js';
 import { BackgroundRenderer } from './background.js';
 import { drawVisualModule } from './modules.js';

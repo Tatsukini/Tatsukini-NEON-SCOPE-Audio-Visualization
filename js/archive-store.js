@@ -1,3 +1,4 @@
+// Copyright (C) 2026 Tatsukini
 const DB_NAME = 'neon-scope-archive';
 const STORE = 'pending';
 const KEY = 'pending-archive';

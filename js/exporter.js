@@ -1,3 +1,4 @@
+// Copyright (C) 2026 Tatsukini
 function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
 function nextFrame(timeout = 1500) {
   return new Promise((resolve) => {

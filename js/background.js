@@ -1,3 +1,4 @@
+// Copyright (C) 2026 Tatsukini
 import { hexToRgb, clamp } from './core.js';
 
 const VERT = `
