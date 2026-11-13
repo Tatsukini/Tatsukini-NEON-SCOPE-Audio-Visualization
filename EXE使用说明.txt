@@ -1,4 +1,4 @@
-NEON//SCOPE  V0.1.4_Alpha_Canary_1114_5  (Windows x64)
+NEON//SCOPE  V0.1.4_Alpha_Canary_1114_6  (Windows x64)
 
 启动：
   双击 NEON-SCOPE.exe
@@ -73,7 +73,8 @@ NEON//SCOPE  V0.1.4_Alpha_Canary_1114_5  (Windows x64)
   - 选择“直接关闭”或从托盘退出时，程序会先等待当前工程存档写完再关闭，
     因此短时间会话也不会丢掉自动存档
   - 三套界面风格的输入框与下拉框尺寸统一：CATBOT 为直角几何，
-    NEON GRID / VIDI STUDIO 为圆角霓虹描边
+    NEON GRID / VIDI STUDIO 为圆角霓虹描边；所有字段共用同一 1px
+    描边与等宽字体，浅色模式下统一使用纸面配色
   - 设置窗口中的“保存存档”会交给主窗口执行，确保音频、MIDI 与背景
     一并写入 .NEON；在设置窗口导入存档也会由主窗口完成恢复
   - 快捷键映射窗口：搜索、重绑定、恢复默认

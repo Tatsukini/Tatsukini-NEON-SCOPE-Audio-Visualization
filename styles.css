@@ -2757,7 +2757,12 @@ body :is(input[type="text"], input[type="number"], input[type="search"],
   height: 28px !important;
   min-height: 28px !important;
   padding: 0 8px !important;
+  /* Fields without an older rule keep Chrome's 2px inset UA border,
+     which renders darker and thicker than the 1px controls. */
+  border-width: 1px !important;
+  border-style: solid !important;
   border-radius: 6px !important;
+  font-family: var(--mono) !important;
   font-size: 9px !important;
   line-height: normal !important;
   outline: none;
@@ -2839,6 +2844,21 @@ body[data-ui-mode="dark"][data-ui-theme="catbot"] :is(input[type="text"], input[
 }
 body[data-ui-mode="dark"][data-ui-theme="catbot"] textarea { border-radius: 0 !important; }
 body[data-ui-mode="dark"][data-ui-theme="catbot"] :is(input, textarea)::placeholder { color: #8f8091; }
+
+/* Light mode (NEON / VIDI) uses the same paper surfaces; CATBOT light
+   overrides this with its own palette below these lines. */
+body[data-ui-mode="light"] :is(input[type="text"], input[type="number"],
+  input[type="search"], input[type="email"], input[type="url"], input[type="password"], input[type="tel"], select) {
+  background-color: var(--paper-card) !important;
+  border-color: var(--paper-line) !important;
+  color: #2a2340 !important;
+  color-scheme: light;
+}
+body[data-ui-mode="light"] :is(input[type="text"], input[type="number"],
+  input[type="search"], input[type="email"], input[type="url"], input[type="password"], input[type="tel"], select):focus {
+  border-color: var(--accent-solid) !important;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-solid) 14%, transparent);
+}
 
 /* CATBOT action buttons that sit beside a field follow the same shell. */
 body[data-ui-theme="catbot"]:not([data-ui-mode="dark"]) .path-row .mini-action,
