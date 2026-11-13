@@ -352,8 +352,9 @@
             <div class="shortcut-list">
               <div><span>拖动</span><kbd>MOVE</kbd></div>
               <div><span>右下角拖动</span><kbd>RESIZE</kbd></div>
-              <div><span>方向键</span><kbd>NUDGE</kbd></div>
-              <div><span>Shift + 方向键</span><kbd>×10</kbd></div>
+              <div><span>Shift + ← / →</span><kbd>NUDGE 10</kbd></div>
+              <div><span>Ctrl + ← / →</span><kbd>NUDGE 1</kbd></div>
+              <div><span>↑ / ↓</span><kbd>NUDGE 1</kbd></div>
             </div>
           </div>
 
@@ -675,9 +676,11 @@
           <div><kbd>E</kbd><span>编辑模式</span></div>
           <div><kbd>F</kbd><span>专注预览</span></div>
           <div><kbd>L</kbd><span>循环</span></div>
-          <div><kbd>DEL</kbd><span>删除所选模块</span></div>
-          <div><kbd>← ↑ ↓ →</kbd><span>微调位置</span></div>
-          <div><kbd>SHIFT + 方向</kbd><span>10px 步进</span></div>
+          <div><kbd>DEL</kbd><span>删除所选动作 / 模块</span></div>
+          <div><kbd>← →</kbd><span>快退 / 快进 1 秒（长按连续）</span></div>
+          <div><kbd>↑ ↓</kbd><span>微调位置</span></div>
+          <div><kbd>SHIFT + ← →</kbd><span>10px 步进</span></div>
+          <div><kbd>CTRL + ← →</kbd><span>1px 步进</span></div>
         </div>
         <p class="help-foot">NEON//SCOPE 1.4 · 纯前端实时可视化 · 所有素材仅在本机处理，不会上传。</p>
       </div>
@@ -875,6 +878,14 @@
               <label class="check-row"><input type="checkbox" id="watermarkToggle" checked /><span>显示舞台水印 / 时间码</span></label>
               <label class="check-row"><input type="checkbox" id="scanlineToggle" checked /><span>叠加扫描线与暗角</span></label>
               <label class="check-row"><input type="checkbox" id="autoSave" checked /><span>自动保存布局与设置</span></label>
+            </div>
+            <div class="setting-block">
+              <div class="setting-block-head"><span>界面音效</span><em>SOUND FX</em></div>
+              <label class="check-row"><input type="checkbox" id="sfxToggle" checked /><span>启用点击、提示与存档音效</span></label>
+              <div class="field-row">
+                <label class="field-label">音效音量 <output id="sfxVolumeOut">55%</output></label>
+                <input id="sfxVolume" type="range" min="0" max="100" step="5" value="55" />
+              </div>
             </div>
             <button class="settings-link-btn" id="openShortcutsBtn2">
               <span><svg class="icon"><use href="#i-keyboard"/></svg>打开快捷键映射表</span>
@@ -1437,7 +1448,7 @@
     <div class="alpha-card">
       <div class="alpha-mark" aria-hidden="true">!</div>
       <div class="alpha-body">
-        <div class="alpha-kicker">ALPHA BUILD / V0.1.4_Alpha_Canary_1114_6</div>
+        <div class="alpha-kicker">ALPHA BUILD / V0.1.4_Alpha_Canary_1114_7</div>
         <h2 id="alphaNoticeTitle">注意！这是 NEON//SCOPE 的 Alpha 测试版本。</h2>
         <p>Alpha 测试版本不代表最终产品的最终质量。感谢您的理解和支持，祝你好运！</p>
         <div class="alpha-foot">
@@ -1465,6 +1476,19 @@
     <button data-timeline-menu="float">浮动 / 停靠时间轴</button>
     <button data-timeline-menu="snap">切换吸附 <span class="menu-state">ON</span><kbd>G</kbd></button>
     <button data-timeline-menu="align">切换对齐参考 <span class="menu-state">ON</span><kbd>CTRL + K</kbd></button>
+  </div>
+
+  <div class="autosave-layer hidden" id="autosaveLayer" role="status" aria-live="assertive" aria-label="正在自动存档">
+    <div class="autosave-card">
+      <div class="autosave-stream" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span></div>
+      <div class="autosave-head">
+        <span class="eyebrow" id="autosaveStage">AUTOSAVE · PACKAGING</span>
+        <h3 id="autosaveTitle">正在自动存档…</h3>
+        <p id="autosaveHint">正在打包工程、音频与 MIDI，完成后将自动退出</p>
+      </div>
+      <div class="autosave-track"><div class="autosave-fill" id="autosaveFill"></div></div>
+      <div class="autosave-meta"><span id="autosaveDetail">读取工程状态</span><span id="autosavePercent">0%</span></div>
+    </div>
   </div>
 
   <div class="toast-stack" id="toastStack" aria-live="polite"></div>

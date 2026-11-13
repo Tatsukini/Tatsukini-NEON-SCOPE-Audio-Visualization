@@ -1,4 +1,4 @@
-NEON//SCOPE  V0.1.4_Alpha_Canary_1114_6  (Windows x64)
+NEON//SCOPE  V0.1.4_Alpha_Canary_1114_7  (Windows x64)
 
 启动：
   双击 NEON-SCOPE.exe
@@ -77,7 +77,7 @@ NEON//SCOPE  V0.1.4_Alpha_Canary_1114_6  (Windows x64)
     描边与等宽字体，浅色模式下统一使用纸面配色
   - 设置窗口中的“保存存档”会交给主窗口执行，确保音频、MIDI 与背景
     一并写入 .NEON；在设置窗口导入存档也会由主窗口完成恢复
-  - 快捷键映射窗口：搜索、重绑定、恢复默认
+  - 关闭窗口触发自动存档时，显示“正在自动存档”进度条与分阶段文案    （读取工程 → 打包音频与 MIDI → 写入存档），完成或失败后再退出  - 界面音效：点击、确认、右下角提示弹出 / 成功 / 失败、新增模块、    滑块按下 / 松开均有程序合成的音效；设置 → 界面可开关并调节音量  - 左 / 右方向键快退 / 快进 1 秒，长按每秒 5 步；Shift+←/→ 微调模块    10 px，Ctrl+←/→ 微调 1 px；Delete 直接删除当前选中的动作或模块  - 快捷键映射窗口：搜索、重绑定、恢复默认
   - 背景图片、GPU / CPU 背景渲染
   - 导出 MP4（H.264 + AAC）或 WebM 视频
   - MP4 默认由 WebView2 原生硬件录制，无需 FFmpeg
@@ -117,7 +117,8 @@ NEON//SCOPE  V0.1.4_Alpha_Canary_1114_6  (Windows x64)
   - 4K / 60FPS 对性能要求较高，建议先使用 1080P。
   - 启用降速录制、硬件编码或手动指定码率 / 预设 / CRF 时，需要系统已安装
     FFmpeg 并加入 PATH，否则会回退为原生实时录制。
-  - 本程序以 GNU General Public License v3.0 或更高版本（GPL-3.0-or-later）发布；
-    许可证全文见仓库根目录 LICENSE，示例素材不在 GPL 范围内（见 NOTICE）。
+  - 本程序以 GNU Affero General Public License v3.0 或更高版本（AGPL-3.0-or-later）发布；
+    通过网络提供修改后的版本时，须向使用者提供对应源代码。
+    许可证全文见仓库根目录 LICENSE，示例素材不在 AGPL 范围内（见 NOTICE）。
 
 

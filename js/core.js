@@ -556,6 +556,8 @@ export const DEFAULT_SETTINGS = {
   smoothing: 78,
   watermark: true,
   scanlines: true,
+  sfx: true,
+  sfxVolume: 55,
   snap: true,
   editing: true,
   autoSave: true,

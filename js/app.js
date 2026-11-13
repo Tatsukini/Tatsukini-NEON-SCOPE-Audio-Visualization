@@ -13,6 +13,7 @@ import { parseMidi } from './midi.js';
 import { Visualizer } from './visualizer.js';
 import { VideoExporter, downloadBlob, checkFfmpeg, sanitizeFilename, pickMime, pickDirectMime } from './exporter.js';
 import { registerPluginDrawer, unregisterPluginDrawer } from './modules.js';
+import { Sfx } from './sfx.js';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
@@ -81,6 +82,8 @@ const SHORTCUT_ACTIONS = [
   { id: 'play_pause', label: '播放 / 暂停', code: 'PLAYBACK', group: '播放', default: 'Space' },
   { id: 'stop', label: '停止并回到开头', code: 'STOP', group: '播放', default: 'Home' },
   { id: 'loop', label: '循环播放', code: 'LOOP', group: '播放', default: 'KeyL' },
+  { id: 'seek_back', label: '后退 1 秒（长按连续后退）', code: 'SEEK -1S', group: '播放', default: 'ArrowLeft' },
+  { id: 'seek_forward', label: '前进 1 秒（长按连续前进）', code: 'SEEK +1S', group: '播放', default: 'ArrowRight' },
   { id: 'open_export', label: '打开视频导出', code: 'EXPORT', group: '播放', default: 'Ctrl+Shift+KeyE' },
   { id: 'save_archive', label: '保存工程存档', code: 'SAVE', group: '文件', default: 'Ctrl+KeyS' },
   { id: 'snap', label: '吸附对齐', code: 'SNAP', group: '编辑', default: 'KeyG' },
@@ -88,12 +91,14 @@ const SHORTCUT_ACTIONS = [
   { id: 'anim_undo', label: '撤销动画编辑', code: 'UNDO', group: '动画', default: 'Ctrl+KeyZ' },
   { id: 'anim_redo', label: '重做动画编辑', code: 'REDO', group: '动画', default: 'Ctrl+Shift+KeyZ' },
   { id: 'edit_mode', label: '编辑 / 预览模式', code: 'EDIT', group: '编辑', default: 'KeyE' },
-  { id: 'delete_module', label: '删除所选模块', code: 'DELETE', group: '编辑', default: 'Delete' },
+  { id: 'delete_module', label: '删除所选动作或模块', code: 'DELETE', group: '编辑', default: 'Delete' },
   { id: 'duplicate_module', label: '复制所选模块', code: 'DUPLICATE', group: '编辑', default: 'Ctrl+KeyD' },
   { id: 'center_h', label: '模块水平居中', code: 'CENTER H', group: '编辑', default: 'Shift+KeyH' },
   { id: 'center_v', label: '模块垂直居中', code: 'CENTER V', group: '编辑', default: 'Shift+KeyV' },
-  { id: 'nudge_left', label: '微调：向左', code: 'NUDGE', group: '编辑', default: 'ArrowLeft' },
-  { id: 'nudge_right', label: '微调：向右', code: 'NUDGE', group: '编辑', default: 'ArrowRight' },
+  { id: 'nudge_left', label: '微调：向左 10px', code: 'NUDGE', group: '编辑', default: 'Shift+ArrowLeft' },
+  { id: 'nudge_right', label: '微调：向右 10px', code: 'NUDGE', group: '编辑', default: 'Shift+ArrowRight' },
+  { id: 'nudge_left_fine', label: '微调：向左 1px', code: 'NUDGE FINE', group: '编辑', default: 'Ctrl+ArrowLeft' },
+  { id: 'nudge_right_fine', label: '微调：向右 1px', code: 'NUDGE FINE', group: '编辑', default: 'Ctrl+ArrowRight' },
   { id: 'nudge_up', label: '微调：向上', code: 'NUDGE', group: '编辑', default: 'ArrowUp' },
   { id: 'nudge_down', label: '微调：向下', code: 'NUDGE', group: '编辑', default: 'ArrowDown' },
   { id: 'focus', label: '专注预览模式', code: 'FOCUS', group: '窗口', default: 'KeyF' },
@@ -107,6 +112,31 @@ const SHORTCUT_ACTIONS = [
   { id: 'reset_panels', label: '恢复默认面板布局', code: 'RESET LAYOUT', group: '窗口', default: 'Ctrl+Shift+KeyR' },
 ];
 const DEFAULT_KEYBINDS = Object.fromEntries(SHORTCUT_ACTIONS.map((action) => [action.id, action.default]));
+
+function normalizeKeybinds(raw) {
+  const kb = { ...DEFAULT_KEYBINDS };
+  if (!raw || typeof raw !== 'object') return kb;
+  for (const action of SHORTCUT_ACTIONS) {
+    const binding = raw[action.id];
+    if (typeof binding === 'string' && binding && !FORBIDDEN_BINDINGS.has(bindingParts(binding).at(-1))) {
+      kb[action.id] = binding;
+    }
+  }
+  // Arrow keys drove nudging before they became seek keys; keep old layouts
+  // working by moving lateral nudges onto Shift + arrows.
+  if (raw.nudge_left === 'ArrowLeft') kb.nudge_left = 'Shift+ArrowLeft';
+  if (raw.nudge_right === 'ArrowRight') kb.nudge_right = 'Shift+ArrowRight';
+  const seen = new Set();
+  for (const action of SHORTCUT_ACTIONS) {
+    const binding = kb[action.id];
+    if (!binding) continue;
+    if (!seen.has(binding)) { seen.add(binding); continue; }
+    const fallback = DEFAULT_KEYBINDS[action.id];
+    kb[action.id] = fallback && !seen.has(fallback) ? fallback : '';
+    if (kb[action.id]) seen.add(kb[action.id]);
+  }
+  return kb;
+}
 
 const MODULE_OPTIONS = {
   levels: [
@@ -418,16 +448,19 @@ class NeonScopeApp {
     this._autoSaveBusy = false;
     this._autoSaveSignature = '';
     this.audio = new AudioEngine();
+    this.sfx = new Sfx();
     this._loadPersisted();
     this._cacheDom();
     this._setUiScale(this.state.settings.uiScale, { silent: true, noPersist: true });
     this._applySettingsToState();
+    this._applySfxSettings();
     this.audio.setVolume(this.state.settings.volume / 100);
     this.audio.setSmoothing(this.state.settings.smoothing);
     this.audio.setFftSize(this.state.settings.fftSize);
     this.audio.onState = (s) => this._onAudioState(s);
     this._initVisualizer();
     this._bindUI();
+    this._bindSfx();
     this._initPanels();
     this._initSubpanels();
     this._applyThemePalette({ silent: true, noPersist: true });
@@ -529,7 +562,7 @@ class NeonScopeApp {
       } else if (data?.action === 'flush-autosave') {
         // The host tears the WebView down as soon as this returns, so the
         // save must complete before answering.
-        this._flushAutoSave()
+        this._flushExitAutosave()
           .catch(() => {})
           .finally(() => window.chrome.webview.postMessage({ action: 'autosave-flushed' }));
       }
@@ -698,8 +731,11 @@ class NeonScopeApp {
       s.dynamicResolution = s.dynamicResolution !== false;
       s.autoSaveInterval = clamp(Number(s.autoSaveInterval) || 360, 10, 86400);
       s.restoreAutosave = s.restoreAutosave === true;
+      s.sfx = s.sfx !== false;
+      s.sfxVolume = clamp(Number.isFinite(Number(s.sfxVolume)) ? Number(s.sfxVolume) : 55, 0, 100);
       this.state.settings = s;
       this._applySettingsToState();
+      this._applySfxSettings();
       this.audio.setVolume(s.volume / 100);
       this.audio.setSmoothing(s.smoothing);
       this.audio.setSensitivity(s.sensitivity);
@@ -722,14 +758,7 @@ class NeonScopeApp {
       this._applyPreset(data.layoutPreset, true);
     }
     if (data.keybinds && typeof data.keybinds === 'object') {
-      const kb = { ...DEFAULT_KEYBINDS };
-      for (const action of SHORTCUT_ACTIONS) {
-        const binding = data.keybinds[action.id];
-        if (typeof binding === 'string' && binding && !FORBIDDEN_BINDINGS.has(bindingParts(binding).at(-1))) {
-          kb[action.id] = binding;
-        }
-      }
-      this.keybinds = kb;
+      this.keybinds = normalizeKeybinds(data.keybinds);
       this._refreshKeybindLabels?.();
       this._renderShortcutList?.();
     }
@@ -860,6 +889,7 @@ class NeonScopeApp {
       moduleAbout: $('#moduleAbout'), previewQuality: $('#previewQuality'), exportPresetLabel: $('#exportPresetLabel'),
       openExportBtn: $('#openExportBtn'), autoSave: $('#autoSave'),
       autoSaveIntervalInput: $('#autoSaveIntervalInput'), restoreAutosaveToggle: $('#restoreAutosaveToggle'),
+      sfxToggle: $('#sfxToggle'), sfxVolume: $('#sfxVolume'), sfxVolumeOut: $('#sfxVolumeOut'),
       exportModal: $('#exportModal'), exportSetup: $('#exportSetup'), exportProgress: $('#exportProgress'),
       startExportBtn: $('#startExportBtn'), cancelExportBtn: $('#cancelExportBtn'), qualityGrid: $('#qualityGrid'),
       fpsSeg: $('#fpsSeg'), formatSeg: $('#formatSeg'), bitrateSelect: $('#bitrateSelect'), rangeSelect: $('#rangeSelect'),
@@ -876,6 +906,9 @@ class NeonScopeApp {
       alphaNotice: $('#alphaNotice'), alphaNoticeBtn: $('#alphaNoticeBtn'),
       helpModal: $('#helpModal'), toastStack: $('#toastStack'), fitBtn: $('#fitBtn'), theaterBtn: $('#theaterBtn'),
       stageTitle: $('.stage-title'), stageFooter: $('.stage-footer'),
+      autosaveLayer: $('#autosaveLayer'), autosaveFill: $('#autosaveFill'),
+      autosavePercent: $('#autosavePercent'), autosaveStage: $('#autosaveStage'),
+      autosaveTitle: $('#autosaveTitle'), autosaveHint: $('#autosaveHint'), autosaveDetail: $('#autosaveDetail'),
     };
   }
 
@@ -937,17 +970,12 @@ class NeonScopeApp {
       s.previewVsync = s.previewVsync !== false;
       s.autoSaveInterval = clamp(Number(s.autoSaveInterval) || 360, 10, 86400);
       s.restoreAutosave = s.restoreAutosave === true;
+      s.sfx = s.sfx !== false;
+      s.sfxVolume = clamp(Number.isFinite(Number(s.sfxVolume)) ? Number(s.sfxVolume) : 55, 0, 100);
       this.state.settings = s;
     }
     if (data.keybinds && typeof data.keybinds === 'object') {
-      const kb = { ...DEFAULT_KEYBINDS };
-      for (const action of SHORTCUT_ACTIONS) {
-        const binding = data.keybinds[action.id];
-        if (typeof binding === 'string' && binding && !FORBIDDEN_BINDINGS.has(bindingParts(binding).at(-1))) {
-          kb[action.id] = binding;
-        }
-      }
-      this.keybinds = kb;
+      this.keybinds = normalizeKeybinds(data.keybinds);
     }
     if (data.exportSettings && typeof data.exportSettings === 'object') {
       Object.assign(this.exportSettings, data.exportSettings);
@@ -1151,6 +1179,34 @@ class NeonScopeApp {
     this.audio.setLoop(s.loop);
     this.audio.setFftSize(s.fftSize);
     this.visualizer?._applyPreviewResolution?.();
+  }
+
+  _applySfxSettings() {
+    if (!this.sfx) return;
+    const s = this.state.settings;
+    this.sfx.setEnabled(s.sfx !== false);
+    this.sfx.setVolume(s.sfxVolume ?? 55);
+  }
+
+  _bindSfx() {
+    const sfx = this.sfx;
+    if (!sfx) return;
+    document.addEventListener('pointerdown', (e) => {
+      sfx.unlock();
+      const range = e.target instanceof Element ? e.target.closest('input[type="range"]') : null;
+      if (range && !range.disabled) sfx.play('sliderDown');
+    }, true);
+    document.addEventListener('pointerup', (e) => {
+      const range = e.target instanceof Element ? e.target.closest('input[type="range"]') : null;
+      if (range) sfx.play('sliderUp');
+    }, true);
+    document.addEventListener('click', (e) => {
+      const target = e.target instanceof Element ? e.target : null;
+      if (!target) return;
+      if (target.closest('#confirmModal, .autosave-layer')) return;
+      const hit = target.closest('button, a, .lib-item, .theme-card, .preset-btn, .seg-btn, select, label.check-row, .mini-action');
+      if (hit && !hit.disabled) sfx.play('click');
+    }, true);
   }
 
   _initVisualizer() {
@@ -1485,6 +1541,19 @@ class NeonScopeApp {
       this.state.settings.scanlines = d.scanlineToggle.checked;
       this._persist();
     });
+    d.sfxToggle?.addEventListener('change', () => {
+      this.state.settings.sfx = d.sfxToggle.checked;
+      this._applySfxSettings();
+      this._persist();
+      if (d.sfxToggle.checked) this.sfx.play('confirm');
+    });
+    d.sfxVolume?.addEventListener('input', () => {
+      this.state.settings.sfxVolume = clamp(Number(d.sfxVolume.value) || 0, 0, 100);
+      d.sfxVolumeOut.textContent = `${this.state.settings.sfxVolume}%`;
+      this._applySfxSettings();
+      this._persist();
+    });
+    d.sfxVolume?.addEventListener('change', () => this.sfx.play('success'));
     d.autoSave.addEventListener('change', () => {
       this.state.settings.autoSave = d.autoSave.checked;
       if (d.autoSave.checked) {
@@ -1947,6 +2016,7 @@ class NeonScopeApp {
   _closeConfirm(value) {
     if (!this.dom.confirmModal || this.dom.confirmModal.classList.contains('hidden')) return;
     this.dom.confirmModal.classList.add('hidden');
+    if (value) this.sfx?.play('confirm');
     const resolve = this._confirmResolve;
     this._confirmResolve = null;
     if (resolve) resolve(!!value);
@@ -1988,9 +2058,9 @@ class NeonScopeApp {
       {
         name: 'NEON//SCOPE（本程序）',
         copyright: 'Copyright © 2026 Tatsukini.',
-        license: '以 GNU General Public License v3.0 或更高版本发布（GPL-3.0-or-later）。',
+        license: '以 GNU Affero General Public License v3.0 或更高版本发布（AGPL-3.0-or-later）。通过网络提供修改后的版本时，须向使用者提供对应源代码。',
         source: 'https://github.com/Tatsukini/Tatsukini-NEON-SCOPE-Audio-Visualization-Canary',
-        doc: 'https://www.gnu.org/licenses/gpl-3.0.html',
+        doc: 'https://www.gnu.org/licenses/agpl-3.0.html',
       },
       {
         name: '.NET Runtime / Windows Forms / ASP.NET Core',
@@ -2718,6 +2788,7 @@ class NeonScopeApp {
 
   _selectTimelineCue(id) {
     this._tlSelectedId = id;
+    this._lastSelectionKind = 'cue';
     this._syncTimelineSelection();
     for (const bar of this.dom.timelineLanes?.querySelectorAll('.tl-bar') || []) {
       bar.classList.toggle('selected', bar.dataset.cueId === id);
@@ -5404,6 +5475,35 @@ class NeonScopeApp {
 
   _setupKeyboard() {
     window.addEventListener('keydown', (e) => this._handleGlobalKeydown(e));
+    window.addEventListener('keyup', (e) => {
+      if (this._seekHold && (e.code === 'ArrowLeft' || e.code === 'ArrowRight')) this._stopSeekHold();
+    });
+    window.addEventListener('blur', () => this._stopSeekHold());
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) this._stopSeekHold();
+    });
+  }
+
+  _startSeekHold(direction) {
+    this._stopSeekHold();
+    this._seekHold = {
+      direction,
+      timer: setInterval(() => this._seekBy(direction), 200),
+    };
+  }
+
+  _stopSeekHold() {
+    if (this._seekHold?.timer) clearInterval(this._seekHold.timer);
+    this._seekHold = null;
+  }
+
+  _seekBy(step) {
+    if (this.state.exporting || !this.audio.hasAudio) return;
+    const duration = this.audio.duration || 0;
+    if (duration <= 0) return;
+    const target = clamp(this.audio.currentTime + step, 0, duration);
+    this.audio.seek(target);
+    this._updateTransport(target);
   }
 
   _isTypingTarget(target) {
@@ -5460,10 +5560,10 @@ class NeonScopeApp {
     if (e.repeat && !action.id.startsWith('nudge_')) return;
     e.preventDefault();
     e.stopPropagation();
-    this._runShortcut(action.id, { ...e, fastNudge });
+    this._runShortcut(action.id, { shiftKey: e.shiftKey, fastNudge });
   }
 
-  _runShortcut(id, e = {}) {
+  _runShortcut(id, { shiftKey = false, fastNudge = false } = {}) {
     const editing = this.state.settings.editing;
     const selected = this._selected();
     switch (id) {
@@ -5475,6 +5575,14 @@ class NeonScopeApp {
         this._updateTransport(this.audio.currentTime);
         break;
       case 'loop': this._toggleLoop(); break;
+      case 'seek_back':
+      case 'seek_forward': {
+        if (this.state.exporting) return;
+        const direction = id === 'seek_back' ? -1 : 1;
+        this._seekBy(direction);
+        this._startSeekHold(direction);
+        break;
+      }
       case 'open_export': this._openExport(); break;
       case 'save_archive': this._saveArchive(); break;
       case 'snap': this._setSnap(!this.state.settings.snap); break;
@@ -5482,9 +5590,15 @@ class NeonScopeApp {
       case 'anim_undo': this._undoAnimation(); break;
       case 'anim_redo': this._redoAnimation(); break;
       case 'edit_mode': this._setEditing(!this.state.settings.editing); break;
-      case 'delete_module':
-        if (editing && selected) this._deleteSelected();
+      case 'delete_module': {
+        const cue = this._selectedTimelineCue();
+        const mod = this._selected();
+        const cueFirst = cue && (this._lastSelectionKind === 'cue' || !mod);
+        if (cueFirst) this._deleteSelectedTimelineCue();
+        else if (mod) this._deleteSelected();
+        else if (cue) this._deleteSelectedTimelineCue();
         break;
+      }
       case 'duplicate_module':
         if (editing && selected) this._duplicateSelected();
         break;
@@ -5496,11 +5610,16 @@ class NeonScopeApp {
         break;
       case 'nudge_left':
       case 'nudge_right':
+      case 'nudge_left_fine':
+      case 'nudge_right_fine':
       case 'nudge_up':
       case 'nudge_down': {
         if (!editing || !selected) return;
-        const step = e.shiftKey || e.fastNudge ? 10 : 1;
-        const dx = id === 'nudge_left' ? -step : id === 'nudge_right' ? step : 0;
+        const fine = id.endsWith('_fine');
+        const step = fine ? 1 : (shiftKey || fastNudge ? 10 : 1);
+        const left = id === 'nudge_left' || id === 'nudge_left_fine';
+        const right = id === 'nudge_right' || id === 'nudge_right_fine';
+        const dx = left ? -step : right ? step : 0;
         const dy = id === 'nudge_up' ? -step : id === 'nudge_down' ? step : 0;
         this.visualizer.nudgeSelected(dx, dy);
         this._persist();
@@ -6035,6 +6154,68 @@ class NeonScopeApp {
     return !this._autoSaveDirty;
   }
 
+  _showAutosaveOverlay() {
+    const d = this.dom;
+    if (!d.autosaveLayer) return { shownAt: performance.now(), stop: () => {} };
+    d.autosaveLayer.className = 'autosave-layer';
+    d.autosaveFill.style.width = '4%';
+    d.autosavePercent.textContent = '4%';
+    d.autosaveStage.textContent = 'AUTOSAVE · PACKAGING';
+    d.autosaveTitle.textContent = '正在自动存档…';
+    d.autosaveHint.textContent = '正在打包工程、音频与 MIDI，完成后将自动退出';
+    const steps = ['读取工程状态', '打包音频与 MIDI', '写入存档文件'];
+    const started = performance.now();
+    let raf = 0;
+    const tick = () => {
+      const t = Math.min(1, (performance.now() - started) / 1100);
+      // Approach 92% asymptotically so the bar keeps moving while packing.
+      const value = Math.min(92, 4 + 88 * (1 - Math.pow(1 - t, 2.2)));
+      d.autosaveFill.style.width = `${value.toFixed(1)}%`;
+      d.autosavePercent.textContent = `${Math.round(value)}%`;
+      d.autosaveDetail.textContent = steps[Math.min(steps.length - 1, Math.floor(t * steps.length))];
+      if (t < 1) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return { shownAt: started, stop: () => cancelAnimationFrame(raf) };
+  }
+
+  async _finishAutosaveOverlay(ok) {
+    const d = this.dom;
+    if (!d.autosaveLayer || d.autosaveLayer.classList.contains('hidden')) return;
+    d.autosaveLayer.classList.toggle('done', ok);
+    d.autosaveLayer.classList.toggle('failed', !ok);
+    d.autosaveFill.style.width = '100%';
+    d.autosavePercent.textContent = '100%';
+    d.autosaveDetail.textContent = ok ? '已写入 Autosave\\autosave.NEON' : '存档失败，已保留上次存档';
+    d.autosaveStage.textContent = ok ? 'AUTOSAVE · SAVED' : 'AUTOSAVE · FAILED';
+    d.autosaveTitle.textContent = ok ? '存档完成' : '自动存档失败';
+    d.autosaveHint.textContent = ok ? '工程状态已保存，窗口即将关闭' : '关闭前未能写入存档，请检查磁盘空间或权限';
+    await new Promise((resolve) => setTimeout(resolve, ok ? 420 : 900));
+    d.autosaveLayer.classList.add('leaving');
+    await new Promise((resolve) => setTimeout(resolve, 260));
+    d.autosaveLayer.className = 'autosave-layer hidden';
+  }
+
+  async _flushExitAutosave() {
+    const willSave = !this._standaloneSettings && this.state.settings.autoSave && this._isNative;
+    if (!willSave) return this._flushAutoSave();
+    const overlay = this._showAutosaveOverlay();
+    let ok = false;
+    try {
+      ok = await this._flushAutoSave();
+    } catch {
+      ok = false;
+    } finally {
+      // Keep the animation on screen long enough to read even when the
+      // archive writes instantly.
+      const elapsed = performance.now() - overlay.shownAt;
+      if (elapsed < 880) await new Promise((resolve) => setTimeout(resolve, 880 - elapsed));
+      overlay.stop();
+      await this._finishAutosaveOverlay(ok);
+    }
+    return ok;
+  }
+
   async _restoreAutosaveArchive() {
     try {
       if (this._isNative) {
@@ -6373,6 +6554,7 @@ class NeonScopeApp {
     this.visualizer.states.delete(mod.id);
     this.visualizer.syncOverlay();
     this._syncSelectionUI(mod.id);
+    this.sfx?.play('module');
     if (!this.state.settings.editing) this._setEditing(true);
     this._renderLibrary();
     this._syncCanvasMeta();
@@ -6400,6 +6582,7 @@ class NeonScopeApp {
     d.inspectorModule.classList.remove('hidden');
     d.selectionBadge.textContent = `${mod.type.toUpperCase()} SELECTED`;
     d.selectionBadge.classList.add('active');
+    this._lastSelectionKind = 'module';
     const def = MODULE_DEFS[mod.type];
     d.selectedName.textContent = (mod.title || def.code).toUpperCase();
     d.selectedType.textContent = `${mod.type} · ${mod.w} × ${mod.h}`;
@@ -7167,6 +7350,14 @@ class NeonScopeApp {
     const a = clamp(Number(alpha), 0, 1) * hexAlpha(value);
     this.state.settings.accent = value;
     this.state.settings.accentAlpha = Number.isFinite(a) ? a : 1;
+    // The palette derives accent from themeChart on every launch, so a user
+    // pick must also become the custom chart color or it resets on restart.
+    if (!silent && !noPersist) {
+      this.state.settings.themeChartFollow = 'custom';
+      this.state.settings.themeChart = value;
+      if (this.dom.themeChartFollow) this.dom.themeChartFollow.value = 'custom';
+      if (this.dom.themeChart) this._setColorInputValue(this.dom.themeChart, value);
+    }
     const rgb = hexToRgb(value);
     const rgbaValue = `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${this.state.settings.accentAlpha})`;
     const root = document.documentElement;
@@ -7802,6 +7993,9 @@ class NeonScopeApp {
     }
     d.watermarkToggle.checked = s.watermark;
     d.scanlineToggle.checked = s.scanlines;
+    if (d.sfxToggle) d.sfxToggle.checked = s.sfx !== false;
+    if (d.sfxVolume) d.sfxVolume.value = String(s.sfxVolume ?? 55);
+    if (d.sfxVolumeOut) d.sfxVolumeOut.textContent = `${s.sfxVolume ?? 55}%`;
     d.autoSave.checked = s.autoSave;
     if (d.autoSaveIntervalInput) d.autoSaveIntervalInput.value = String(s.autoSaveInterval ?? 360);
     if (d.restoreAutosaveToggle) d.restoreAutosaveToggle.checked = s.restoreAutosave === true;
@@ -8446,6 +8640,12 @@ class NeonScopeApp {
     el.textContent = message;
     this.dom.toastStack.appendChild(el);
     while (this.dom.toastStack.children.length > 4) this.dom.toastStack.firstElementChild.remove();
+    this.sfx?.play('toast');
+    if (type === 'success' || type === 'error') {
+      setTimeout(() => {
+        this.sfx?.play(type === 'success' ? 'success' : 'fail');
+      }, 80);
+    }
     setTimeout(() => {
       el.classList.add('leaving');
       setTimeout(() => el.remove(), 220);

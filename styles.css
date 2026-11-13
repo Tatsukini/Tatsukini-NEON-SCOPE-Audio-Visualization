@@ -722,6 +722,76 @@ body.exporting #exportModal .modal-foot { display: none; }
 .toast.leaving { animation: toastOut .2s ease both; }
 @keyframes toastIn { from { opacity: 0; transform: translateY(6px); } }
 @keyframes toastOut { to { opacity: 0; transform: translateY(4px); } }
+
+/* ── Shutdown autosave overlay ──────────────────────── */
+.autosave-layer {
+  position: fixed; inset: 0; z-index: 320;
+  display: grid; place-items: center;
+  background: rgba(5,3,9,.72);
+  backdrop-filter: blur(7px) saturate(120%);
+  animation: autosaveIn .24s ease both;
+}
+.autosave-layer.hidden { display: none; }
+.autosave-layer.leaving { animation: autosaveOut .26s ease both; }
+@keyframes autosaveIn { from { opacity: 0; } }
+@keyframes autosaveOut { to { opacity: 0; } }
+.autosave-card {
+  position: relative; width: min(430px, 82vw); padding: 26px 28px 22px;
+  border-radius: 10px; overflow: hidden;
+  background: linear-gradient(160deg, rgba(24,15,30,.98), rgba(12,8,18,.98));
+  border: 1px solid rgba(var(--accent-rgb), .32);
+  box-shadow: 0 30px 90px rgba(0,0,0,.6), 0 0 60px rgba(var(--accent-rgb), .12) inset;
+}
+.autosave-card::before {
+  content: ""; position: absolute; inset: 0;
+  background: repeating-linear-gradient(0deg, rgba(255,255,255,.025) 0 1px, transparent 1px 4px);
+  pointer-events: none;
+}
+.autosave-stream { display: flex; gap: 6px; margin-bottom: 16px; }
+.autosave-stream span {
+  width: 26px; height: 3px; border-radius: 2px;
+  background: var(--accent-solid); opacity: .18;
+  animation: autosavePulse 1.05s ease-in-out infinite;
+}
+.autosave-stream span:nth-child(2) { animation-delay: .12s; }
+.autosave-stream span:nth-child(3) { animation-delay: .24s; }
+.autosave-stream span:nth-child(4) { animation-delay: .36s; }
+.autosave-stream span:nth-child(5) { animation-delay: .48s; }
+@keyframes autosavePulse {
+  0%, 100% { opacity: .16; transform: scaleX(.82); }
+  40% { opacity: 1; transform: scaleX(1); box-shadow: 0 0 10px rgba(var(--accent-rgb), .8); }
+}
+.autosave-head .eyebrow { display: block; font: 8px var(--mono); letter-spacing: .22em; color: rgba(var(--accent-rgb), .85); margin-bottom: 8px; }
+.autosave-head h3 { margin: 0 0 6px; font-size: 16px; font-weight: 500; color: #f4e6ee; letter-spacing: .02em; }
+.autosave-head p { margin: 0 0 18px; font-size: 9px; line-height: 1.7; color: #967d8c; }
+.autosave-track {
+  position: relative; height: 6px; border-radius: 4px; overflow: hidden;
+  background: rgba(255,255,255,.07);
+}
+.autosave-fill {
+  width: 0; height: 100%; border-radius: 4px;
+  background: linear-gradient(90deg, var(--accent-solid), color-mix(in srgb, var(--accent-solid), #fff 42%));
+  box-shadow: 0 0 16px rgba(var(--accent-rgb), .65);
+  transition: width .18s ease-out;
+}
+.autosave-track::after {
+  content: ""; position: absolute; inset: 0;
+  background: linear-gradient(100deg, transparent 20%, rgba(255,255,255,.22) 48%, transparent 72%);
+  transform: translateX(-110%);
+  animation: autosaveSweep 1.4s linear infinite;
+}
+@keyframes autosaveSweep { to { transform: translateX(110%); } }
+.autosave-meta { display: flex; justify-content: space-between; margin-top: 9px; font: 8px var(--mono); color: #7f6675; letter-spacing: .06em; }
+.autosave-layer.done .autosave-track::after { animation: none; opacity: 0; }
+.autosave-layer.done .autosave-stream span { animation: none; opacity: 1; transform: none; }
+.autosave-layer.failed .autosave-card { border-color: rgba(255,110,110,.55); }
+.autosave-layer.failed .autosave-fill { background: linear-gradient(90deg, #ff6b6b, #ff9d9d); box-shadow: 0 0 16px rgba(255,107,107,.6); }
+body[data-ui-theme="catbot"] .autosave-card { background: #fdfbf7; border-color: #241d3c; box-shadow: 0 24px 70px rgba(36,29,60,.28); }
+body[data-ui-theme="catbot"] .autosave-card::before { background: repeating-linear-gradient(0deg, rgba(36,29,60,.03) 0 1px, transparent 1px 4px); }
+body[data-ui-theme="catbot"] .autosave-head h3 { color: #241d3c; }
+body[data-ui-theme="catbot"] .autosave-head p, body[data-ui-theme="catbot"] .autosave-meta { color: #6b6482; }
+body[data-ui-theme="catbot"] .autosave-track { background: rgba(36,29,60,.1); }
+
 .drag-veil { position: fixed; inset: 0; z-index: 300; background: rgba(4,2,7,.8); backdrop-filter: blur(8px); display: grid; place-items: center; pointer-events: none; border: 1px solid rgba(var(--accent-rgb), .4); }
 .drag-card { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 30px 60px; border: 1px dashed rgba(var(--accent-rgb), .55); border-radius: 10px; background: rgba(var(--accent-rgb), .05); color: var(--accent); }
 .drag-card .icon { width: 28px; height: 28px; }

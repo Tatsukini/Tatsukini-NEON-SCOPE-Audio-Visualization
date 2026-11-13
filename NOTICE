@@ -1,9 +1,18 @@
 Third-party media notice
 
-The GNU General Public License in LICENSE applies to the NEON//SCOPE application
-source code, not to the media assets under assets/.
+The GNU Affero General Public License in LICENSE applies to the NEON//SCOPE
+application source code, not to the media assets under assets/.
 
 Demo audio, demo MIDI files, music, fonts and images under assets/ remain the
 property of their respective authors and are included only as demonstration
 material. Do not redistribute them separately from the project without the
 permission of their respective rights holders.
+
+Network use
+
+NEON//SCOPE is a desktop and local-only application, but the AGPL applies to
+network use as well: if you modify the program and let other users interact
+with the modified version over a network, you must offer those users the
+Corresponding Source of your modified version as described in section 13 of
+the license. The Canary channel is distributed under the same terms as the
+stable channel; Canary builds are not exempt from the AGPL.
