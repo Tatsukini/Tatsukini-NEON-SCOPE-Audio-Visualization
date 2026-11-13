@@ -1,4 +1,4 @@
-import { STAGE_W, STAGE_H, clamp, formatTC, formatShortTime, mixHex, automationValueAt, resolveThemeColors } from './core.js';
+import { STAGE_W, STAGE_H, clamp, formatTC, formatShortTime, mixHex, withAlpha, automationValueAt, resolveThemeColors, hexAlpha, isHexColor } from './core.js';
 import { BackgroundRenderer } from './background.js';
 import { drawVisualModule } from './modules.js';
 
@@ -430,15 +430,12 @@ export class Visualizer {
 
   _canvasAccent() {
     const s = this.state.settings;
-    const alpha = s.accentAlpha == null ? 1 : s.accentAlpha;
-    return alpha >= 0.999 ? s.accent : mixHex(s.accent, '#060309', 1 - alpha);
+    return withAlpha(s.accent, s.accentAlpha == null ? 1 : s.accentAlpha);
   }
 
   _moduleAccent(mod) {
-    const s = this.state.settings;
     if (!mod.color) return this._canvasAccent();
-    const alpha = mod.colorAlpha == null ? 1 : mod.colorAlpha;
-    return alpha >= 0.999 ? mod.color : mixHex(mod.color, '#060309', 1 - alpha);
+    return withAlpha(mod.color, mod.colorAlpha == null ? 1 : mod.colorAlpha);
   }
 
   applyBackgroundSettings() {
@@ -692,9 +689,9 @@ export class Visualizer {
     const engine = this.engine || {};
     const basic = (this.state.modules || []).find((mod) => mod.type === 'basicInfo');
     const opt = basic?.options || {};
-    const primaryColor = /^#[0-9a-fA-F]{6}$/.test(opt.primaryColor || '') ? opt.primaryColor : '#111a3b';
-    const secondaryColor = /^#[0-9a-fA-F]{6}$/.test(opt.secondaryColor || '') ? opt.secondaryColor : 'rgba(25,28,60,.5)';
-    const cardBg = /^#[0-9a-fA-F]{6}$/.test(opt.cardBg || '') ? opt.cardBg : '#eeebf4';
+    const primaryColor = isHexColor(opt.primaryColor) ? opt.primaryColor : '#111a3b';
+    const secondaryColor = isHexColor(opt.secondaryColor) ? opt.secondaryColor : 'rgba(25,28,60,.5)';
+    const cardBg = isHexColor(opt.cardBg) ? opt.cardBg : '#eeebf4';
     const accent = this.state.settings.accent || '#ff4f8b';
     const title = info.title || engine.track?.name || 'Untitled signal';
     const composer = info.composer || info.artist || engine.track?.artist || 'Unknown source';
@@ -830,10 +827,11 @@ export class Visualizer {
         continue;
       }
       if (cue.type === 'flash') {
-        const rgb = hexToRgbSafe(/^#[0-9a-fA-F]{6}$/.test(cue.value) ? cue.value : '#ffffff');
+        const color = isHexColor(cue.value) ? cue.value : '#ffffff';
+        const rgb = hexToRgbSafe(color);
         ctx.save();
         ctx.globalCompositeOperation = 'screen';
-        ctx.fillStyle = `rgba(${rgb.r},${rgb.g},${rgb.b},${alpha * 0.38})`;
+        ctx.fillStyle = `rgba(${rgb.r},${rgb.g},${rgb.b},${alpha * 0.38 * hexAlpha(color)})`;
         ctx.fillRect(0, 0, w, h);
         ctx.restore();
       } else if (cue.type === 'color') {
@@ -842,9 +840,9 @@ export class Visualizer {
       } else if (cue.type === 'tint') {
         ctx.save();
         ctx.globalCompositeOperation = 'screen';
-        const color = cue.value || this.state.settings.accent;
-        const rgb = hexToRgbSafe(/^#[0-9a-fA-F]{6}$/.test(color) ? color : this.state.settings.accent);
-        ctx.fillStyle = `rgba(${rgb.r},${rgb.g},${rgb.b},${alpha * 0.20})`;
+        const color = isHexColor(cue.value) ? cue.value : this.state.settings.accent;
+        const rgb = hexToRgbSafe(color);
+        ctx.fillStyle = `rgba(${rgb.r},${rgb.g},${rgb.b},${alpha * 0.20 * hexAlpha(color)})`;
         ctx.fillRect(0, 0, w, h);
         ctx.restore();
       } else if (cue.type === 'fade') {

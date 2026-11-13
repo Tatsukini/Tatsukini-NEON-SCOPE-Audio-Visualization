@@ -1,7 +1,8 @@
 import http from 'node:http';
 import { createReadStream, createWriteStream } from 'node:fs';
-import { mkdir, mkdtemp, rm, stat } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, stat, readdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn, exec } from 'node:child_process';
@@ -28,6 +29,18 @@ const MIME = {
   '.ico': 'image/x-icon',
   '.woff2': 'font/woff2',
   '.map': 'application/json',
+  '.neon': 'application/zip',
+  '.mp3': 'audio/mpeg',
+  '.wav': 'audio/wav',
+  '.flac': 'audio/flac',
+  '.ogg': 'audio/ogg',
+  '.oga': 'audio/ogg',
+  '.opus': 'audio/opus',
+  '.m4a': 'audio/mp4',
+  '.aac': 'audio/aac',
+  '.wma': 'audio/x-ms-wma',
+  '.aif': 'audio/aiff',
+  '.aiff': 'audio/aiff',
 };
 
 const EMPTY_FFMPEG = { ok: false, version: '', encoders: [], hwVendors: [], codecs: [], audioCodecs: [] };
@@ -286,6 +299,66 @@ function safeName(value, fallback = 'neon-scope') {
     .replace(/\s+/g, '-')
     .replace(/^-+|-+$/g, '')
     .slice(0, 80) || fallback;
+}
+
+const ARCHIVE_EXTS = new Set(['.neon']);
+const AUDIO_EXTS = new Set(['.mp3', '.wav', '.flac', '.ogg', '.oga', '.opus', '.m4a', '.aac', '.wma', '.aif', '.aiff']);
+
+function recentSourceFolders(folder) {
+  const list = [];
+  if (typeof folder === 'string' && folder.trim()) list.push(folder.trim());
+  list.push(path.join(ROOT, 'Saves'));
+  const home = os.homedir();
+  if (home) {
+    list.push(path.join(home, 'Desktop'));
+    list.push(path.join(home, 'Music'));
+    list.push(path.join(home, 'Downloads'));
+  }
+  const seen = new Set();
+  return list.filter((dir) => {
+    const key = path.resolve(dir).toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+async function findNewestFile(dirs, exts, depth = 1) {
+  let best = null;
+  const visit = async (dir, remaining) => {
+    let entries;
+    try { entries = await readdir(dir, { withFileTypes: true }); } catch { return; }
+    for (const entry of entries) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (remaining > 0 && !entry.name.startsWith('.')) await visit(full, remaining - 1);
+        continue;
+      }
+      if (!exts.has(path.extname(entry.name).toLowerCase())) continue;
+      try {
+        const info = await stat(full);
+        if (!info.isFile() || info.size < 1024) continue;
+        if (!best || info.mtimeMs > best.mtimeMs) best = { path: full, size: info.size, mtimeMs: info.mtimeMs };
+      } catch { /* unreadable, skip */ }
+    }
+  };
+  for (const dir of dirs) await visit(dir, depth);
+  return best;
+}
+
+async function handleRecentFile(req, res, kind) {
+  const folder = new URL(req.url, 'http://localhost').searchParams.get('folder') || '';
+  const exts = kind === 'archive' ? ARCHIVE_EXTS : AUDIO_EXTS;
+  const found = await findNewestFile(recentSourceFolders(folder), exts);
+  if (!found) return sendJson(res, 404, { error: 'not found' });
+  const ext = path.extname(found.path).toLowerCase();
+  res.writeHead(200, {
+    'Content-Type': MIME[ext] || 'application/octet-stream',
+    'Content-Length': found.size,
+    'X-File-Name': encodeURIComponent(path.basename(found.path)),
+    'Cache-Control': 'no-store',
+  });
+  createReadStream(found.path).pipe(res);
 }
 
 const audioSources = new Map();
@@ -571,6 +644,14 @@ const server = http.createServer((req, res) => {
       encoders: info.encoders || [],
       hwVendors: info.hwVendors || [],
     }));
+    return;
+  }
+  if (req.url?.startsWith('/api/last-archive') || req.url?.startsWith('/api/recent-audio')) {
+    const kind = req.url.startsWith('/api/last-archive') ? 'archive' : 'audio';
+    handleRecentFile(req, res, kind).catch((err) => {
+      console.error(err);
+      if (!res.headersSent) sendJson(res, 500, { error: err?.message || '读取最近文件失败' });
+    });
     return;
   }
   if (req.url?.startsWith('/api/convert/cancel')) {

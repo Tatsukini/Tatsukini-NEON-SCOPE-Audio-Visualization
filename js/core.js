@@ -93,6 +93,13 @@ export const MODULE_DEFS = {
     about: '所有导入 MIDI 的轨道都强制合并进同一个 3D 纵深场景；轨道列表顺序决定前后，音符近大远小、近快远慢。',
     w: 760, h: 420, category: 'MIDI',
   },
+  midiOC: {
+    name: 'MIDI 增减',
+    code: 'MIDI O/C',
+    glyph: '±',
+    about: '以 DAW 编排视图显示每条 MIDI 轨道的音符片段：片段起点标记增加、终点标记减少、片段内部表示保持；识别范围内的短空白不产生增减标记。',
+    w: 640, h: 260, category: 'MIDI',
+  },
   peakSlope: {
     name: '峰值倾斜',
     code: 'PEAK SLOPE SHARP',
@@ -154,7 +161,7 @@ export const MODULE_DEFS = {
 export const MODULE_ORDER = [
   'levels', 'loudness', 'dial', 'scope', 'lissajous', 'spectrum',
   'phase', 'rhythm', 'dynamics', 'spectrogram', 'stereometer',
-  'waveform', 'pianoRoll', 'peakSlope', 'stereoField',
+  'waveform', 'pianoRoll', 'midiOC', 'peakSlope', 'stereoField',
   'bandRings', 'peakSpectrum', 'beatPulse', 'circularScope', 'chladni', 'basicInfo',
 ];
 
@@ -173,6 +180,12 @@ export function smoothstep(a, b, x) {
 }
 export function sigmoid(x) { return 1 / (1 + Math.exp(-x)); }
 export function deg(rad) { return rad * 180 / Math.PI; }
+
+export const SCHEME_COLORS = ['#FF4F8B', '#37D8FF', '#FFB454', '#A67CFF'];
+
+export function isHexColor(value) {
+  return /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.test(String(value || '').trim());
+}
 
 export function hexToRgb(hex) {
   const s = String(hex || '').replace('#', '').trim();
@@ -193,21 +206,38 @@ export function rgbToHex(r, g, b) {
   return `#${h(r)}${h(g)}${h(b)}`.toUpperCase();
 }
 
+/** Alpha stored in the optional 4th byte of #RRGGBBAA; 1 for plain hex. */
+export function hexAlpha(hex) {
+  const s = String(hex || '').replace('#', '').trim();
+  if (s.length !== 8) return 1;
+  const a = parseInt(s.slice(6, 8), 16);
+  return Number.isFinite(a) ? a / 255 : 1;
+}
+
+export function withAlpha(hex, alpha = 1) {
+  const a = clamp(Number(alpha), 0, 1);
+  const base = String(hex || '').replace('#', '').trim();
+  const rgb = base.length === 3 ? base.split('').map((c) => c + c).join('') : base.slice(0, 6);
+  if (a >= 0.9995) return `#${rgb.toUpperCase()}`;
+  return `#${rgb.toUpperCase()}${Math.round(a * 255).toString(16).padStart(2, '0').toUpperCase()}`;
+}
+
 export function rgba(hex, a = 1) {
   const { r, g, b } = hexToRgb(hex);
-  return `rgba(${r},${g},${b},${a})`;
+  return `rgba(${r},${g},${b},${a * hexAlpha(hex)})`;
 }
 
 export function mixHex(a, b, t) {
   const A = hexToRgb(a), B = hexToRgb(b);
-  return rgbToHex(lerp(A.r, B.r, t), lerp(A.g, B.g, t), lerp(A.b, B.b, t));
+  const mixed = rgbToHex(lerp(A.r, B.r, t), lerp(A.g, B.g, t), lerp(A.b, B.b, t));
+  return withAlpha(mixed, lerp(hexAlpha(a), hexAlpha(b), t));
 }
 
 export function resolveThemeColors(settings = {}) {
-  const bg = /^#[0-9a-fA-F]{6}$/.test(settings.themeBg || '') ? settings.themeBg : '#07050a';
-  const windowColor = /^#[0-9a-fA-F]{6}$/.test(settings.themeWindow || '') ? settings.themeWindow : '#171020';
-  const text = /^#[0-9a-fA-F]{6}$/.test(settings.themeText || '') ? settings.themeText : '#f7eef3';
-  const chartBase = /^#[0-9a-fA-F]{6}$/.test(settings.themeChart || '') ? settings.themeChart : '#ff4f8b';
+  const bg = isHexColor(settings.themeBg) ? settings.themeBg : '#07050a';
+  const windowColor = isHexColor(settings.themeWindow) ? settings.themeWindow : '#171020';
+  const text = isHexColor(settings.themeText) ? settings.themeText : '#f7eef3';
+  const chartBase = isHexColor(settings.themeChart) ? settings.themeChart : '#ff4f8b';
   const follow = settings.themeChartFollow || 'custom';
   const chart = follow === 'bg' ? bg : follow === 'primary' ? windowColor : follow === 'accent' ? text : chartBase;
   return { bg, window: windowColor, text, chart };
@@ -299,11 +329,11 @@ export function automationValueAt(keys, relativeTime, fallback, kind = 'number')
 }
 
 export function lighten(hex, amount = 0.2) {
-  return mixHex(hex, '#ffffff', amount);
+  return withAlpha(mixHex(hex, '#ffffff', amount), hexAlpha(hex));
 }
 
 export function darken(hex, amount = 0.2) {
-  return mixHex(hex, '#000000', amount);
+  return withAlpha(mixHex(hex, '#000000', amount), hexAlpha(hex));
 }
 
 export function rgbString(rgb, a = 1) {
@@ -549,8 +579,13 @@ export function normalizeHexInput(value, fallback = '#FF4F8B') {
   let s = String(value || '').trim();
   if (!s.startsWith('#')) s = '#' + s;
   if (/^#[0-9a-fA-F]{3}$/.test(s)) s = '#' + s.slice(1).split('').map((c) => c + c).join('');
-  if (!/^#[0-9a-fA-F]{6}$/.test(s)) return fallback;
-  return s.toUpperCase();
+  if (/^#[0-9a-fA-F]{6}$/.test(s)) return s.toUpperCase();
+  if (/^#[0-9a-fA-F]{8}$/.test(s)) {
+    const base = s.slice(0, 7).toUpperCase();
+    const alpha = s.slice(7).toUpperCase();
+    return alpha === 'FF' ? base : `${base}${alpha}`;
+  }
+  return fallback;
 }
 
 export function getTypeActive(modules, type) {

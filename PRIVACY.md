@@ -15,7 +15,7 @@ NEON//SCOPE is a local-first desktop audio and MIDI visualization application.
 - Export paths and save paths are chosen by the user and are never transmitted.
 
 Questions: open an issue at
-https://github.com/Tatsukini/Tatsukini-NEON-SCOPE-Audio-Visualization/issues
+https://github.com/Tatsukini/Tatsukini-NEON-SCOPE-Audio-Visualization-Canary/issues
 
 ## 中文
 
@@ -30,4 +30,4 @@ NEON//SCOPE 是一个本地优先的桌面音频与 MIDI 可视化应用。
 - 导出路径和存档路径由用户自行选择，不会被上传。
 
 问题反馈：
-https://github.com/Tatsukini/Tatsukini-NEON-SCOPE-Audio-Visualization/issues
+https://github.com/Tatsukini/Tatsukini-NEON-SCOPE-Audio-Visualization-Canary/issues

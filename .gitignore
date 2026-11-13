@@ -1,4 +1,5 @@
 .neon-scope-tmp/
+__Temp__/
 .build-cache/
 _dotnet/
 _nuget/

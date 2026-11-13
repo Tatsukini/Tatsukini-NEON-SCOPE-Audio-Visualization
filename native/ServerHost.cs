@@ -255,6 +255,12 @@ internal sealed class ServerHost : IAsyncDisposable
         app.MapPost("/api/convert", (Delegate)HandleConvertAsync)
             .DisableAntiforgery();
 
+        app.MapGet("/api/last-archive", (HttpContext context, string? folder) =>
+            ServeRecentFileAsync(context, folder, archive: true));
+
+        app.MapGet("/api/recent-audio", (HttpContext context, string? folder) =>
+            ServeRecentFileAsync(context, folder, archive: false));
+
         app.MapPost("/api/save-archive", async (HttpRequest request, string? filename, string? folder) =>
         {
             try
@@ -299,6 +305,77 @@ internal sealed class ServerHost : IAsyncDisposable
         AppPaths.Log(FfmpegPath == null
             ? "FFmpeg not found. MP4 export will fall back to WebM."
             : $"FFmpeg: {FfmpegPath} ({FfmpegVersion})");
+    }
+
+    private static readonly HashSet<string> ArchiveExtensions = new(StringComparer.OrdinalIgnoreCase) { ".neon" };
+    private static readonly HashSet<string> AudioExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".mp3", ".wav", ".flac", ".ogg", ".oga", ".opus", ".m4a", ".aac", ".wma", ".aif", ".aiff",
+    };
+
+    private static readonly FileExtensionContentTypeProvider ContentTypes = CreateContentTypes();
+
+    private static FileExtensionContentTypeProvider CreateContentTypes()
+    {
+        var provider = new FileExtensionContentTypeProvider();
+        provider.Mappings[".neon"] = "application/zip";
+        return provider;
+    }
+
+    private static IEnumerable<string> RecentSourceFolders(string? folder)
+    {
+        var list = new List<string>();
+        if (!string.IsNullOrWhiteSpace(folder)) list.Add(folder);
+        list.Add(Path.Combine(AppPaths.Root, "Saves"));
+        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        if (!string.IsNullOrWhiteSpace(home))
+        {
+            list.Add(Path.Combine(home, "Desktop"));
+            list.Add(Path.Combine(home, "Music"));
+            list.Add(Path.Combine(home, "Downloads"));
+        }
+        return list.Where(Directory.Exists).Distinct(StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static FileInfo? FindNewestFile(IEnumerable<string> dirs, HashSet<string> exts, int depth = 1)
+    {
+        FileInfo? best = null;
+        foreach (var dir in dirs)
+        {
+            try
+            {
+                var options = new EnumerationOptions
+                {
+                    RecurseSubdirectories = depth > 0,
+                    MaxRecursionDepth = depth,
+                    IgnoreInaccessible = true,
+                    AttributesToSkip = FileAttributes.System,
+                };
+                foreach (var file in new DirectoryInfo(dir).EnumerateFiles("*", options))
+                {
+                    if (!exts.Contains(file.Extension) || file.Length < 1024) continue;
+                    if (best == null || file.LastWriteTimeUtc > best.LastWriteTimeUtc) best = file;
+                }
+            }
+            catch { /* unreadable folder, skip */ }
+        }
+        return best;
+    }
+
+    private static async Task<IResult> ServeRecentFileAsync(HttpContext context, string? folder, bool archive)
+    {
+        var found = FindNewestFile(RecentSourceFolders(folder), archive ? ArchiveExtensions : AudioExtensions);
+        if (found == null) return Results.Json(new { error = "not found" }, statusCode: 404);
+        var mime = ContentTypes.TryGetContentType(found.Name, out var type)
+            ? type
+            : (archive ? "application/zip" : "application/octet-stream");
+        context.Response.ContentType = mime;
+        context.Response.ContentLength = found.Length;
+        context.Response.Headers["X-File-Name"] = Uri.EscapeDataString(found.Name);
+        context.Response.Headers.CacheControl = "no-store";
+        await using var stream = found.OpenRead();
+        await stream.CopyToAsync(context.Response.Body, context.RequestAborted);
+        return Results.Empty;
     }
 
     private async Task<IResult> HandleConvertAsync(HttpContext context)

@@ -2,12 +2,13 @@ import {
   STAGE_W, STAGE_H, MODULE_DEFS, MODULE_ORDER, DEFAULT_SETTINGS,
   EXPORT_QUALITIES, LAYOUT_PRESETS, makeStudioLayout, makeScopeLayout, makeMinimalLayout,
   createModule, uid, hexToRgb, rgbToHex, mixHex, resolveThemeColors, luminance, normalizeHexInput, clamp, formatTime, formatTC,
+  isHexColor, hexAlpha, withAlpha, SCHEME_COLORS,
   AUTOMATION_PROPERTIES, automationValueAt,
   formatShortTime, humanBytes, safeRead, safeStore, safeParse, debounce,
 } from './core.js';
 import { AudioEngine } from './audio.js';
 import { createZip, readZip } from './neonzip.js';
-import { putPendingArchive, takePendingArchive } from './archive-store.js';
+import { putPendingArchive, takePendingArchive, putLastAudio, getLastAudio } from './archive-store.js';
 import { parseMidi } from './midi.js';
 import { Visualizer } from './visualizer.js';
 import { VideoExporter, downloadBlob, checkFfmpeg, sanitizeFilename, pickMime, pickDirectMime } from './exporter.js';
@@ -120,6 +121,7 @@ const MODULE_OPTIONS = {
     { key: 'peakHold', label: '峰值记忆刻线', type: 'toggle', default: true },
   ],
   scope: [
+    { key: 'channel', label: '显示声道', type: 'select', default: 'auto', options: [['auto', '自动 · 按标题推断'], ['BOTH', 'L + R 双通道'], ['L', '仅左声道 L'], ['R', '仅右声道 R']] },
     { key: 'lineWidth', label: '轨迹线宽', type: 'range', min: 0.5, max: 4, step: 0.1, default: 1.25, unit: ' px' },
     { key: 'persistence', label: '荧光余晖', type: 'range', min: 0, max: 100, step: 5, default: 45, unit: '%' },
     { key: 'grid', label: '显示时间网格', type: 'toggle', default: true },
@@ -209,6 +211,25 @@ const MODULE_OPTIONS = {
     { key: 'bars', label: '频谱柱数', type: 'select', default: 'auto', options: [['auto', '自动'], ['32', '32'], ['48', '48'], ['64', '64'], ['96', '96']] },
     { key: 'peakHold', label: '峰值保持', type: 'toggle', default: true },
     { key: 'tilt', label: '高频倾斜', type: 'range', min: 0, max: 100, step: 5, default: 35, unit: '%' },
+    { key: 'lowColor', label: '低频颜色', type: 'color', default: SCHEME_COLORS[0] },
+    { key: 'midColor', label: '中频颜色', type: 'color', default: SCHEME_COLORS[1] },
+    { key: 'highColor', label: '高频颜色', type: 'color', default: SCHEME_COLORS[2] },
+  ],
+  midiOC: [
+    { key: 'detect', label: '识别范围', type: 'range', min: 0.1, max: 10, step: 0.1, default: 1, unit: ' s' },
+    { key: 'window', label: '时间窗口', type: 'range', min: 2, max: 60, step: 1, default: 12, unit: ' s' },
+    { key: 'x', label: '绝对 X 坐标', type: 'number', min: -960, max: 960, step: 1, default: 0 },
+    { key: 'y', label: '绝对 Y 坐标', type: 'number', min: -540, max: 540, step: 1, default: 0 },
+    { key: 'showIncrease', label: '显示增加 (+)', type: 'toggle', default: true },
+    { key: 'increaseColor', label: '增加颜色', type: 'color', default: SCHEME_COLORS[0] },
+    { key: 'showDecrease', label: '显示减少 (−)', type: 'toggle', default: true },
+    { key: 'decreaseColor', label: '减少颜色', type: 'color', default: SCHEME_COLORS[1] },
+    { key: 'showHold', label: '显示保持 (=)', type: 'toggle', default: true },
+    { key: 'holdColor', label: '保持颜色', type: 'color', default: SCHEME_COLORS[2] },
+    { key: 'fadeIn', label: '淡入时间', type: 'range', min: 0, max: 2, step: 0.1, default: 0.3, unit: ' s' },
+    { key: 'fadeOut', label: '淡出时间', type: 'range', min: 0, max: 2, step: 0.1, default: 0.5, unit: ' s' },
+    { key: 'rows', label: '最大轨道行数', type: 'range', min: 1, max: 16, step: 1, default: 8 },
+    { key: 'frame', label: '显示面板边框', type: 'toggle', default: false },
   ],
   beatPulse: [
     { key: 'pulseSensitivity', label: '节拍灵敏度', type: 'range', min: 50, max: 200, step: 5, default: 100, unit: '%' },
@@ -372,6 +393,7 @@ class NeonScopeApp {
     this._keyCapture = null;
     this._moduleMenuId = null;
     this._colorTarget = null;
+    this._colorApply = null;
     this._picker = { h: 340, s: 0.75, v: 1, a: 1, hex: '#ff4f8b' };
     this.keybinds = { ...DEFAULT_KEYBINDS };
     this._captureKeyHandler = (e) => this._handleCaptureKey(e);
@@ -605,12 +627,12 @@ class NeonScopeApp {
         else if (typeof DEFAULT_SETTINGS[key] === 'number') s[key] = Number.isFinite(Number(value)) ? Number(value) : DEFAULT_SETTINGS[key];
         else s[key] = value;
       }
-      if (!/^#[0-9a-fA-F]{6}$/.test(s.accent)) s.accent = DEFAULT_SETTINGS.accent;
+      if (!isHexColor(s.accent)) s.accent = DEFAULT_SETTINGS.accent;
       for (const key of ['themeBg', 'themeWindow', 'themeText', 'themeChart']) {
-        if (!/^#[0-9a-fA-F]{6}$/.test(s[key] || '')) s[key] = DEFAULT_SETTINGS[key];
+        if (!isHexColor(s[key])) s[key] = DEFAULT_SETTINGS[key];
       }
       if (!['custom', 'bg', 'primary', 'accent'].includes(s.themeChartFollow)) s.themeChartFollow = 'custom';
-      if (!/^#[0-9a-fA-F]{6}$/.test(s.bgColor || '')) s.bgColor = DEFAULT_SETTINGS.bgColor;
+      if (!isHexColor(s.bgColor)) s.bgColor = DEFAULT_SETTINGS.bgColor;
       if (!['plasma', 'image', 'color'].includes(s.bgMode)) s.bgMode = 'plasma';
       if (!['gpu', 'cpu'].includes(s.rendererMode)) s.rendererMode = 'gpu';
       s.accentAlpha = clamp(Number(s.accentAlpha), 0, 1);
@@ -840,12 +862,12 @@ class NeonScopeApp {
         else if (typeof DEFAULT_SETTINGS[key] === 'number') s[key] = Number.isFinite(Number(value)) ? Number(value) : DEFAULT_SETTINGS[key];
         else s[key] = value;
       }
-      if (!/^#[0-9a-fA-F]{6}$/.test(s.accent)) s.accent = DEFAULT_SETTINGS.accent;
+      if (!isHexColor(s.accent)) s.accent = DEFAULT_SETTINGS.accent;
       for (const key of ['themeBg', 'themeWindow', 'themeText', 'themeChart']) {
-        if (!/^#[0-9a-fA-F]{6}$/.test(s[key] || '')) s[key] = DEFAULT_SETTINGS[key];
+        if (!isHexColor(s[key])) s[key] = DEFAULT_SETTINGS[key];
       }
       if (!['custom', 'bg', 'primary', 'accent'].includes(s.themeChartFollow)) s.themeChartFollow = 'custom';
-      if (!/^#[0-9a-fA-F]{6}$/.test(s.bgColor || '')) s.bgColor = DEFAULT_SETTINGS.bgColor;
+      if (!isHexColor(s.bgColor)) s.bgColor = DEFAULT_SETTINGS.bgColor;
       if (!['plasma', 'image', 'color'].includes(s.bgMode)) s.bgMode = 'plasma';
       if (!['gpu', 'cpu'].includes(s.rendererMode)) s.rendererMode = 'gpu';
       s.volume = clamp(s.volume, 0, 100);
@@ -1029,7 +1051,7 @@ class NeonScopeApp {
       let h = clamp(Number(raw.h) || def.h, 100, STAGE_H);
       let x = clamp(Number(raw.x) || 0, 0, STAGE_W - w);
       let y = clamp(Number(raw.y) || 0, 0, STAGE_H - h);
-      const color = typeof raw.color === 'string' && /^#[0-9a-fA-F]{6}$/.test(raw.color) ? raw.color.toUpperCase() : null;
+      const color = typeof raw.color === 'string' && isHexColor(raw.color) ? raw.color.toUpperCase() : null;
       const options = {};
       for (const option of (MODULE_OPTIONS[raw.type] || [])) {
         const v = raw.options?.[option.key];
@@ -1038,8 +1060,11 @@ class NeonScopeApp {
         else if (option.type === 'range') {
           const num = Number(v);
           if (Number.isFinite(num)) options[option.key] = clamp(num, option.min, option.max);
+        } else if (option.type === 'number') {
+          const num = Number(v);
+          if (Number.isFinite(num)) options[option.key] = clamp(num, option.min ?? -99999, option.max ?? 99999);
         } else if (option.type === 'color') {
-          if (/^#[0-9a-fA-F]{6}$/.test(String(v))) options[option.key] = String(v);
+          if (isHexColor(v)) options[option.key] = normalizeHexInput(v, option.default);
         } else if (option.type === 'text') {
           options[option.key] = String(v).slice(0, 80);
         } else if (option.options?.some(([value]) => String(value) === String(v))) {
@@ -1055,7 +1080,7 @@ class NeonScopeApp {
             .filter((v) => v !== false);
         }
         if (Array.isArray(raw.options.trackColors)) {
-          options.trackColors = raw.options.trackColors.slice(0, 16).map((v) => /^#[0-9a-fA-F]{6}$/.test(String(v)) ? String(v) : null);
+          options.trackColors = raw.options.trackColors.slice(0, 16).map((v) => isHexColor(v) ? normalizeHexInput(v, '#FF4F8B') : null);
         }
         if (Array.isArray(raw.options.trackDepths)) {
           options.trackDepths = raw.options.trackDepths.slice(0, 16).map((v) => clamp(Number(v) || 0, 0, 100));
@@ -1229,7 +1254,7 @@ class NeonScopeApp {
     });
     d.accentPickBtn.addEventListener('click', () => this._openColorPicker('accent'));
     for (const [key, input] of [['themeBg', d.themeBg], ['themeWindow', d.themeWindow], ['themeText', d.themeText], ['themeChart', d.themeChart]]) {
-      input?.addEventListener('input', () => this._setThemeColor(key, input.value));
+      input?.addEventListener('input', () => this._setThemeColor(key, input.dataset.color8 || input.value));
     }
     d.themeChartFollow?.addEventListener('change', () => {
       this.state.settings.themeChartFollow = d.themeChartFollow.value;
@@ -1462,7 +1487,7 @@ class NeonScopeApp {
       if (midiColor) {
         const index = Number(midiColor.dataset.midiColor);
         const colors = Array.isArray(mod.options?.trackColors) ? mod.options.trackColors.slice() : [];
-        colors[index] = midiColor.value;
+        colors[index] = midiColor.dataset.color8 || midiColor.value;
         mod.options = { ...(mod.options || {}), trackColors: colors };
         this._persist();
         return;
@@ -1486,13 +1511,15 @@ class NeonScopeApp {
       let value;
       if (schema.type === 'toggle') value = !!control.checked;
       else if (schema.type === 'range') value = Number(control.value);
+      else if (schema.type === 'number') value = clamp(Number(control.value), schema.min ?? -99999, schema.max ?? 99999);
+      else if (schema.type === 'color') value = normalizeHexInput(control.dataset.color8 || control.value, schema.default);
       else value = control.value;
       mod.options = { ...(mod.options || {}), [key]: value };
       if (schema.type === 'range') {
         const output = d.moduleOptions.querySelector(`[data-opt-output="${key}"]`);
         if (output) output.textContent = key === 'midiOffset'
           ? `${value > 0 ? '+' : ''}${Math.round(value)} ms`
-          : `${Math.round(value)}${schema.unit || ''}`;
+          : `${this._formatStepValue(value, schema.step)}${schema.unit || ''}`;
       }
       this._persist();
     });
@@ -1726,6 +1753,7 @@ class NeonScopeApp {
     });
 
     this._bindColorPickerUI();
+    this._bindAlphaColorInputs();
     this._bindShortcutUI();
     this._bindModuleMenuUI();
     this._bindWindowDrag();
@@ -1861,7 +1889,7 @@ class NeonScopeApp {
   _bindAboutUI() {
     this.dom.aboutDeveloperBtn?.addEventListener('click', () => this._openModal('developer'));
     this.dom.aboutRepositoryBtn?.addEventListener('click', () => {
-      this._openExternal('https://github.com/Tatsukini/Tatsukini-NEON-SCOPE-Audio-Visualization');
+      this._openExternal('https://github.com/Tatsukini/Tatsukini-NEON-SCOPE-Audio-Visualization-Canary');
     });
     this.dom.developerSiteBtn?.addEventListener('click', () => {
       this._openExternal('https://space.bilibili.com/3546631108561311');
@@ -1895,7 +1923,7 @@ class NeonScopeApp {
         name: 'NEON//SCOPE（本程序）',
         copyright: 'Copyright © 2026 Tatsukini.',
         license: '以 GNU General Public License v3.0 或更高版本发布（GPL-3.0-or-later）。',
-        source: 'https://github.com/Tatsukini/Tatsukini-NEON-SCOPE-Audio-Visualization',
+        source: 'https://github.com/Tatsukini/Tatsukini-NEON-SCOPE-Audio-Visualization-Canary',
         doc: 'https://www.gnu.org/licenses/gpl-3.0.html',
       },
       {
@@ -3521,17 +3549,19 @@ class NeonScopeApp {
     }
   }
 
-  async _importZipArchive(fileName, buffer) {
+  async _importZipArchive(fileName, buffer, { confirm = true } = {}) {
     const files = await readZip(buffer);
     const decoder = new TextDecoder();
     const projectBytes = files.get('project.json');
     if (!projectBytes) throw new Error('.NEON 中缺少 project.json');
     const archive = JSON.parse(decoder.decode(projectBytes));
     if (!archive.project || typeof archive.project !== 'object') throw new Error('不是有效的 NEON//SCOPE 存档');
-    const confirmed = await this._showConfirm(`导入 ${fileName} 会覆盖当前工程，继续吗？`, {
-      title: '导入工程', confirmText: '导入', cancelText: '取消',
-    });
-    if (!confirmed) return;
+    if (confirm) {
+      const confirmed = await this._showConfirm(`导入 ${fileName} 会覆盖当前工程，继续吗？`, {
+        title: '导入工程', confirmText: '导入', cancelText: '取消',
+      });
+      if (!confirmed) return;
+    }
     const layersFile = files.get('midi/layers.json');
     const layers = layersFile ? (JSON.parse(decoder.decode(layersFile)).layers || []) : [];
     const midiFiles = archive.files?.midi || [];
@@ -3888,7 +3918,7 @@ class NeonScopeApp {
         <span class="kf-key-no">${index + 1}</span>
         <input data-kf-field="time" type="number" min="0" step="0.01" value="${Number(key.t).toFixed(2)}" title="时间 s" />
         ${spec.kind === 'color'
-          ? `<input data-kf-field="value" type="color" value="${/^#[0-9a-fA-F]{6}$/.test(key.v) ? key.v : '#ff4f8b'}" />`
+          ? `<input data-kf-field="value" type="color" ${this._colorInputAttrs(key.v, '#ff4f8b')} />`
           : `<input data-kf-field="value" type="number" min="${spec.min ?? ''}" max="${spec.max ?? ''}" step="${spec.step ?? 'any'}" value="${Number(key.v).toFixed(3)}" />`}
         <button data-kf-delete="${index}" title="删除关键帧">×</button>
       </div>`).join('');
@@ -3921,7 +3951,8 @@ class NeonScopeApp {
       if (timeInput && document.activeElement !== timeInput) timeInput.value = Number(key.t).toFixed(2);
       const valueInput = row.querySelector('[data-kf-field="value"]');
       if (valueInput && document.activeElement !== valueInput) {
-        valueInput.value = spec.kind === 'color' ? key.v : Number(key.v).toFixed(3);
+        if (spec.kind === 'color') this._setColorInputValue(valueInput, key.v);
+        else valueInput.value = Number(key.v).toFixed(3);
       }
     });
     for (const point of this.dom.keyframeGraph.querySelectorAll('[data-kf-point]')) {
@@ -3956,7 +3987,10 @@ class NeonScopeApp {
     }
     let curve = '';
     if (kind === 'color') {
-      const stops = keys.map((key) => `<stop offset="${clamp(key.t / span, 0, 1) * 100}%" stop-color="${/^#[0-9a-fA-F]{6}$/.test(key.v) ? key.v : '#ff4f8b'}"/>`).join('');
+      const stops = keys.map((key) => {
+        const full = isHexColor(key.v) ? normalizeHexInput(key.v, '#ff4f8b') : '#ff4f8b';
+        return `<stop offset="${clamp(key.t / span, 0, 1) * 100}%" stop-color="${full.slice(0, 7)}" stop-opacity="${hexAlpha(full)}"/>`;
+      }).join('');
       curve = `<defs><linearGradient id="kfColorGradient">${stops}</linearGradient></defs>
         <rect class="kf-color-track" x="${L}" y="${T + plotH / 2 - 10}" width="${plotW}" height="20" fill="url(#kfColorGradient)" stroke="rgba(255,255,255,.2)"/>`;
     } else {
@@ -4061,7 +4095,7 @@ class NeonScopeApp {
     const key = keys[index];
     if (!key) return;
     if (field === 'value') {
-      key.v = spec.kind === 'color' ? e.target.value : (Number(e.target.value) || 0);
+      key.v = spec.kind === 'color' ? normalizeHexInput(e.target.dataset.color8 || e.target.value, '#FF4F8B') : (Number(e.target.value) || 0);
     } else {
       key.t = clamp(Number(e.target.value) || 0, 0, this._automationSpan(cue));
     }
@@ -4115,7 +4149,7 @@ class NeonScopeApp {
     const field = e.target.dataset.kfField;
     this._pushAnimationHistory();
     if (field === 'time') keys[index].t = clamp(Number(e.target.value) || 0, 0, this._automationSpan(cue));
-    if (field === 'value') keys[index].v = spec.kind === 'color' ? e.target.value : (Number(e.target.value) || 0);
+    if (field === 'value') keys[index].v = spec.kind === 'color' ? normalizeHexInput(e.target.dataset.color8 || e.target.value, '#FF4F8B') : (Number(e.target.value) || 0);
     keys.sort((a, b) => a.t - b.t);
     this._kfSelectedKey = Math.min(index, keys.length - 1);
     this._renderKeyframeEditor();
@@ -5754,12 +5788,84 @@ class NeonScopeApp {
   async _boot() {
     try {
       if (!this._standaloneSettings) await this._loadEnabledPlugins();
-      const restored = await this._restorePendingArchive();
+      let restored = await this._restorePendingArchive();
+      if (!restored) restored = await this._restoreLastArchive();
+      if (!restored) restored = await this._restoreLastAudio();
+      if (!restored) restored = await this._restoreRecentAudio();
       if (!restored) await this._loadDemo(false);
     } catch (err) {
       console.error(err);
       this._toast(`恢复存档失败：${err.message}`, 'error', 5200);
       await this._loadDemo(false);
+    }
+  }
+
+  _rememberAudio(asset) {
+    if (!asset?.bytes?.length) return;
+    const bytes = asset.bytes instanceof Uint8Array ? asset.bytes : new Uint8Array(asset.bytes);
+    putLastAudio({ name: asset.name, type: asset.type, bytes }).catch((err) => {
+      console.warn('Last audio persist failed:', err);
+    });
+  }
+
+  async _restoreLastAudio() {
+    try {
+      const last = await getLastAudio();
+      if (!last?.bytes?.length) return false;
+      const bytes = last.bytes instanceof Uint8Array ? last.bytes : new Uint8Array(last.bytes);
+      const file = new File([bytes], last.name || 'audio.wav', { type: last.type || 'audio/wav' });
+      const buffer = await this.audio.decodeFile(file);
+      this.audio.setBuffer(buffer, {
+        name: (last.name || 'audio').replace(/\.[^.]+$/, ''),
+        kind: 'audio',
+        file: last.name || 'audio.wav',
+      });
+      this.audioAsset = { name: last.name || 'audio.wav', type: last.type || 'audio/wav', bytes };
+      this.visualizer.states.clear();
+      this._refreshTrackUI();
+      this._updateStartOverlay('custom');
+      this._setEngineStatus('上次音频已恢复', 'ready');
+      this._toast('已恢复最近一次载入的音频', 'success', 2600);
+      return true;
+    } catch (err) {
+      console.warn('Last audio restore failed:', err);
+      return false;
+    }
+  }
+
+  async _restoreLastArchive() {
+    if (!this._isNative) return false;
+    const folder = this.state.settings.savePath || '';
+    try {
+      const response = await fetch(`/api/last-archive?folder=${encodeURIComponent(folder)}`, { cache: 'no-store' });
+      if (!response.ok) return false;
+      const buffer = await response.arrayBuffer();
+      if (buffer.byteLength <= 4) return false;
+      const name = decodeURIComponent(response.headers.get('X-File-Name') || 'recent.NEON');
+      this._setEngineStatus('恢复最近存档…', 'busy');
+      await this._importZipArchive(name, buffer, { confirm: false });
+      return true;
+    } catch (err) {
+      console.warn('Recent archive restore failed:', err);
+      return false;
+    }
+  }
+
+  async _restoreRecentAudio() {
+    if (!this._isNative) return false;
+    const folder = this.state.settings.savePath || '';
+    try {
+      const response = await fetch(`/api/recent-audio?folder=${encodeURIComponent(folder)}`, { cache: 'no-store' });
+      if (!response.ok) return false;
+      const buffer = await response.arrayBuffer();
+      if (buffer.byteLength <= 1024) return false;
+      const name = decodeURIComponent(response.headers.get('X-File-Name') || 'recent-audio.mp3');
+      const type = response.headers.get('Content-Type') || 'audio/mpeg';
+      await this._loadAudioFile(new File([buffer], name, { type }));
+      return true;
+    } catch (err) {
+      console.warn('Recent source audio restore failed:', err);
+      return false;
     }
   }
 
@@ -5775,6 +5881,7 @@ class NeonScopeApp {
         file: pending.audio.name,
       });
       this.audioAsset = { name: pending.audio.name, type: pending.audio.type, bytes: pending.audio.bytes };
+      this._rememberAudio(this.audioAsset);
     }
     if (Array.isArray(pending.layers) && pending.layers.length) {
       this.state.midiLayers = pending.layers;
@@ -5877,6 +5984,7 @@ class NeonScopeApp {
       const name = file.name.replace(/\.[^.]+$/, '');
       this.audio.setBuffer(buffer, { name, kind: 'audio', file: file.name });
       this.audioAsset = { name: file.name, type: file.type || 'audio/wav', bytes };
+      this._rememberAudio(this.audioAsset);
       this._refreshTrackUI();
       this._updateStartOverlay('custom');
       this._setEngineStatus('音频就绪', 'ready');
@@ -6151,6 +6259,13 @@ class NeonScopeApp {
     return raw;
   }
 
+  _formatStepValue(value, step) {
+    const text = String(step ?? '');
+    const dot = text.indexOf('.');
+    const decimals = dot >= 0 ? text.length - dot - 1 : 0;
+    return decimals > 0 ? Number(value).toFixed(decimals) : String(Math.round(Number(value)));
+  }
+
   _syncModuleOptions(mod) {
     const d = this.dom;
     if (!d.moduleOptions) return;
@@ -6172,14 +6287,17 @@ class NeonScopeApp {
         return `<label class="module-option-field"><span>${option.label}</span><select data-opt-key="${option.key}">${opts}</select></label>`;
       }
       if (option.type === 'color') {
-        return `<label class="module-option-field module-option-color"><span>${option.label}</span><input type="color" data-opt-key="${option.key}" value="${/^#[0-9a-fA-F]{6}$/.test(String(value)) ? value : option.default}" /></label>`;
+        return `<label class="module-option-field module-option-color"><span>${option.label}</span><input type="color" data-opt-key="${option.key}" ${this._colorInputAttrs(value, option.default)} /></label>`;
+      }
+      if (option.type === 'number') {
+        return `<label class="module-option-field"><span>${option.label}</span><input type="number" data-opt-key="${option.key}" min="${option.min ?? ''}" max="${option.max ?? ''}" step="${option.step ?? 'any'}" value="${Number(value)}" /></label>`;
       }
       if (option.type === 'text') {
         return `<label class="module-option-field"><span>${option.label}</span><input type="text" data-opt-key="${option.key}" value="${String(value).replace(/"/g, '&quot;')}" maxlength="80" /></label>`;
       }
       const output = option.key === 'midiOffset'
         ? `${Number(value) > 0 ? '+' : ''}${Math.round(Number(value))} ms`
-        : `${Math.round(Number(value))}${option.unit || ''}`;
+        : `${this._formatStepValue(value, option.step)}${option.unit || ''}`;
       return `<div class="field-row module-option-range"><label class="field-label">${option.label} <output data-opt-output="${option.key}">${output}</output></label><input type="range" data-opt-key="${option.key}" min="${option.min}" max="${option.max}" step="${option.step}" value="${value}" /></div>`;
     }).join('') + (mod.type === 'pianoRoll' ? this._midiTrackOptions(mod) : '');
     if (this.subpanelState.midiBus && !this.subpanelState.midiBus.hidden) this._renderMidiBus();
@@ -6195,7 +6313,7 @@ class NeonScopeApp {
     if (!tracks.length) {
       return '<div class="midi-track-empty">导入 MIDI 后，可在这里设置每条轨道的颜色、深度和 M / S。</div>';
     }
-    const fallback = [this.state.settings.accent || '#ff4f8b', '#68e8ff', '#a98bff', '#ffc46b', '#b9ff8a', '#ff8a6b'];
+    const fallback = [this.state.settings.accent || '#ff4f8b', SCHEME_COLORS[1], SCHEME_COLORS[3], SCHEME_COLORS[2], '#b9ff8a', '#ff8a6b'];
     const colors = Array.isArray(mod.options?.trackColors) ? mod.options.trackColors : [];
     const depths = Array.isArray(mod.options?.trackDepths) ? mod.options.trackDepths : [];
     const mutes = Array.isArray(mod.options?.trackMutes) ? mod.options.trackMutes : [];
@@ -6205,7 +6323,7 @@ class NeonScopeApp {
     return `<div class="midi-track-options"><div class="midi-track-head"><span>轨道 / TRACKS</span><em>顺序控制纵深 · 上远下近</em></div>
       <div class="midi-track-list">${order.slice(0, 16).map((trackIndex, orderIndex) => {
         const track = tracks[trackIndex] || { name: `Track ${trackIndex + 1}` };
-        const color = /^#[0-9a-fA-F]{6}$/.test(colors[trackIndex] || '') ? colors[trackIndex] : fallback[trackIndex % fallback.length];
+        const color = isHexColor(colors[trackIndex]) ? colors[trackIndex] : fallback[trackIndex % fallback.length];
         const depth = clamp(Number(depths[trackIndex] ?? defaultDepth) || 0, 0, 500);
         const name = String(track.name || `Track ${trackIndex + 1}`).replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
         return `<div class="midi-track-row" data-midi-track="${trackIndex}">
@@ -6215,7 +6333,7 @@ class NeonScopeApp {
           <button type="button" class="midi-track-ms midi-track-move" data-midi-down="${trackIndex}" title="下移（更近）">↓</button>
           <button type="button" class="midi-track-ms ${mutes[trackIndex] ? 'active mute' : ''}" data-midi-mute="${trackIndex}" title="静音">M</button>
           <button type="button" class="midi-track-ms ${solos[trackIndex] ? 'active solo' : ''}" data-midi-solo="${trackIndex}" title="独奏">S</button>
-          <input type="color" data-midi-color="${trackIndex}" value="${color}" title="轨道颜色" />
+          <input type="color" data-midi-color="${trackIndex}" ${this._colorInputAttrs(color, '#FF4F8B', '轨道颜色')} />
           <input type="range" data-midi-depth="${trackIndex}" min="0" max="500" step="5" value="${depth}" title="轨道深度" />
           <output data-midi-depth-out="${trackIndex}">${Math.round(depth)}</output>
           <button type="button" class="midi-track-ms midi-track-delete" data-midi-delete="${trackIndex}" title="删除轨道（也可 Ctrl+Shift+左键）">×</button>
@@ -6403,7 +6521,7 @@ class NeonScopeApp {
     const options = mod.options || {};
     const value = (key, fallback) => options[key] === undefined || options[key] === null || options[key] === '' ? fallback : options[key];
     const escape = (value) => String(value).replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
-    const palette = [this.state.settings.accent || '#ff4f8b', '#68e8ff', '#a98bff', '#ffc46b', '#b9ff8a', '#ff8a6b'];
+    const palette = [this.state.settings.accent || '#ff4f8b', SCHEME_COLORS[1], SCHEME_COLORS[3], SCHEME_COLORS[2], '#b9ff8a', '#ff8a6b'];
     const fonts = [['Bahnschrift', 'Bahnschrift'], ['Segoe UI', 'Segoe UI'], ['Microsoft YaHei UI', '微软雅黑'], ['Georgia', 'Georgia'], ['Cascadia Code', 'Cascadia Code']];
     const colors = Array.isArray(options.trackColors) ? options.trackColors : [];
     const depths = Array.isArray(options.trackDepths) ? options.trackDepths : [];
@@ -6412,13 +6530,13 @@ class NeonScopeApp {
     const depthValue = Number(value('trackDepth', 275));
     const defaultDepth = Number.isFinite(depthValue) ? depthValue : 275;
     const checkbox = (key, label) => `<label class="check-row compact"><input type="checkbox" data-bus-layer="${busId}" data-bus-key="${key}" ${value(key, true) ? 'checked' : ''}/><span>${label}</span></label>`;
-    const colorControl = (key, label) => `<label class="module-option-field module-option-color"><span>${label}</span><input type="color" data-bus-layer="${busId}" data-bus-key="${key}" value="${/^#[0-9a-fA-F]{6}$/.test(String(value(key, '#C7F8FF'))) ? value(key, '#C7F8FF') : '#C7F8FF'}" /></label>`;
+    const colorControl = (key, label) => `<label class="module-option-field module-option-color"><span>${label}</span><input type="color" data-bus-layer="${busId}" data-bus-key="${key}" ${this._colorInputAttrs(value(key, '#C7F8FF'))} /></label>`;
     const selectControl = (key, label, opts, fallback = opts[0]?.[0]) => `<label class="module-option-field"><span>${label}</span><select data-bus-layer="${busId}" data-bus-key="${key}">${opts.map(([v, t]) => `<option value="${v}" ${String(value(key, fallback)) === String(v) ? 'selected' : ''}>${t}</option>`).join('')}</select></label>`;
     const rangeControl = (key, label, min, max, step, fallback, unit = '') => `<div class="field-row module-option-range"><label class="field-label">${label} <output data-bus-output="${busId}:${key}">${Math.round(Number(value(key, fallback)))}${unit}</output></label><input type="range" data-bus-layer="${busId}" data-bus-key="${key}" min="${min}" max="${max}" step="${step}" value="${value(key, fallback)}" /></div>`;
     const order = this._midiTrackOrder(mod, midi);
     const trackRows = order.map((trackIndex, orderIndex) => {
       const track = midi.tracks[trackIndex] || { name: `Track ${trackIndex + 1}` };
-      const color = /^#[0-9a-fA-F]{6}$/.test(colors[trackIndex] || '') ? colors[trackIndex] : palette[trackIndex % palette.length];
+      const color = isHexColor(colors[trackIndex]) ? colors[trackIndex] : palette[trackIndex % palette.length];
       const depth = clamp(Number(depths[trackIndex] ?? defaultDepth) || 0, 0, 500);
       const name = escape(track.name || `Track ${trackIndex + 1}`);
       return `<div class="midi-track-row" data-bus-track="${trackIndex}" data-bus-layer="${busId}">
@@ -6428,7 +6546,7 @@ class NeonScopeApp {
         <button type="button" class="midi-track-ms midi-track-move" data-bus-down="${trackIndex}" data-bus-layer="${busId}" title="下移（更近）">↓</button>
         <button type="button" class="midi-track-ms ${mutes[trackIndex] ? 'active mute' : ''}" data-bus-mute="${trackIndex}" data-bus-layer="${busId}" title="静音">M</button>
         <button type="button" class="midi-track-ms ${solos[trackIndex] ? 'active solo' : ''}" data-bus-solo="${trackIndex}" data-bus-layer="${busId}" title="独奏">S</button>
-        <input type="color" data-bus-color="${trackIndex}" data-bus-layer="${busId}" value="${color}" title="轨道颜色" />
+        <input type="color" data-bus-color="${trackIndex}" data-bus-layer="${busId}" ${this._colorInputAttrs(color, '#FF4F8B', '轨道颜色')} />
         <input type="range" data-bus-depth="${trackIndex}" data-bus-layer="${busId}" min="0" max="500" step="5" value="${depth}" title="轨道深度" />
         <output data-bus-depth-out="${busId}:${trackIndex}">${Math.round(depth)}</output>
         <button type="button" class="midi-track-ms midi-track-delete" data-bus-delete="${trackIndex}" data-bus-layer="${busId}" title="删除轨道（也可 Ctrl+Shift+左键）">×</button>
@@ -6486,7 +6604,7 @@ class NeonScopeApp {
       if (colorIndex) {
         const index = Number(colorIndex.dataset.busColor);
         const colors = Array.isArray(mod.options?.trackColors) ? mod.options.trackColors.slice() : [];
-        colors[index] = colorIndex.value;
+        colors[index] = colorIndex.dataset.color8 || colorIndex.value;
         mod.options = { ...(mod.options || {}), trackColors: colors };
         this._persist();
         return;
@@ -6507,6 +6625,7 @@ class NeonScopeApp {
       let value;
       if (e.target.type === 'checkbox') value = !!e.target.checked;
       else if (e.target.type === 'range') value = Number(e.target.value);
+      else if (e.target.type === 'color') value = normalizeHexInput(e.target.dataset.color8 || e.target.value, '#C7F8FF');
       else value = e.target.value;
       mod.options = { ...(mod.options || {}), [key]: value };
       if (e.target.type === 'range') {
@@ -6786,8 +6905,8 @@ class NeonScopeApp {
 
   _applyUserPalette() {
     const s = this.state.settings;
-    const bg = /^#[0-9a-fA-F]{6}$/.test(s.bgColor || '') ? s.bgColor : '#1a0b22';
-    const accent = /^#[0-9a-fA-F]{6}$/.test(s.accent || '') ? s.accent : '#ff4f8b';
+    const bg = isHexColor(s.bgColor) ? s.bgColor : '#1a0b22';
+    const accent = isHexColor(s.accent) ? s.accent : '#ff4f8b';
     const root = document.documentElement;
     const set = (name, value) => root.style.setProperty(name, value);
     set('--paper-bg', mixHex(bg, '#ffffff', 0.91));
@@ -6829,10 +6948,10 @@ class NeonScopeApp {
     set('--dim', mixHex(colors.text, colors.bg, 0.68));
     const textRgb = hexToRgb(colors.text);
     set('--line', `rgba(${textRgb.r}, ${textRgb.g}, ${textRgb.b}, 0.12)`);
-    if (this.dom.themeBg) this.dom.themeBg.value = colors.bg;
-    if (this.dom.themeWindow) this.dom.themeWindow.value = colors.window;
-    if (this.dom.themeText) this.dom.themeText.value = colors.text;
-    if (this.dom.themeChart) this.dom.themeChart.value = s.themeChart;
+    if (this.dom.themeBg) this._setColorInputValue(this.dom.themeBg, colors.bg);
+    if (this.dom.themeWindow) this._setColorInputValue(this.dom.themeWindow, colors.window);
+    if (this.dom.themeText) this._setColorInputValue(this.dom.themeText, colors.text);
+    if (this.dom.themeChart) this._setColorInputValue(this.dom.themeChart, s.themeChart);
     if (this.dom.themeChartFollow) this.dom.themeChartFollow.value = s.themeChartFollow;
     this._syncRangeTrackColor(colors.bg);
     this.visualizer?.applyBackgroundSettings();
@@ -6841,15 +6960,24 @@ class NeonScopeApp {
   }
 
   _setThemeColor(key, value) {
-    if (!/^#[0-9a-fA-F]{6}$/.test(value)) return;
+    if (!isHexColor(value)) return;
     if (key === 'themeChart') this.state.settings.themeChartFollow = 'custom';
-    this.state.settings[key] = value;
+    this.state.settings[key] = normalizeHexInput(value, this.state.settings[key]);
     this._applyThemePalette({ silent: true });
+  }
+
+  _setColorInputValue(input, color) {
+    if (!input) return;
+    const value = normalizeHexInput(color, '#FF4F8B');
+    input.value = value.slice(0, 7);
+    input.dataset.color8 = value;
+    const alpha = hexAlpha(value);
+    input.title = `${value.slice(0, 7).toUpperCase()} · ${Math.round(alpha * 100)}%`;
   }
 
   _applyAccent(hex, alpha = this.state.settings.accentAlpha ?? 1, { silent = false, noPersist = false } = {}) {
     const value = normalizeHexInput(hex);
-    const a = clamp(Number(alpha), 0, 1);
+    const a = clamp(Number(alpha), 0, 1) * hexAlpha(value);
     this.state.settings.accent = value;
     this.state.settings.accentAlpha = Number.isFinite(a) ? a : 1;
     const rgb = hexToRgb(value);
@@ -6931,12 +7059,15 @@ class NeonScopeApp {
     return this._colorTarget === target;
   }
 
-  _openColorPicker(target) {
+  _openColorPicker(target, options = {}) {
     const mod = this._selected();
     if (target === 'module' && !mod) return;
     let color = this.state.settings.accent;
     let alpha = this.state.settings.accentAlpha ?? 1;
-    if (target === 'module') {
+    if (options.color) {
+      color = options.color;
+      alpha = options.alpha ?? hexAlpha(color);
+    } else if (target === 'module') {
       color = mod.color || this.state.settings.accent;
       alpha = mod.color ? (mod.colorAlpha ?? 1) : (this.state.settings.accentAlpha ?? 1);
     } else if (target === 'background') {
@@ -6944,6 +7075,7 @@ class NeonScopeApp {
       alpha = this.state.settings.bgColorAlpha ?? 1;
     }
     this._colorTarget = target;
+    this._colorApply = typeof options.apply === 'function' ? options.apply : null;
     this._loadPickerFromColor(color, alpha);
     this._openModal('color');
     this._renderColorField();
@@ -7067,7 +7199,11 @@ class NeonScopeApp {
       const rgb = this._pickerRgb();
       const hex = rgbToHex(rgb.r, rgb.g, rgb.b);
       const alpha = clamp(this._picker.a, 0, 1);
-      if (this._colorTarget === 'accent') {
+      const apply = this._colorApply;
+      this._colorApply = null;
+      if (apply) {
+        apply(hex, alpha);
+      } else if (this._colorTarget === 'accent') {
         this._applyAccent(hex, alpha);
       } else if (this._colorTarget === 'module') {
         const mod = this._selected();
@@ -7090,6 +7226,47 @@ class NeonScopeApp {
       }
       this._closeModal('color');
     });
+  }
+
+  _bindAlphaColorInputs() {
+    const pick = (target) => {
+      if (!target?.closest) return null;
+      const direct = target.closest('input[type="color"]');
+      if (direct) return direct;
+      const label = target.closest('label');
+      return label?.querySelector('input[type="color"]') || null;
+    };
+    document.addEventListener('click', (e) => {
+      const input = pick(e.target);
+      if (!input || this.state.exporting) return;
+      e.preventDefault();
+      e.stopPropagation();
+    }, true);
+    document.addEventListener('pointerdown', (e) => {
+      const input = pick(e.target);
+      if (!input || this.state.exporting) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const current = input.dataset.color8 || input.value || '#FF4F8B';
+      this._openColorPicker('custom', {
+        color: current,
+        alpha: hexAlpha(current),
+        apply: (hex, alpha) => {
+          const value = withAlpha(hex, alpha);
+          this._setColorInputValue(input, value);
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+          input.dispatchEvent(new Event('change', { bubbles: true }));
+        },
+      });
+    }, true);
+  }
+
+  _colorInputAttrs(value, fallback = '#FF4F8B', label = '') {
+    const full = isHexColor(value) ? normalizeHexInput(value, fallback) : normalizeHexInput(fallback, '#FF4F8B');
+    const alpha = hexAlpha(full);
+    const alphaText = `${full.slice(0, 7)} · ${Math.round(alpha * 100)}%`;
+    const title = label ? `${label} · ${alphaText}` : alphaText;
+    return `value="${full.slice(0, 7)}" data-color8="${full}" title="${title}"`;
   }
 
   _bindModuleMenuUI() {

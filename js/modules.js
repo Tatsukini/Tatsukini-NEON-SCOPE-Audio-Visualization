@@ -1,6 +1,6 @@
 import {
-  MODULE_DEFS, clamp, lerp, rgba, mixHex, lighten, darken, hexToRgb,
-  luminance, roundRect, spacedText, formatShortTime,
+  STAGE_W, STAGE_H, MODULE_DEFS, clamp, lerp, rgba, mixHex, lighten, darken, hexToRgb,
+  luminance, roundRect, spacedText, formatShortTime, isHexColor, hexAlpha, SCHEME_COLORS,
 } from './core.js';
 
 const MONO = '"Cascadia Code", "Consolas", "SFMono-Regular", monospace';
@@ -21,7 +21,7 @@ const META_LABELS = {
   levels: 'L/R', loudness: 'LUFS', dial: 'VU', scope: 'TIME',
   lissajous: 'X-Y', spectrum: 'FFT', phase: 'CORR', rhythm: 'BPM',
   dynamics: 'DYN', spectrogram: 'STFT', stereometer: 'POLAR',
-  waveform: 'FULL', pianoRoll: 'MIDI', peakSlope: 'PEAK', stereoField: 'WIDE',
+  waveform: 'FULL', pianoRoll: 'MIDI', midiOC: 'NOTE Δ', peakSlope: 'PEAK', stereoField: 'WIDE',
   basicInfo: 'INFO',
 };
 
@@ -74,6 +74,8 @@ function fmtDb(v, digits = 1) {
   return `${v > 0 ? '+' : ''}${v.toFixed(digits)}`;
 }
 function channelMode(mod) {
+  const setting = modOpt(mod, 'channel', 'auto');
+  if (setting === 'L' || setting === 'R' || setting === 'BOTH') return setting;
   const t = (mod.title || '').toUpperCase();
   if (/·\s*L\s*$/.test(t) || /\bL ONLY\b/.test(t)) return 'L';
   if (/·\s*R\s*$/.test(t) || /\bR ONLY\b/.test(t)) return 'R';
@@ -126,7 +128,7 @@ function drawCard(ctx, mod, accent, env) {
   ctx.fillRect(x, y + HEAD_H, w, h - HEAD_H);
 
   // Very faint internal grid texture.
-  ctx.strokeStyle = 'rgba(255,255,255,.018)';
+  ctx.strokeStyle = rgba(palette.text || '#f7eef3', 0.018);
   ctx.lineWidth = 1;
   ctx.beginPath();
   for (let gx = x + 24; gx < x + w; gx += 24) {
@@ -140,7 +142,7 @@ function drawCard(ctx, mod, accent, env) {
   ctx.stroke();
 
   if (env.settings.scanlines) {
-    ctx.fillStyle = 'rgba(255,255,255,.014)';
+    ctx.fillStyle = rgba(palette.text || '#f7eef3', 0.014);
     for (let sy = y + HEAD_H + 2; sy < y + h; sy += 4) ctx.fillRect(x, sy, w, 1);
   }
 
@@ -685,7 +687,7 @@ function drawScope(ctx, mod, body, frame, st, env) {
     const gh = st.ghosts[g];
     const ga = (0.03 + persistence / 100 * 0.16) * (1 - g / (ghostCount + 2));
     drawGhost(gh.l, mode !== 'R' ? accent : null, ga);
-    if (mode === 'BOTH') drawGhost(gh.r, '#64e8ff', ga);
+    if (mode === 'BOTH') drawGhost(gh.r, SCHEME_COLORS[1], ga);
   }
   function drawGhost(samples, color, alpha) {
     if (!color) return;
@@ -703,8 +705,8 @@ function drawScope(ctx, mod, body, frame, st, env) {
   }
 
   if (mode !== 'R') trace(dataL, accent, 0.92, traceWidth);
-  if (mode === 'BOTH') trace(dataR, '#64e8ff', 0.62, Math.max(0.6, traceWidth * 0.82));
-  if (mode === 'R') trace(dataR, '#64e8ff', 0.92, traceWidth);
+  if (mode === 'BOTH') trace(dataR, SCHEME_COLORS[1], 0.62, Math.max(0.6, traceWidth * 0.82));
+  if (mode === 'R') trace(dataR, SCHEME_COLORS[1], 0.92, traceWidth);
 
   // Trigger marker and labels.
   ctx.fillStyle = rgba(accent, 0.5);
@@ -720,7 +722,7 @@ function drawScope(ctx, mod, body, frame, st, env) {
     ctx.textAlign = 'left';
     ctx.fillStyle = rgba(accent, 0.7);
     ctx.fillText('L', x + 2, y + 8);
-    ctx.fillStyle = 'rgba(100,232,255,.7)';
+    ctx.fillStyle = rgba(SCHEME_COLORS[1], 0.7);
     ctx.fillText('R', x + 12, y + 8);
   }
 }
@@ -740,6 +742,9 @@ function drawLissajous(ctx, mod, body, frame, st, env) {
   const w = body.w - p * 2, h = body.h - p * 2 - 10;
   const cx = x + w / 2, cy = y + h / 2;
   const radius = Math.min(w, h) * 0.42;
+  const wide = /WIDE|宽屏|宽幅/.test(String(mod.title || '').toUpperCase());
+  const rx = wide ? w * 0.46 : radius;
+  const ry = wide ? h * 0.42 : radius;
   const trail = modNum(mod, 'trail', 70, 0, 100);
   const dotSize = modNum(mod, 'dotSize', 1.2, 0.5, 3);
 
@@ -748,15 +753,15 @@ function drawLissajous(ctx, mod, body, frame, st, env) {
     ctx.strokeStyle = 'rgba(255,255,255,.075)';
     ctx.lineWidth = 0.7;
     ctx.beginPath();
-    ctx.arc(cx, cy, radius, 0, TAU);
+    ctx.ellipse(cx, cy, rx, ry, 0, 0, TAU);
     ctx.stroke();
     ctx.beginPath();
-    ctx.arc(cx, cy, radius * 0.5, 0, TAU);
+    ctx.ellipse(cx, cy, rx * 0.5, ry * 0.5, 0, 0, TAU);
     ctx.stroke();
     ctx.strokeStyle = 'rgba(255,255,255,.055)';
     ctx.beginPath();
-    ctx.moveTo(cx - radius, cy); ctx.lineTo(cx + radius, cy);
-    ctx.moveTo(cx, cy - radius); ctx.lineTo(cx, cy + radius);
+    ctx.moveTo(cx - rx, cy); ctx.lineTo(cx + rx, cy);
+    ctx.moveTo(cx, cy - ry); ctx.lineTo(cx, cy + ry);
     ctx.stroke();
   }
 
@@ -784,8 +789,8 @@ function drawLissajous(ctx, mod, body, frame, st, env) {
   for (let i = 0; i < tdLength; i += step) {
     const l = clamp(frame.tdL[i] * gain, -1.2, 1.2);
     const rr = clamp(frame.tdR[i] * gain, -1.2, 1.2);
-    const px = layer.canvas.width / 2 + l * radius * scale * 1.2;
-    const py = layer.canvas.height / 2 - rr * radius * scale * 1.2;
+    const px = layer.canvas.width / 2 + l * rx * scale * 1.2;
+    const py = layer.canvas.height / 2 - rr * ry * scale * 1.2;
     if (i === 0) lc.moveTo(px, py); else lc.lineTo(px, py);
   }
   lc.strokeStyle = `rgba(${r.r},${r.g},${r.b},${0.15 + frame.energy * 0.13})`;
@@ -797,8 +802,8 @@ function drawLissajous(ctx, mod, body, frame, st, env) {
     const rr = clamp(frame.tdR[i] * gain, -1.2, 1.2);
     const mag = Math.abs(l) + Math.abs(rr);
     if (mag < 0.02) continue;
-    const px = layer.canvas.width / 2 + l * radius * scale * 1.2;
-    const py = layer.canvas.height / 2 - rr * radius * scale * 1.2;
+    const px = layer.canvas.width / 2 + l * rx * scale * 1.2;
+    const py = layer.canvas.height / 2 - rr * ry * scale * 1.2;
     lc.fillRect(px, py, dotSize * scale, dotSize * scale);
   }
   lc.globalCompositeOperation = 'source-over';
@@ -820,7 +825,7 @@ function drawLissajous(ctx, mod, body, frame, st, env) {
   ctx.fillText('R', x + w - 2, y + h - 2);
   ctx.fillStyle = rgba(accent, 0.6);
   ctx.textAlign = 'center';
-  ctx.fillText('M/S', cx, y + h - 2);
+  ctx.fillText(wide ? 'M/S · WIDE' : 'M/S', cx, y + h - 2);
 }
 
 // ── Frequency modules ───────────────────────────────────────────────────────
@@ -1811,12 +1816,12 @@ function drawPianoRoll(ctx, mod, body, frame, st, env) {
   const midiTime = (frame.time - midiOffset) * scrollSpeed;
   const startT = Math.max(0, midiTime - 1.2);
   const endT = startT + windowSec;
-  const palette = [accent, '#68e8ff', '#a98bff', '#ffc46b', '#b9ff8a', '#ff8a6b'];
+  const palette = [accent, SCHEME_COLORS[1], SCHEME_COLORS[3], SCHEME_COLORS[2], '#b9ff8a', '#ff8a6b'];
   const showGrid = modOpt(mod, 'grid', true);
   const showLabels = modOpt(mod, 'labels', true);
   const noteStyle = modOpt(mod, 'noteStyle', 'rect');
   const allTrackColor = modOpt(mod, 'allTrackColor', false);
-  const globalTrackColor = /^#[0-9a-fA-F]{6}$/.test(modOpt(mod, 'globalTrackColor', '#ffc46b')) ? modOpt(mod, 'globalTrackColor', '#ffc46b') : '#ffc46b';
+  const globalTrackColor = isHexColor(modOpt(mod, 'globalTrackColor', '#ffc46b')) ? modOpt(mod, 'globalTrackColor', '#ffc46b') : '#ffc46b';
   const noteThickness = modNum(mod, 'noteThickness', 100, 50, 200) / 100;
   const centerShift = (modNum(mod, 'centerY', 50, 0, 100) / 100 - 0.5) * h * 0.24;
   const vibratoAmount = modNum(mod, 'vibrato', 0, 0, 100) / 100;
@@ -1933,7 +1938,7 @@ function drawPianoRoll(ctx, mod, body, frame, st, env) {
     const px = horizonX + (nx - horizonX) * scale;
     const py = laneCenter + pitchOffset + vibratoY;
     const pw = nw * scale;
-    const color = allTrackColor ? globalTrackColor : (/^#[0-9a-fA-F]{6}$/.test(trackColors[trackIndex] || '') ? trackColors[trackIndex] : palette[trackIndex % palette.length]);
+    const color = allTrackColor ? globalTrackColor : (isHexColor(trackColors[trackIndex]) ? trackColors[trackIndex] : palette[trackIndex % palette.length]);
     const active = midiTime >= note.start && midiTime <= note.end;
     const nh = Math.max(1.1, rowH * (0.62 + z * 0.38) - 0.7) * scale * noteThickness;
     visible.push({ note, trackIndex, orderIndex, z, scale, px, py, pw, nh, color, active });
@@ -1964,8 +1969,8 @@ function drawPianoRoll(ctx, mod, body, frame, st, env) {
   const showTitle = modOpt(mod, 'showTitle', true);
   const showChords = modOpt(mod, 'showChords', true);
   const titlePosition = modOpt(mod, 'titlePosition', 'topLeft');
-  const titleColor = /^#[0-9a-fA-F]{6}$/.test(modOpt(mod, 'titleColor', '#C7F8FF')) ? modOpt(mod, 'titleColor', '#C7F8FF') : '#C7F8FF';
-  const chordColor = /^#[0-9a-fA-F]{6}$/.test(modOpt(mod, 'chordColor', '#9DDBFF')) ? modOpt(mod, 'chordColor', '#9DDBFF') : '#9DDBFF';
+  const titleColor = isHexColor(modOpt(mod, 'titleColor', '#C7F8FF')) ? modOpt(mod, 'titleColor', '#C7F8FF') : '#C7F8FF';
+  const chordColor = isHexColor(modOpt(mod, 'chordColor', '#9DDBFF')) ? modOpt(mod, 'chordColor', '#9DDBFF') : '#9DDBFF';
   const titleText = String(modOpt(mod, 'title', '') || midi.title || 'MIDI').slice(0, 80);
   const titleSize = modNum(mod, 'titleSize', 40, 12, 64);
   const titleFontName = modOpt(mod, 'titleFont', 'Bahnschrift');
@@ -2030,9 +2035,9 @@ function drawBasicInfo(ctx, mod, body, frame, st, env) {
   const info = env.info || {};
   const engine = env.engine || {};
   const accent = body.accent || '#ff4f8b';
-  const primaryColor = /^#[0-9a-fA-F]{6}$/.test(modOpt(mod, 'primaryColor', '#101a3b')) ? modOpt(mod, 'primaryColor', '#101a3b') : '#101a3b';
-  const secondaryColor = /^#[0-9a-fA-F]{6}$/.test(modOpt(mod, 'secondaryColor', '#6d6782')) ? modOpt(mod, 'secondaryColor', '#6d6782') : '#6d6782';
-  const cardBg = /^#[0-9a-fA-F]{6}$/.test(modOpt(mod, 'cardBg', '#eeebf4')) ? modOpt(mod, 'cardBg', '#eeebf4') : '#eeebf4';
+  const primaryColor = isHexColor(modOpt(mod, 'primaryColor', '#101a3b')) ? modOpt(mod, 'primaryColor', '#101a3b') : '#101a3b';
+  const secondaryColor = isHexColor(modOpt(mod, 'secondaryColor', '#6d6782')) ? modOpt(mod, 'secondaryColor', '#6d6782') : '#6d6782';
+  const cardBg = isHexColor(modOpt(mod, 'cardBg', '#eeebf4')) ? modOpt(mod, 'cardBg', '#eeebf4') : '#eeebf4';
   const x = body.x;
   const y = body.y;
   const w = body.w;
@@ -2184,6 +2189,288 @@ function drawBasicInfo(ctx, mod, body, frame, st, env) {
   ctx.restore();
 }
 
+function midiOCIntervals(notes, track, detect) {
+  const merged = [];
+  for (const note of notes) {
+    if ((Number(note.track) || 0) !== track) continue;
+    const start = Math.max(0, Number(note.start) || 0);
+    const end = Math.max(start, Number(note.end) || start);
+    const last = merged[merged.length - 1];
+    if (last && start - last.end < detect) last.end = Math.max(last.end, end);
+    else merged.push({ start, end });
+  }
+  return merged;
+}
+
+function midiOCEvents(intervals, detect) {
+  const events = [];
+  for (const interval of intervals) {
+    events.push({ t: interval.start, kind: 'up' });
+    events.push({ t: interval.end + detect, kind: 'down' });
+  }
+  return events.sort((a, b) => (a.t - b.t) || (a.kind === 'down' ? -1 : 1));
+}
+
+function midiOCStateAt(track, time) {
+  let last = null;
+  for (const event of track.events) {
+    if (event.t <= time) last = event;
+    else break;
+  }
+  return last;
+}
+
+const MIDIOC_LANE_PALETTE = [SCHEME_COLORS[3], '#b9ff8a', '#ff8a6b', SCHEME_COLORS[1], SCHEME_COLORS[2], SCHEME_COLORS[0]];
+
+function midiOCFitText(ctx, text, maxW) {
+  if (ctx.measureText(text).width <= maxW) return text;
+  let out = text;
+  while (out.length > 1 && ctx.measureText(`${out}…`).width > maxW) out = out.slice(0, -1);
+  return `${out}…`;
+}
+
+function midiOCDrawLanes(ctx, rows, cfg) {
+  const { laneX, laneW, top, rowH, t0, t1, upColor, downColor, showUp, showDown, palette } = cfg;
+  const span = Math.max(0.001, t1 - t0);
+  const laneRight = laneX + laneW;
+  const mapX = (t) => laneX + ((t - t0) / span) * laneW;
+
+  for (let i = 0; i < rows.length; i += 1) {
+    const track = rows[i];
+    const color = palette[i % palette.length];
+    const laneY = top + i * rowH + 5;
+    const laneH = rowH - 10;
+
+    for (const interval of track.intervals) {
+      if (interval.end < t0) continue;
+      if (interval.start > t1) break;
+      const x = mapX(interval.start);
+      const x2 = mapX(interval.end);
+      const cx = Math.max(laneX, x);
+      const cx2 = Math.min(laneRight, x2);
+      if (cx2 - cx < 0.5) continue;
+      roundRect(ctx, cx, laneY, cx2 - cx, laneH, 1);
+      ctx.fillStyle = rgba(color, 0.14);
+      ctx.fill();
+      ctx.fillStyle = rgba(color, 0.5);
+      ctx.fillRect(cx + 0.5, laneY, Math.max(1, cx2 - cx - 1), 0.9);
+      if (showUp && x >= laneX) {
+        ctx.fillStyle = rgba(upColor, 0.95);
+        ctx.fillRect(x, laneY, 1.8, laneH);
+      }
+      if (showDown && x2 <= laneRight) {
+        ctx.fillStyle = rgba(downColor, 0.95);
+        ctx.fillRect(x2 - 1.8, laneY, 1.8, laneH);
+      }
+    }
+
+    const minPitch = Number.isFinite(track.minPitch) ? track.minPitch : 60;
+    const maxPitch = Number.isFinite(track.maxPitch) ? track.maxPitch : 60;
+    const pitchSpan = maxPitch - minPitch;
+    ctx.fillStyle = rgba(color, 0.88);
+    let drawn = 0;
+    for (const note of track.notes) {
+      if (drawn > 4000) break;
+      if (note.end < t0) continue;
+      if (note.start > t1) break;
+      const nx = mapX(note.start);
+      const nw = Math.max(0.7, mapX(note.end) - nx);
+      const pitch = Number(note.pitch) || 60;
+      const pitchT = pitchSpan > 0 ? (pitch - minPitch) / pitchSpan : 0.5;
+      const ny = laneY + laneH - 2 - pitchT * (laneH - 6);
+      ctx.fillRect(nx, ny, nw, 1.3);
+      drawn += 1;
+    }
+  }
+}
+
+function drawMidiOC(ctx, mod, body, frame, st, env) {
+  const palette = env.palette || {};
+  const accent = body.accent || palette.chart || SCHEME_COLORS[0];
+  const textColor = palette.text || '#f7eef3';
+  const midi = env.midiMerged
+    || ((env.midiLayers || []).find((layer) => layer.id === mod.options?.midiId) || env.midi);
+  const originX = STAGE_W / 2 + modNum(mod, 'x', 0, -STAGE_W, STAGE_W);
+  const originY = STAGE_H / 2 + modNum(mod, 'y', 0, -STAGE_H, STAGE_H);
+  const detect = modNum(mod, 'detect', 1, 0.1, 10);
+  const fadeIn = modNum(mod, 'fadeIn', 0.3, 0, 2);
+  const fadeOut = modNum(mod, 'fadeOut', 0.5, 0, 2);
+  const maxRows = Math.round(modNum(mod, 'rows', 8, 1, 16));
+  const showUp = modOpt(mod, 'showIncrease', true);
+  const showDown = modOpt(mod, 'showDecrease', true);
+  const showHold = modOpt(mod, 'showHold', true);
+  const upColor = isHexColor(modOpt(mod, 'increaseColor', SCHEME_COLORS[0])) ? modOpt(mod, 'increaseColor', SCHEME_COLORS[0]) : SCHEME_COLORS[0];
+  const downColor = isHexColor(modOpt(mod, 'decreaseColor', SCHEME_COLORS[1])) ? modOpt(mod, 'decreaseColor', SCHEME_COLORS[1]) : SCHEME_COLORS[1];
+  const holdColor = isHexColor(modOpt(mod, 'holdColor', SCHEME_COLORS[2])) ? modOpt(mod, 'holdColor', SCHEME_COLORS[2]) : SCHEME_COLORS[2];
+  const time = Number(frame.time) || 0;
+
+  if (!midi || !midi.notes?.length) {
+    ctx.save();
+    mono(ctx, 9, '500');
+    ctx.fillStyle = rgba(textColor, 0.42);
+    ctx.textAlign = 'center';
+    ctx.fillText('等待 MIDI · MIDI O/C', originX, originY + 2);
+    ctx.restore();
+    return;
+  }
+
+  if (st.midiRef !== midi || st.detect !== detect) {
+    st.midiRef = midi;
+    st.detect = detect;
+    st.tracks = [];
+    const notesByTrack = new Map();
+    for (const note of midi.notes) {
+      const index = Number(note.track) || 0;
+      let list = notesByTrack.get(index);
+      if (!list) {
+        list = [];
+        notesByTrack.set(index, list);
+      }
+      list.push(note);
+    }
+    const count = Math.max(0, Number(midi.trackCount) || midi.tracks?.length || 0);
+    for (let index = 0; index < count; index += 1) {
+      const meta = (midi.tracks || []).find((item) => item.index === index) || midi.tracks?.[index] || {};
+      const notes = notesByTrack.get(index) || [];
+      const intervals = midiOCIntervals(notes, index, detect);
+      let minPitch = Infinity;
+      let maxPitch = -Infinity;
+      for (const note of notes) {
+        const pitch = Number(note.pitch);
+        if (!Number.isFinite(pitch)) continue;
+        if (pitch < minPitch) minPitch = pitch;
+        if (pitch > maxPitch) maxPitch = pitch;
+      }
+      st.tracks.push({
+        index,
+        name: meta.name || meta.trackName || midi.trackNames?.[index] || `Track ${index + 1}`,
+        intervals,
+        notes,
+        minPitch,
+        maxPitch,
+        events: midiOCEvents(intervals, detect),
+      });
+    }
+  }
+
+  const windowSec = modNum(mod, 'window', 12, 2, 60);
+  const rowH = 26;
+  const fitRows = Math.max(1, Math.floor(Math.max(rowH, (mod.h || 220) - 6) / rowH));
+  const rows = st.tracks.filter((track) => track.intervals.length).slice(0, Math.min(maxRows, fitRows));
+  if (!rows.length) {
+    ctx.save();
+    mono(ctx, 9, '500');
+    ctx.fillStyle = rgba(textColor, 0.42);
+    ctx.textAlign = 'center';
+    ctx.fillText('无音符 · MIDI O/C', originX, originY + 2);
+    ctx.restore();
+    return;
+  }
+
+  const stripW = clamp(Math.round(mod.w - 16), 220, 1200);
+  const left = Math.round(originX - stripW / 2);
+  const right = left + stripW;
+  const top = Math.round(originY - (rows.length * rowH) / 2);
+  const boxW = 42;
+  const boxH = 12;
+  const signX = left;
+  const nameX = left + 18;
+  const nameW = 90;
+  const laneX = nameX + nameW + 6;
+  const laneW = Math.max(24, right - boxW - 6 - laneX);
+  const laneH = rows.length * rowH;
+  const winStart = time - windowSec / 2;
+  const winEnd = time + windowSec / 2;
+  const span = Math.max(0.001, winEnd - winStart);
+  const lanePalette = MIDIOC_LANE_PALETTE;
+
+  ctx.save();
+  midiOCDrawLanes(ctx, rows, {
+    laneX, laneW, top, rowH, t0: winStart, t1: winEnd, upColor, downColor, showUp, showDown, palette: lanePalette,
+  });
+
+  if (showHold) {
+    ctx.fillStyle = rgba(holdColor, 0.9);
+    for (let i = 0; i < rows.length; i += 1) {
+      const active = rows[i].intervals.find((interval) => interval.start <= time && interval.end >= time);
+      if (!active) continue;
+      const ax = laneX + ((active.start - winStart) / span) * laneW;
+      const aw = Math.max(1, ((active.end - active.start) / span) * laneW);
+      const x0 = Math.max(laneX, ax);
+      const x1 = Math.min(laneX + laneW, ax + aw);
+      if (x1 <= x0) continue;
+      ctx.fillRect(x0, top + i * rowH + rowH - 6, x1 - x0, 1.6);
+    }
+  }
+
+  ctx.strokeStyle = rgba(textColor, 0.32);
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(Math.round(laneX + laneW / 2) + 0.5, top);
+  ctx.lineTo(Math.round(laneX + laneW / 2) + 0.5, top + laneH);
+  ctx.stroke();
+
+  mono(ctx, 7, '600');
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'alphabetic';
+  ctx.fillStyle = rgba(accent, 0.62);
+  ctx.fillText(`MIDI O/C · ${rows.length} TRACKS · Δ ${detect.toFixed(1)} s`, left, top - 10);
+
+  for (let i = 0; i < rows.length; i += 1) {
+    const track = rows[i];
+    const rowCenter = top + i * rowH + rowH / 2;
+    const last = midiOCStateAt(track, time);
+    const holding = last?.kind === 'up';
+    let sign = '';
+    let color = accent;
+    let alpha = 0;
+    if (holding) {
+      const age = time - last.t;
+      if (showUp && age <= fadeIn) {
+        sign = '+';
+        color = upColor;
+        alpha = fadeIn > 0 ? clamp(age / fadeIn, 0, 1) : 1;
+      } else if (showHold) {
+        sign = '=';
+        color = holdColor;
+        alpha = 0.88;
+      }
+    } else if (last?.kind === 'down') {
+      const age = time - last.t;
+      if (showDown && age <= fadeOut) {
+        sign = '−';
+        color = downColor;
+        alpha = fadeOut > 0 ? 1 - age / fadeOut : (age < 0.05 ? 1 : 0);
+      }
+    }
+
+    if (sign) {
+      mono(ctx, 13, '700');
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = rgba(color, alpha);
+      ctx.shadowColor = rgba(color, alpha * 0.7);
+      ctx.shadowBlur = 7;
+      ctx.fillText(sign, signX, rowCenter + 0.5);
+      ctx.shadowBlur = 0;
+
+      roundRect(ctx, right - boxW, rowCenter - boxH / 2, boxW, boxH, 1.5);
+      ctx.fillStyle = rgba(color, alpha * 0.16);
+      ctx.fill();
+      ctx.strokeStyle = rgba(color, alpha * 0.55);
+      ctx.lineWidth = 0.8;
+      ctx.stroke();
+    }
+
+    mono(ctx, 7, '500');
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = rgba(lanePalette[i % lanePalette.length], holding ? 0.95 : 0.42);
+    ctx.fillText(midiOCFitText(ctx, track.name, nameW), nameX, rowCenter + 0.5);
+  }
+  ctx.restore();
+}
+
 function drawBandRings(ctx, mod, body, frame, st, env) {
   const accent = body.accent;
   const p = 10;
@@ -2192,7 +2479,7 @@ function drawBandRings(ctx, mod, body, frame, st, env) {
   const gain = clamp(modNum(mod, 'bandGain', 100, 50, 200) / 100, 0.5, 2);
   const values = [frame.low, frame.mid, frame.high].map((v) => clamp((v || 0) * gain, 0, 1));
   const labels = ['LOW', 'MID', 'HIGH'];
-  const colors = [accent, '#68e8ff', '#ffc46b'];
+  const colors = [accent, SCHEME_COLORS[1], SCHEME_COLORS[2]];
   const style = modOpt(mod, 'bandStyle', 'rings');
   const showLabels = modOpt(mod, 'bandLabels', true);
   if (style === 'bars') {
@@ -2250,6 +2537,9 @@ function drawPeakSpectrum(ctx, mod, body, frame, st, env) {
   const barsOpt = modOpt(mod, 'bars', 'auto');
   const bars = barsOpt === 'auto' ? Math.max(28, Math.min(72, Math.floor(w / 5.6))) : clamp(Number(barsOpt) || 48, 24, 96);
   const tilt = modNum(mod, 'tilt', 35, 0, 100) / 100;
+  const lowColor = isHexColor(modOpt(mod, 'lowColor', SCHEME_COLORS[0])) ? modOpt(mod, 'lowColor', SCHEME_COLORS[0]) : SCHEME_COLORS[0];
+  const midColor = isHexColor(modOpt(mod, 'midColor', SCHEME_COLORS[1])) ? modOpt(mod, 'midColor', SCHEME_COLORS[1]) : SCHEME_COLORS[1];
+  const highColor = isHexColor(modOpt(mod, 'highColor', SCHEME_COLORS[2])) ? modOpt(mod, 'highColor', SCHEME_COLORS[2]) : SCHEME_COLORS[2];
   const values = barValues(frame, bars);
   if (!st.values || st.values.length !== bars) st.values = new Float32Array(bars);
   if (!st.peaks || st.peaks.length !== bars) st.peaks = new Float32Array(bars);
@@ -2261,12 +2551,13 @@ function drawPeakSpectrum(ctx, mod, body, frame, st, env) {
     const bw = w / bars;
     const bx = x + i * bw;
     const bh = Math.max(1, st.values[i] * h * 0.86);
-    ctx.fillStyle = i > bars * 0.66 ? '#ffc46b' : (i > bars * 0.33 ? '#68e8ff' : accent);
+    const barColor = i > bars * 0.66 ? highColor : (i > bars * 0.33 ? midColor : lowColor);
+    ctx.fillStyle = barColor;
     ctx.globalAlpha = (mod.opacity ?? 1) * (0.35 + st.values[i] * 0.65);
     ctx.fillRect(bx + bw * 0.18, floor - bh, Math.max(1, bw * 0.64), bh);
     ctx.globalAlpha = mod.opacity ?? 1;
     if (modOpt(mod, 'peakHold', true) && st.peaks[i] > 0.02) {
-      ctx.fillStyle = rgba(accent, 0.85);
+      ctx.fillStyle = rgba(barColor, 0.85);
       ctx.fillRect(bx + bw * 0.12, floor - st.peaks[i] * h * 0.86 - 1, Math.max(1, bw * 0.76), 1.5);
     }
   }
@@ -2546,6 +2837,7 @@ const DRAWERS = {
   stereometer: drawStereometer,
   waveform: drawWaveform,
   pianoRoll: drawPianoRoll,
+  midiOC: drawMidiOC,
   peakSlope: drawPeakSlope,
   stereoField: drawStereoField,
   bandRings: drawBandRings,
@@ -2569,14 +2861,20 @@ export function drawVisualModule(ctx, mod, accent, env) {
   const palette = env.palette || {
     bg: '#050308', window: '#171020', text: '#f7eef3', chart: accent,
   };
-  const body = drawCard(ctx, mod, palette.chart || accent, env);
+  const frameless = mod.type === 'midiOC' && modOpt(mod, 'frame', false) !== true;
+  const body = frameless
+    ? {
+      x: Math.round(mod.x), y: Math.round(mod.y), w: Math.round(mod.w), h: Math.round(mod.h),
+      head: 0, accent: palette.chart || accent, rgb: hexToRgb(palette.chart || accent),
+    }
+    : drawCard(ctx, mod, palette.chart || accent, env);
   const st = getState(env, mod);
   const drawer = DRAWERS[mod.type];
   if (!drawer) return;
   ctx.save();
-  clipRect(ctx, body.x, body.y, body.w, body.h);
+  if (!frameless) clipRect(ctx, body.x, body.y, body.w, body.h);
   const originalFillText = ctx.fillText;
-  if (mod.type !== 'basicInfo' && palette.text) {
+  if (mod.type !== 'basicInfo' && mod.type !== 'midiOC' && palette.text) {
     ctx.fillText = function (text, x, y, maxWidth) {
       ctx.fillStyle = palette.text;
       return originalFillText.call(ctx, text, x, y, maxWidth);
