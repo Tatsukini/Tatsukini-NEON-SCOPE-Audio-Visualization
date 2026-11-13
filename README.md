@@ -2,7 +2,7 @@
 
 **前沿测试频道 · 功能最先落地 · 不保证稳定**
 
-[![Canary build](https://img.shields.io/badge/canary-V0.1.4__Alpha__Canary__1114__9-e5397f)](https://github.com/Tatsukini/Tatsukini-NEON-SCOPE-Audio-Visualization-Canary/releases/tag/V0.1.4_Alpha_Canary_1114_9)
+[![Canary build](https://img.shields.io/badge/canary-V0.1.4__Alpha__Canary__1114__10-e5397f)](https://github.com/Tatsukini/Tatsukini-NEON-SCOPE-Audio-Visualization-Canary/releases/tag/V0.1.4_Alpha_Canary_1114_10)
 [![License](https://img.shields.io/badge/license-AGPL--3.0--or--later-1f6feb)](LICENSE)
 [![Stable channel](https://img.shields.io/badge/stable-V0.1.1_1104_alpha_Num.2-6e7681)](https://github.com/Tatsukini/Tatsukini-NEON-SCOPE-Audio-Visualization)
 
@@ -30,13 +30,13 @@ Canary 与稳定版共享同一套前端资源与桌面外壳，代码同源；�
 
 ## 界面测试图
 
-以下截图全部取自当前构建 `V0.1.4_Alpha_Canary_1114_9`，1920×1080，示例工程 `WHEN RAIN`。
+以下截图全部取自当前构建 `V0.1.4_Alpha_Canary_1114_10`，1920×1080，示例工程 `WHEN RAIN`。
 
 | 工作台 · 编辑与吸附 | 专注预览 · 无侧栏 |
 | --- | --- |
 | ![工作台](docs/screenshots/workspace.png) | ![专注预览](docs/screenshots/stage.png) |
 
-| 设置 · 硬件（预览优化开关） | 插件管理器 |
+| 设置 · 硬件（FFT 与资源配额） | 插件管理器 |
 | --- | --- |
 | ![硬件设置](docs/screenshots/settings-engine.png) | ![插件管理器](docs/screenshots/plugins.png) |
 
@@ -50,28 +50,28 @@ Canary 与稳定版共享同一套前端资源与桌面外壳，代码同源；�
 
 | 项目 | 值 |
 | --- | --- |
-| 构建号 | `V0.1.4_Alpha_Canary_1114_9` |
+| 构建号 | `V0.1.4_Alpha_Canary_1114_10` |
 | 通道 | Canary / Alpha |
-| 基于 | `V0.1.4_Alpha_Canary_1114_8` |
+| 基于 | `V0.1.4_Alpha_Canary_1114_9` |
 | 构建日期 | 2026-11-14 |
 | 许可 | AGPL-3.0-or-later（见 [LICENSE](LICENSE)、[NOTICE](NOTICE)） |
 | 可执行文件 | `dist\NEON-SCOPE.exe`、`NEON-SCOPE-win64.zip` |
 
 ### 本轮改动
 
-- **模块渲染容错**：单个模块的缓存层或绘制调用抛错时，该模块退化为当帧直绘，不再中断整帧的模块循环；同一模块的错误每会话只记录一次，避免控制台刷屏。此前缓存路径在 `try/catch` 之外，一次异常会连带让后续模块整帧消失。
-- **Canary 文档与许可**：README 增加测试版警告、实拍测试图与频道对照；许可证与主频道仓库彻底区分，本仓库使用更严格的 AGPL-3.0-or-later。
+- **撤回预览分辨率自适应**：舞台不再在帧耗时偏高时自动降低预览分辨率（最低到 50%、画布宽最小 640），画布始终按 CSS 尺寸 × DPR 原生渲染，模糊消失；同时移除「预览优化」「动态分辨率」「预览渲染缩放」三个设置项及其缓存链路，预览与导出统一为直绘。
+- **模块渲染容错保留**：单个模块绘制异常仍只影响该模块当帧，不会中断后续模块循环。
 
 ### 测试重点
 
-1. **模块消失问题**：播放中切换主题、主色、扫描线、窗口尺寸与「预览优化」开关，确认所有模块每帧都在；控制台不应出现 `Module render failure`。若出现，请记录模块类型与消息。
-2. **预览优化回归**：设置 → 硬件 → 预览优化开关切换后立即生效；慢模块（声谱图、钢琴卷帘、波形、峰值斜率、立体声场、克拉尼）在预览中按节奏刷新，导出时逐帧直绘。
-3. **设置侧边栏**：125% / 150% / 200% 缩放下保持纵向；窗口拖窄到 700px 以下收成 56px 图标栏并可滚动。
+1. **清晰度**：1920×1080 下舞台文字与谱线应保持锐利；播放 30 秒以上不应逐渐变糊。
+2. **帧率**：预览按原生分辨率直绘，帧率取决于机器与 FFT 设置；`设置 → 硬件 → FFT` 降低后帧率应上升。
+3. **模块消失问题**：播放中切换主题、主色、扫描线、窗口尺寸，确认所有模块每帧都在；控制台不应出现 `Module render failure`。若出现，请记录模块类型与消息。
 
 ### 回归清单
 
 - [ ] 首次启动 → 确认 Alpha 提示 → 载入示例工程
-- [ ] 播放时开关「预览优化」，对比帧率与画面完整性
+- [ ] 播放 30 秒，确认舞台保持锐利、所有模块都在
 - [ ] 修改模块位置 / 尺寸 / 标题 / 颜色，确认预览即时更新
 - [ ] 隐藏 / 独显模块后再「显示全部」，确认布局与内容一致
 - [ ] 导出 10 秒视频，检查慢模块逐帧变化、水印与片头片尾

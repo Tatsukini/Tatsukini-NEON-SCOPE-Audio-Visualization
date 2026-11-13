@@ -208,21 +208,6 @@ function drawCard(ctx, mod, accent, env) {
   };
 }
 
-/** Chrome-only draw for the preview cache; returns nothing. */
-export function drawModuleChrome(ctx, mod, accent, env) {
-  drawCard(ctx, mod, accent, env);
-}
-
-/** Body rect matching drawCard's return value, for drawing content over cached chrome. */
-export function moduleCardBody(mod, accent, palette = {}) {
-  const x = Math.round(mod.x), y = Math.round(mod.y);
-  const w = Math.round(mod.w), h = Math.round(mod.h);
-  return {
-    x: x + 1, y: y + HEAD_H + 1, w: w - 2, h: h - HEAD_H - 2, head: HEAD_H,
-    accent, rgb: hexToRgb(palette.chart || accent),
-  };
-}
-
 // ── Meter modules ───────────────────────────────────────────────────────────
 
 function drawLevels(ctx, mod, body, frame, st, env) {

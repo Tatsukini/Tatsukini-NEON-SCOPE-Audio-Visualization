@@ -1,6 +1,6 @@
 import { STAGE_W, STAGE_H, clamp, formatTC, formatShortTime, mixHex, withAlpha, automationValueAt, resolveThemeColors, hexAlpha, isHexColor } from './core.js';
 import { BackgroundRenderer } from './background.js';
-import { drawVisualModule, drawModuleChrome, moduleCardBody } from './modules.js';
+import { drawVisualModule } from './modules.js';
 
 const GUIDE_THRESHOLD = 10;
 const GRID = 8;
@@ -8,9 +8,6 @@ const MIN_W = 150;
 const MIN_H = 100;
 const STATIC_MODULE_TYPES = new Set(['basicInfo']);
 const SLOW_MODULE_TYPES = new Set(['spectrogram', 'pianoRoll', 'peakSlope', 'stereoField', 'waveform', 'chladni']);
-// Card glow (shadowBlur up to 30) and content shadows bleed outside the module
-// rect; offscreen module layers need this margin so cached previews match.
-const MODULE_LAYER_PAD = 34;
 
 export class Visualizer {
   constructor({ canvas, stage, overlay, guideV, guideH, engine, state, callbacks = {} }) {
@@ -26,10 +23,6 @@ export class Visualizer {
     this.states = new Map();
     this.moduleLayers = new Map();
     this.moduleKeys = new Map();
-    this.modulePreviews = new Map();
-    this.chromeLayers = new Map();
-    this.overlayLayer = null;
-    this.overlayKey = '';
     this.layerFrame = 0;
     this.background = new BackgroundRenderer();
     this.running = false;
@@ -47,7 +40,6 @@ export class Visualizer {
     this._previewH = 720;
     this._previewTimer = 0;
     this._lastDrawTs = 0;
-    this._qualityAccum = 0;
     this.drag = null;
     this._guideTimer = 0;
     this._particles = Array.from({ length: 46 }, (_, i) => ({
@@ -73,7 +65,6 @@ export class Visualizer {
     this.running = true;
     this.lastTs = 0;
     this._lastDrawTs = 0;
-    this._qualityAccum = 0;
     this._scheduleNext();
   }
 
@@ -109,8 +100,7 @@ export class Visualizer {
   _applyPreviewResolution() {
     const rect = this.stage.getBoundingClientRect();
     const dpr = Math.min(1.5, window.devicePixelRatio || 1);
-    const quality = clamp(Number(this.state.settings.previewScale) || 100, 50, 120) / 100;
-    const width = clamp(Math.round(rect.width * dpr * quality), 640, 1920);
+    const width = clamp(Math.round(rect.width * dpr), 640, 1920);
     const height = Math.round(width * 9 / 16);
     if (this.canvas.width !== width || this.canvas.height !== height) {
       this.canvas.width = width;
@@ -212,8 +202,6 @@ export class Visualizer {
       if (!seen.has(id)) {
         this.moduleLayers.delete(id);
         this.moduleKeys.delete(id);
-        this.modulePreviews.delete(id);
-        this.chromeLayers.delete(id);
       }
     }
     this.overlay.style.pointerEvents = this.state.settings.editing && !this.exportMode ? '' : 'none';
@@ -533,23 +521,6 @@ export class Visualizer {
     this.callbacks.onTick?.(frame, this.fps, dt);
     const drawMs = performance.now() - drawStarted;
     this.frameMs = this.frameMs ? this.frameMs * 0.88 + drawMs * 0.12 : drawMs;
-    if (!this.exportMode && this.state.settings.dynamicResolution !== false) {
-      this._qualityAccum += dt;
-      if (this._qualityAccum >= 1.8) {
-        this._qualityAccum = 0;
-        const targetFps = Math.max(10, Number(this.state.settings.previewFps) || 60);
-        const targetMs = 1000 / targetFps;
-        const current = clamp(Number(this.state.settings.previewScale) || 100, 50, 120);
-        let next = current;
-        if (this.frameMs > targetMs * 1.22 && current > 50) next = Math.max(50, current - 5);
-        else if (this.frameMs < targetMs * 0.62 && current < 100) next = Math.min(100, current + 5);
-        if (next !== current) {
-          this.state.settings.previewScale = next;
-          this._applyPreviewResolution();
-          this.callbacks.onPreviewScale?.(next);
-        }
-      }
-    }
     this._scheduleNext();
   }
 
@@ -616,21 +587,18 @@ export class Visualizer {
     const sorted = this.state.modules.filter((m) => !m.hidden);
     const renderArchitecture = s.renderArchitecture || 'adaptive';
     const computeArchitecture = s.computeArchitecture || 'deferred';
-    const previewOptimized = !this.exportMode && s.previewOptimize !== false;
     const layered = !this.exportMode && renderArchitecture !== 'direct' && computeArchitecture !== 'main';
     this.layerFrame++;
     for (const mod of sorted) {
       try {
         const accent = this._moduleAccent(mod);
-        if (previewOptimized) this._drawModulePreview(ctx, mod, accent, frame, palette, renderArchitecture, computeArchitecture);
-        else if (layered) this._drawModuleLayered(ctx, mod, accent, frame, palette, renderArchitecture, computeArchitecture);
+        if (layered) this._drawModuleLayered(ctx, mod, accent, frame, palette, renderArchitecture, computeArchitecture);
         else this._drawModuleSafe(ctx, mod, accent, frame, palette);
       } catch (err) {
         this._reportModuleError(mod, err);
       }
     }
-    if (previewOptimized) this._drawOverlayCached(ctx, w, h, s);
-    else this._drawOverlayEffects(ctx, w, h, frame, s);
+    this._drawOverlayEffects(ctx, w, h, frame, s);
     this._drawInfoCard(ctx, w, h);
     this._drawAnimationCues(ctx, w, h, frame);
     this._drawMotionOverlay(ctx, w, h, frame, s);
@@ -1109,126 +1077,6 @@ export class Visualizer {
       mod.type, mod.x, mod.y, mod.w, mod.h, mod.title || '', mod.color || '', mod.colorAlpha ?? 1, mod.opacity ?? 1,
       palette.bg, palette.window, palette.text, palette.chart,
     ].join('|');
-  }
-
-  _chromeKey(mod, color, palette) {
-    const s = this.state.settings;
-    return [
-      mod.type, mod.title || '', Math.round(mod.w), Math.round(mod.h), color, mod.opacity ?? 1,
-      palette.bg, palette.window, palette.text, palette.chart,
-      s.glow ?? 0, s.scanlines ? 1 : 0,
-    ].join('|');
-  }
-
-  // Pre-rendered card chrome (frame, header, title, grid). The dynamic content is
-  // drawn on top; this removes the most raster-heavy part of every module from
-  // the per-frame budget. Preview only: exports always draw the full card.
-  _chromeLayer(mod, color, palette) {
-    const key = this._chromeKey(mod, color, palette);
-    const width = Math.max(1, Math.round(mod.w)) + MODULE_LAYER_PAD * 2;
-    const height = Math.max(1, Math.round(mod.h)) + MODULE_LAYER_PAD * 2;
-    let entry = this.chromeLayers.get(mod.id);
-    if (!entry || entry.canvas.width !== width || entry.canvas.height !== height) {
-      const canvas = document.createElement('canvas');
-      canvas.width = width;
-      canvas.height = height;
-      entry = { canvas, ctx: canvas.getContext('2d', { alpha: true }), key: '' };
-      this.chromeLayers.set(mod.id, entry);
-    }
-    if (entry.key !== key) {
-      const c = entry.ctx;
-      c.setTransform(1, 0, 0, 1, 0, 0);
-      c.clearRect(0, 0, width, height);
-      c.save();
-      c.translate(-Math.round(mod.x) + MODULE_LAYER_PAD, -Math.round(mod.y) + MODULE_LAYER_PAD);
-      drawModuleChrome(c, mod, color, { settings: this.state.settings, palette });
-      c.restore();
-      entry.key = key;
-    }
-    return entry;
-  }
-
-  _drawModulePreview(ctx, mod, color, frame, palette, renderArchitecture, computeArchitecture) {
-    const rx = Math.round(mod.x), ry = Math.round(mod.y);
-    const width = Math.max(1, Math.round(mod.w)) + MODULE_LAYER_PAD * 2;
-    const height = Math.max(1, Math.round(mod.h)) + MODULE_LAYER_PAD * 2;
-    let layer = this.moduleLayers.get(mod.id);
-    if (!layer || layer.width !== width || layer.height !== height) {
-      layer = document.createElement('canvas');
-      layer.width = width;
-      layer.height = height;
-      this.moduleLayers.set(mod.id, layer);
-      this.modulePreviews.delete(mod.id);
-    }
-    let entry = this.modulePreviews.get(mod.id);
-    if (!entry) {
-      entry = { key: '', options: null, info: null, track: '', duration: 0, cover: null };
-      this.modulePreviews.set(mod.id, entry);
-    }
-    const isStatic = STATIC_MODULE_TYPES.has(mod.type);
-    const isSlow = SLOW_MODULE_TYPES.has(mod.type);
-    const cadence = isStatic ? 0
-      : (isSlow ? (renderArchitecture === 'performance' ? 3 : (computeArchitecture === 'quality' ? 1 : 2)) : 1);
-    const cover = this.states.get(mod.id)?.coverImage || null;
-    const keyChanged = entry.key !== this._moduleCacheKey(mod, color, palette);
-    const refsChanged = entry.options !== mod.options
-      || entry.info !== this.state.info
-      || entry.track !== (this.engine.track?.name || '')
-      || entry.duration !== (this.engine.duration || 0)
-      || entry.cover !== cover;
-    const due = keyChanged || refsChanged
-      || (cadence > 0 && (cadence === 1 || this.layerFrame % cadence === 0));
-    if (due) {
-      try {
-        const lctx = layer.getContext('2d', { alpha: true });
-        lctx.setTransform(1, 0, 0, 1, 0, 0);
-        const frameless = mod.type === 'midiOC' && mod.options?.frame !== true;
-        if (frameless) {
-          lctx.clearRect(0, 0, width, height);
-        } else {
-          const chrome = this._chromeLayer(mod, color, palette);
-          lctx.globalCompositeOperation = 'copy';
-          lctx.drawImage(chrome.canvas, 0, 0);
-          lctx.globalCompositeOperation = 'source-over';
-        }
-        lctx.save();
-        lctx.translate(-rx + MODULE_LAYER_PAD, -ry + MODULE_LAYER_PAD);
-        this._drawModuleSafe(lctx, mod, color, frame, palette, moduleCardBody(mod, palette.chart || color, palette));
-        lctx.restore();
-        entry.key = this._moduleCacheKey(mod, color, palette);
-        entry.options = mod.options;
-        entry.info = this.state.info;
-        entry.track = this.engine.track?.name || '';
-        entry.duration = this.engine.duration || 0;
-        entry.cover = cover;
-      } catch (err) {
-        this._reportModuleError(mod, err);
-        this.chromeLayers.delete(mod.id);
-        this.modulePreviews.delete(mod.id);
-        this._drawModuleSafe(ctx, mod, color, frame, palette, moduleCardBody(mod, palette.chart || color, palette));
-        return;
-      }
-    }
-    ctx.drawImage(layer, rx - MODULE_LAYER_PAD, ry - MODULE_LAYER_PAD, width, height);
-  }
-
-  _drawOverlayCached(ctx, w, h, s) {
-    const key = `${w}x${h}|${s.accent}|${s.scanlines ? 1 : 0}`;
-    if (!this.overlayLayer) this.overlayLayer = document.createElement('canvas');
-    const canvas = this.overlayLayer;
-    if (canvas.width !== w || canvas.height !== h) {
-      canvas.width = w;
-      canvas.height = h;
-      this.overlayKey = '';
-    }
-    if (this.overlayKey !== key) {
-      const c = canvas.getContext('2d', { alpha: true });
-      c.setTransform(1, 0, 0, 1, 0, 0);
-      c.clearRect(0, 0, w, h);
-      this._drawOverlayEffects(c, w, h, null, s);
-      this.overlayKey = key;
-    }
-    ctx.drawImage(canvas, 0, 0, w, h);
   }
 
   _drawModuleLayered(ctx, mod, color, frame, palette, renderArchitecture, computeArchitecture) {
