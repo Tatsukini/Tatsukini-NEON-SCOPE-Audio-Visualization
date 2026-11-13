@@ -559,6 +559,8 @@ export const DEFAULT_SETTINGS = {
   snap: true,
   editing: true,
   autoSave: true,
+  autoSaveInterval: 360,
+  restoreAutosave: false,
   volume: 78,
   loop: false,
   preset: 'studio',

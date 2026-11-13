@@ -1,8 +1,8 @@
 # NEON//SCOPE
 
-[![Release](https://img.shields.io/badge/release-V0.1.4__Alpha__Canary__1114__2-orange)](https://github.com/Tatsukini/Tatsukini-NEON-SCOPE-Audio-Visualization-Canary/releases/tag/V0.1.4_Alpha_Canary_1114_2)
+[![Release](https://img.shields.io/badge/release-V0.1.4__Alpha__Canary__1114__3-orange)](https://github.com/Tatsukini/Tatsukini-NEON-SCOPE-Audio-Visualization-Canary/releases/tag/V0.1.4_Alpha_Canary_1114_3)
 
-> 当前为 **Alpha 测试版本 V0.1.4_Alpha_Canary_1114_2**。启动时会显示 Alpha 提示，确认后进入工作台。
+> 当前为 **Alpha 测试版本 V0.1.4_Alpha_Canary_1114_3**。启动时会显示 Alpha 提示，确认后进入工作台。
 
 实时音频 / MIDI 可视化工作台。导入音频或 MIDI，在仪表盘上自由编排模块，实时渲染并导出带音频的视频；支持第三方插件扩展模块。
 
@@ -26,7 +26,7 @@
 - 依赖系统自带的 **Microsoft Edge WebView2 Runtime**。如果系统没有，程序会提示下载地址。
 - 首次运行可能出现 Windows SmartScreen 提示（程序未签名），选择“更多信息 → 仍要运行”。
 - 导出的视频默认保存到 `下载 / Downloads` 文件夹。
-- 布局、主色和偏好设置会自动保存，下次启动恢复。
+- 布局、主色和偏好设置会自动保存；工程状态默认不跨启动恢复，可在设置 → 文件中开启自动存档恢复。
 
 项目根目录下同时提供 `NEON-SCOPE-win64.zip` 作为压缩分发版本（内含 EXE、使用说明与可替换的 `assets` 示例素材）。
 

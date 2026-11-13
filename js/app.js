@@ -8,7 +8,7 @@ import {
 } from './core.js';
 import { AudioEngine } from './audio.js';
 import { createZip, readZip } from './neonzip.js';
-import { putPendingArchive, takePendingArchive, putLastAudio, getLastAudio } from './archive-store.js';
+import { putPendingArchive, takePendingArchive, clearLastAudio, clearPendingArchive, putAutosaveArchive, getAutosaveArchive } from './archive-store.js';
 import { parseMidi } from './midi.js';
 import { Visualizer } from './visualizer.js';
 import { VideoExporter, downloadBlob, checkFfmpeg, sanitizeFilename, pickMime, pickDirectMime } from './exporter.js';
@@ -22,6 +22,7 @@ const HW_STATS_KEY = 'neon-scope.hw-stats.v1';
 const PLUGINS_KEY = 'neon-scope.plugins.v1';
 const PLUGIN_PREFIX = 'tatsukini-neon-';
 const SETTINGS_SYNC_KEY = 'neon-scope.settings-sync.v1';
+const FORCE_RESTORE_KEY = 'neon-scope.force-restore';
 const BG_PREVIEW_KEY = 'neon-scope.bg-preview.v1';
 const BG_IMAGE_KEY = 'neon-scope.bg-image.v1';
 const DEMO_META = { name: 'When Rain In My Mind Vol.2', kind: 'demo', bpm: 140, artist: 'NEON//SCOPE' };
@@ -407,6 +408,15 @@ class NeonScopeApp {
     this._started = false;
     this._isNative = !!window.chrome?.webview;
     this._standaloneSettings = new URLSearchParams(location.search).has('settings');
+    this._forceRestore = (() => {
+      try { return localStorage.getItem(FORCE_RESTORE_KEY) === '1'; } catch { return false; }
+    })();
+    this._autoSaveTimer = null;
+    this._autoSaveDirty = false;
+    this._autoSaveIdleCount = 0;
+    this._autoSavePaused = false;
+    this._autoSaveBusy = false;
+    this._autoSaveSignature = '';
     this.audio = new AudioEngine();
     this._loadPersisted();
     this._cacheDom();
@@ -511,6 +521,11 @@ class NeonScopeApp {
         this._toast(`存档保存失败：${data.message || '未知错误'}`, 'error', 5000);
       } else if (data?.action === 'archive-import' && data.archive) {
         this._applyArchive(data.archive);
+      } else if (data?.action === 'save-archive-request') {
+        this._saveArchive();
+      } else if (data?.action === 'archive-restore-request') {
+        this._skipUnloadSave = true;
+        location.reload();
       }
     });
   }
@@ -547,6 +562,13 @@ class NeonScopeApp {
 
   _restoreBackgroundImage() {
     if (this.bgImage) return;
+    if (!this.state.settings.restoreAutosave && !this._forceRestore && !this._standaloneSettings) {
+      if (this.state.settings.bgMode === 'image') {
+        this.state.settings.bgMode = 'plasma';
+        this._syncBgModeUI();
+      }
+      return;
+    }
     const raw = safeRead(BG_IMAGE_KEY);
     if (!raw) {
       if (this.state.settings.bgMode === 'image') {
@@ -668,6 +690,8 @@ class NeonScopeApp {
       s.computeArchitecture = ['deferred', 'quality', 'main'].includes(s.computeArchitecture) ? s.computeArchitecture : 'deferred';
       s.renderArchitecture = ['adaptive', 'performance', 'direct'].includes(s.renderArchitecture) ? s.renderArchitecture : 'adaptive';
       s.dynamicResolution = s.dynamicResolution !== false;
+      s.autoSaveInterval = clamp(Number(s.autoSaveInterval) || 360, 10, 86400);
+      s.restoreAutosave = s.restoreAutosave === true;
       this.state.settings = s;
       this._applySettingsToState();
       this.audio.setVolume(s.volume / 100);
@@ -686,6 +710,7 @@ class NeonScopeApp {
       this._renderLibrary();
       this._syncExportUI();
       this._persist();
+      this._scheduleAutoSave();
     }
     if (data.layoutPreset && LAYOUT_PRESETS[data.layoutPreset]) {
       this._applyPreset(data.layoutPreset, true);
@@ -828,6 +853,7 @@ class NeonScopeApp {
       layerUpBtn: $('#layerUpBtn'), layerDownBtn: $('#layerDownBtn'), duplicateBtn: $('#duplicateBtn'),
       moduleAbout: $('#moduleAbout'), previewQuality: $('#previewQuality'), exportPresetLabel: $('#exportPresetLabel'),
       openExportBtn: $('#openExportBtn'), autoSave: $('#autoSave'),
+      autoSaveIntervalInput: $('#autoSaveIntervalInput'), restoreAutosaveToggle: $('#restoreAutosaveToggle'),
       exportModal: $('#exportModal'), exportSetup: $('#exportSetup'), exportProgress: $('#exportProgress'),
       startExportBtn: $('#startExportBtn'), cancelExportBtn: $('#cancelExportBtn'), qualityGrid: $('#qualityGrid'),
       fpsSeg: $('#fpsSeg'), formatSeg: $('#formatSeg'), bitrateSelect: $('#bitrateSelect'), rangeSelect: $('#rangeSelect'),
@@ -903,6 +929,8 @@ class NeonScopeApp {
       s.uiScale = clamp(Number(s.uiScale) || 100, 70, 150);
       s.previewFps = [0, 10, 15, 20, 24, 30, 45, 60, 90, 120, 144, 165, 240].includes(Number(s.previewFps)) ? Number(s.previewFps) : 60;
       s.previewVsync = s.previewVsync !== false;
+      s.autoSaveInterval = clamp(Number(s.autoSaveInterval) || 360, 10, 86400);
+      s.restoreAutosave = s.restoreAutosave === true;
       this.state.settings = s;
     }
     if (data.keybinds && typeof data.keybinds === 'object') {
@@ -915,15 +943,18 @@ class NeonScopeApp {
       }
       this.keybinds = kb;
     }
+    if (data.exportSettings && typeof data.exportSettings === 'object') {
+      Object.assign(this.exportSettings, data.exportSettings);
+      this._normalizeExportSettings();
+    }
+    // Project content only comes back when the user asked for autosave recovery,
+    // or when an explicit archive import is finishing after a reload.
+    if (!this.state.settings.restoreAutosave && !this._forceRestore) return;
     if (Array.isArray(data.modules) && data.modules.length) {
       const normalized = this._sanitizeModules(data.modules);
       if (normalized.length) this.state.modules = normalized;
     }
     if (typeof data.preset === 'string') this.state.preset = data.preset;
-    if (data.exportSettings && typeof data.exportSettings === 'object') {
-      Object.assign(this.exportSettings, data.exportSettings);
-      this._normalizeExportSettings();
-    }
     if (Array.isArray(data.midiLayers) && data.midiLayers.length) {
       this.state.midiLayers = data.midiLayers.filter((layer) => layer && Array.isArray(layer.notes) && layer.notes.length);
     } else if (data.midi && Array.isArray(data.midi.notes) && data.midi.notes.length) {
@@ -1136,7 +1167,8 @@ class NeonScopeApp {
         onPreviewScale: (scale) => {
           if (this.dom.previewScale) this.dom.previewScale.value = String(scale);
           if (this.dom.previewScaleOut) this.dom.previewScaleOut.textContent = `${scale}%`;
-          this._persist();
+          // Adaptive resolution is engine-driven, not a user edit: persist without resetting the autosave idle counter.
+          this._saveDebounced();
         },
         onFps: (fps) => {
           this.dom.fpsRead.textContent = `${Math.round(fps)} FPS`;
@@ -1449,7 +1481,13 @@ class NeonScopeApp {
     });
     d.autoSave.addEventListener('change', () => {
       this.state.settings.autoSave = d.autoSave.checked;
-      if (d.autoSave.checked) this._persist();
+      if (d.autoSave.checked) {
+        this._scheduleAutoSave();
+      } else if (this._autoSaveTimer) {
+        clearInterval(this._autoSaveTimer);
+        this._autoSaveTimer = null;
+      }
+      this._persist();
     });
     d.uiScale.addEventListener('input', () => {
       this._setUiScale(Number(d.uiScale.value), { silent: true });
@@ -1818,6 +1856,23 @@ class NeonScopeApp {
       this.state.settings.exportPath = this.dom.exportPathInput.value.trim();
       this._notifyNativePaths();
       this._persist();
+    });
+    this.dom.autoSaveIntervalInput?.addEventListener('change', () => {
+      const value = clamp(Number(this.dom.autoSaveIntervalInput.value) || 360, 10, 86400);
+      this.state.settings.autoSaveInterval = Math.round(value);
+      this.dom.autoSaveIntervalInput.value = String(this.state.settings.autoSaveInterval);
+      this._persist();
+      this._scheduleAutoSave();
+      this._toast(`自动存档间隔 · ${this.state.settings.autoSaveInterval} 秒`, '', 2400);
+    });
+    this.dom.restoreAutosaveToggle?.addEventListener('change', () => {
+      this.state.settings.restoreAutosave = this.dom.restoreAutosaveToggle.checked;
+      this._persist();
+      this._toast(
+        this.state.settings.restoreAutosave ? '下次启动将恢复上一次自动存档' : '下次启动将不再恢复关闭时的状态',
+        'success',
+        3000,
+      );
     });
     this.dom.uiFont?.addEventListener('change', () => this._applyUiFont(this.dom.uiFont.value));
     this.dom.uiFontReset?.addEventListener('click', () => this._applyUiFont('default'));
@@ -3061,6 +3116,18 @@ class NeonScopeApp {
 
   async _saveArchive({ as = false } = {}) {
     try {
+      if (this._standaloneSettings) {
+        if (this._isNative) {
+          window.chrome.webview.postMessage({ action: 'save-archive-request' });
+          this._toast('已请求主窗口保存存档…', 'success', 2600);
+        } else {
+          this._toast('请在主窗口保存工程存档', '', 3000);
+        }
+        return;
+      }
+      if (!this.audioAsset?.bytes?.byteLength) {
+        this._toast('当前没有载入音频，本次存档不会包含音频轨道', '', 4200);
+      }
       this._toast('正在打包 .NEON 工程…', 'info', 2200);
       const { bytes, filename } = await this._buildArchivePackage();
       if (this._isNative) {
@@ -3569,7 +3636,20 @@ class NeonScopeApp {
       if (descriptor && files.has(descriptor.path)) layer.bytes = files.get(descriptor.path);
     });
     const audioDescriptor = archive.files?.audio;
-    const audioBytes = audioDescriptor ? files.get(audioDescriptor.path) : null;
+    let audioBytes = audioDescriptor ? files.get(audioDescriptor.path) : null;
+    if (!audioBytes?.byteLength) {
+      // Older archives may not describe the audio entry; fall back to any bundled audio file.
+      const fallback = [...files.keys()].find((name) => /^assets\/audio\.[a-z0-9]+$/i.test(name));
+      if (fallback) audioBytes = files.get(fallback);
+      if (audioBytes?.byteLength && !audioDescriptor) {
+        const ext = (fallback.match(/\.[^.]+$/) || ['.wav'])[0].toLowerCase();
+        const type = ext === '.mp3' ? 'audio/mpeg' : ext === '.flac' ? 'audio/flac' : ext === '.ogg' ? 'audio/ogg' : 'audio/wav';
+        archive.files = {
+          ...(archive.files || {}),
+          audio: { path: fallback, name: fileName.replace(/\.NEON$/i, '') + ext, type },
+        };
+      }
+    }
     const backgroundDescriptor = archive.files?.background;
     const backgroundBytes = backgroundDescriptor ? files.get(backgroundDescriptor.path) : null;
     if (backgroundBytes) {
@@ -3580,22 +3660,33 @@ class NeonScopeApp {
     }
     const pending = {
       audio: audioBytes ? {
-        name: audioDescriptor.name || 'audio.wav',
-        type: audioDescriptor.type || 'audio/wav',
+        name: audioDescriptor?.name || archive.files?.audio?.name || 'audio.wav',
+        type: audioDescriptor?.type || archive.files?.audio?.type || 'audio/wav',
         bytes: audioBytes,
       } : null,
       layers,
     };
     await putPendingArchive(pending);
     this._skipUnloadSave = true;
+    this._flagForceRestore();
     safeStore(STORAGE_KEY, JSON.stringify(archive.project));
-    this._toast('存档已导入，正在恢复音频与 MIDI…', 'success', 1600);
+    if (this._standaloneSettings) {
+      if (this._isNative) window.chrome.webview.postMessage({ action: 'archive-restore-request' });
+      this._toast(audioBytes ? '存档已导入，主窗口正在恢复音频与 MIDI…' : '存档已导入（其中没有音频轨道）', 'success', 3200);
+      return;
+    }
+    this._toast(
+      audioBytes ? '存档已导入，正在恢复音频与 MIDI…' : '存档已导入，但没有找到音频轨道',
+      audioBytes ? 'success' : '',
+      2200,
+    );
     setTimeout(() => location.reload(), 450);
   }
 
   _applyArchive(archive) {
     const project = archive.project || archive;
     this._skipUnloadSave = true;
+    this._flagForceRestore();
     safeStore(STORAGE_KEY, JSON.stringify(project));
     try {
       if (archive.backgroundImage) safeStore(BG_IMAGE_KEY, archive.backgroundImage);
@@ -5787,83 +5878,157 @@ class NeonScopeApp {
   async _boot() {
     try {
       if (!this._standaloneSettings) await this._loadEnabledPlugins();
+      const forced = this._consumeForceRestore();
+      if (!forced && !this.state.settings.restoreAutosave) await this._clearSessionResidue();
       let restored = await this._restorePendingArchive();
-      if (!restored) restored = await this._restoreLastArchive();
-      if (!restored) restored = await this._restoreLastAudio();
-      if (!restored) restored = await this._restoreRecentAudio();
+      if (!restored && this.state.settings.restoreAutosave) {
+        restored = await this._restoreAutosaveArchive();
+      }
       if (!restored) await this._loadDemo(false);
     } catch (err) {
       console.error(err);
       this._toast(`恢复存档失败：${err.message}`, 'error', 5200);
       await this._loadDemo(false);
+    } finally {
+      this._scheduleAutoSave();
     }
   }
 
-  _rememberAudio(asset) {
-    if (!asset?.bytes?.length) return;
-    const bytes = asset.bytes instanceof Uint8Array ? asset.bytes : new Uint8Array(asset.bytes);
-    putLastAudio({ name: asset.name, type: asset.type, bytes }).catch((err) => {
-      console.warn('Last audio persist failed:', err);
+  _consumeForceRestore() {
+    if (!this._forceRestore) return false;
+    this._forceRestore = false;
+    try { localStorage.removeItem(FORCE_RESTORE_KEY); } catch { /* private mode */ }
+    return true;
+  }
+
+  _flagForceRestore() {
+    this._forceRestore = true;
+    try { localStorage.setItem(FORCE_RESTORE_KEY, '1'); } catch { /* private mode */ }
+  }
+
+  async _clearSessionResidue() {
+    try { localStorage.removeItem(BG_IMAGE_KEY); } catch { /* optional */ }
+    if (this.state.settings.bgMode === 'image') {
+      this.state.settings.bgMode = 'plasma';
+      this._syncBgModeUI();
+    }
+    const settingsOnly = {
+      version: 1,
+      settings: this.state.settings,
+      keybinds: this.keybinds,
+      exportSettings: this.exportSettings,
+    };
+    safeStore(STORAGE_KEY, JSON.stringify(settingsOnly));
+    await Promise.allSettled([clearLastAudio(), clearPendingArchive()]);
+  }
+
+  _scheduleAutoSave() {
+    if (this._autoSaveTimer) {
+      clearInterval(this._autoSaveTimer);
+      this._autoSaveTimer = null;
+    }
+    this._autoSavePaused = false;
+    this._autoSaveIdleCount = 0;
+    if (this._standaloneSettings) return;
+    if (!this.state.settings.autoSave) return;
+    const seconds = clamp(Number(this.state.settings.autoSaveInterval) || 360, 10, 86400);
+    this._autoSaveTimer = setInterval(() => this._autoSaveTick(), seconds * 1000);
+  }
+
+  _markDirty() {
+    if (!this.state.settings.autoSave) return;
+    this._autoSaveDirty = true;
+    this._autoSaveIdleCount = 0;
+    if (this._autoSavePaused) {
+      this._autoSavePaused = false;
+      this._scheduleAutoSave();
+    }
+  }
+
+  _projectSignature() {
+    const layers = (this.state.midiLayers || []).map((layer) => [
+      layer.id,
+      layer.fileName || layer.title || '',
+      Array.isArray(layer.notes) ? layer.notes.length : 0,
+      layer.bytes?.byteLength || 0,
+    ]);
+    const audio = this.audioAsset
+      ? [this.audioAsset.name, this.audioAsset.bytes?.byteLength || 0]
+      : null;
+    const bg = safeRead(BG_IMAGE_KEY) || '';
+    return JSON.stringify({
+      modules: this.state.modules,
+      preset: this.state.preset,
+      panelState: this.panelState,
+      subpanelState: this.subpanelState,
+      timelineState: this.timelineState,
+      info: this.state.info,
+      cues: this.state.animationCues,
+      exportSettings: this.exportSettings,
+      audio,
+      layers,
+      bg: bg.length,
     });
   }
 
-  async _restoreLastAudio() {
+  async _autoSaveTick() {
+    if (this._standaloneSettings || this._autoSaveBusy || this._skipUnloadSave) return;
+    if (!this.state.settings.autoSave) return;
+    const signature = this._projectSignature();
+    if (!this._autoSaveDirty && signature === this._autoSaveSignature) {
+      this._autoSaveIdleCount += 1;
+      if (this._autoSaveIdleCount >= 5) {
+        this._autoSavePaused = true;
+        if (this._autoSaveTimer) {
+          clearInterval(this._autoSaveTimer);
+          this._autoSaveTimer = null;
+        }
+        this._toast('自动存档已暂停：连续 5 次没有检测到改动', '', 3200);
+      }
+      return;
+    }
+    this._autoSaveBusy = true;
+    this._autoSaveDirty = false;
+    this._autoSaveIdleCount = 0;
+    this._autoSaveSignature = signature;
     try {
-      const last = await getLastAudio();
-      if (!last?.bytes?.length) return false;
-      const bytes = last.bytes instanceof Uint8Array ? last.bytes : new Uint8Array(last.bytes);
-      const file = new File([bytes], last.name || 'audio.wav', { type: last.type || 'audio/wav' });
-      const buffer = await this.audio.decodeFile(file);
-      this.audio.setBuffer(buffer, {
-        name: (last.name || 'audio').replace(/\.[^.]+$/, ''),
-        kind: 'audio',
-        file: last.name || 'audio.wav',
-      });
-      this.audioAsset = { name: last.name || 'audio.wav', type: last.type || 'audio/wav', bytes };
-      this.visualizer.states.clear();
-      this._refreshTrackUI();
-      this._updateStartOverlay('custom');
-      this._setEngineStatus('上次音频已恢复', 'ready');
-      this._toast('已恢复最近一次载入的音频', 'success', 2600);
-      return true;
+      const { bytes } = await this._buildArchivePackage();
+      if (this._isNative) {
+        const response = await fetch('/api/autosave', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/zip' },
+          body: bytes,
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      } else {
+        await putAutosaveArchive({ savedAt: Date.now(), bytes });
+      }
+      this._toast('自动存档已更新', 'success', 1600);
     } catch (err) {
-      console.warn('Last audio restore failed:', err);
-      return false;
+      console.warn('Autosave failed:', err);
+      this._autoSaveDirty = true;
+    } finally {
+      this._autoSaveBusy = false;
     }
   }
 
-  async _restoreLastArchive() {
-    if (!this._isNative) return false;
-    const folder = this.state.settings.savePath || '';
+  async _restoreAutosaveArchive() {
     try {
-      const response = await fetch(`/api/last-archive?folder=${encodeURIComponent(folder)}`, { cache: 'no-store' });
-      if (!response.ok) return false;
-      const buffer = await response.arrayBuffer();
-      if (buffer.byteLength <= 4) return false;
-      const name = decodeURIComponent(response.headers.get('X-File-Name') || 'recent.NEON');
-      this._setEngineStatus('恢复最近存档…', 'busy');
-      await this._importZipArchive(name, buffer, { confirm: false });
+      if (this._isNative) {
+        const response = await fetch('/api/autosave', { cache: 'no-store' });
+        if (!response.ok) return false;
+        const buffer = await response.arrayBuffer();
+        if (buffer.byteLength <= 1024) return false;
+        const name = decodeURIComponent(response.headers.get('X-File-Name') || 'autosave.NEON');
+        await this._importZipArchive(name, buffer, { confirm: false });
+        return true;
+      }
+      const record = await getAutosaveArchive();
+      if (!record?.bytes?.byteLength) return false;
+      await this._importZipArchive('autosave.NEON', record.bytes, { confirm: false });
       return true;
     } catch (err) {
-      console.warn('Recent archive restore failed:', err);
-      return false;
-    }
-  }
-
-  async _restoreRecentAudio() {
-    if (!this._isNative) return false;
-    const folder = this.state.settings.savePath || '';
-    try {
-      const response = await fetch(`/api/recent-audio?folder=${encodeURIComponent(folder)}`, { cache: 'no-store' });
-      if (!response.ok) return false;
-      const buffer = await response.arrayBuffer();
-      if (buffer.byteLength <= 1024) return false;
-      const name = decodeURIComponent(response.headers.get('X-File-Name') || 'recent-audio.mp3');
-      const type = response.headers.get('Content-Type') || 'audio/mpeg';
-      await this._loadAudioFile(new File([buffer], name, { type }));
-      return true;
-    } catch (err) {
-      console.warn('Recent source audio restore failed:', err);
+      console.warn('Autosave restore failed:', err);
       return false;
     }
   }
@@ -5880,7 +6045,7 @@ class NeonScopeApp {
         file: pending.audio.name,
       });
       this.audioAsset = { name: pending.audio.name, type: pending.audio.type, bytes: pending.audio.bytes };
-      this._rememberAudio(this.audioAsset);
+      this._markDirty();
     }
     if (Array.isArray(pending.layers) && pending.layers.length) {
       this.state.midiLayers = pending.layers;
@@ -5983,7 +6148,7 @@ class NeonScopeApp {
       const name = file.name.replace(/\.[^.]+$/, '');
       this.audio.setBuffer(buffer, { name, kind: 'audio', file: file.name });
       this.audioAsset = { name: file.name, type: file.type || 'audio/wav', bytes };
-      this._rememberAudio(this.audioAsset);
+      this._markDirty();
       this._refreshTrackUI();
       this._updateStartOverlay('custom');
       this._setEngineStatus('音频就绪', 'ready');
@@ -7615,6 +7780,8 @@ class NeonScopeApp {
     d.watermarkToggle.checked = s.watermark;
     d.scanlineToggle.checked = s.scanlines;
     d.autoSave.checked = s.autoSave;
+    if (d.autoSaveIntervalInput) d.autoSaveIntervalInput.value = String(s.autoSaveInterval ?? 360);
+    if (d.restoreAutosaveToggle) d.restoreAutosaveToggle.checked = s.restoreAutosave === true;
     d.uiScale.value = s.uiScale;
     d.uiScaleOut.textContent = `${s.uiScale}%`;
     d.bgMotion.value = s.bgMotion;
@@ -8199,7 +8366,7 @@ class NeonScopeApp {
   }
 
   _persist() {
-    if (!this.state.settings.autoSave) return;
+    this._markDirty();
     this._saveDebounced();
   }
 
@@ -8212,7 +8379,6 @@ class NeonScopeApp {
 
   _saveNow() {
     if (this._skipUnloadSave) return;
-    if (!this.state.settings.autoSave) return;
     if (this._standaloneSettings) {
       const syncPayload = {
         version: 1,
@@ -8232,18 +8398,22 @@ class NeonScopeApp {
     const payload = {
       version: 1,
       settings: this.state.settings,
-      modules: this.state.modules,
-      preset: this.state.preset,
       keybinds: this.keybinds,
-      panelState: this.panelState,
-      subpanelState: this.subpanelState,
-      timelineState: this.timelineState,
-      info: this.state.info,
-      midi: this.state.midi,
-      midiLayers: this.state.midiLayers,
-      animationCues: this.state.animationCues,
       exportSettings: this.exportSettings,
     };
+    if (this.state.settings.autoSave) {
+      Object.assign(payload, {
+        modules: this.state.modules,
+        preset: this.state.preset,
+        panelState: this.panelState,
+        subpanelState: this.subpanelState,
+        timelineState: this.timelineState,
+        info: this.state.info,
+        midi: this.state.midi,
+        midiLayers: (this.state.midiLayers || []).map(({ bytes, ...rest }) => rest),
+        animationCues: this.state.animationCues,
+      });
+    }
     safeStore(STORAGE_KEY, JSON.stringify(payload));
   }
 

@@ -25,6 +25,8 @@ internal sealed class MainForm : Form
     private string _exportFolder = string.Empty;
     private bool _closing;
     private bool _allowClose;
+    private NotifyIcon? _tray;
+    private bool _trayHintShown;
 
     public MainForm()
     {
@@ -575,9 +577,53 @@ internal sealed class MainForm : Form
     private async void OnFormClosing(object? sender, FormClosingEventArgs e)
     {
         if (_allowClose) return;
+        if (_closing)
+        {
+            e.Cancel = true;
+            return;
+        }
+
+        if (e.CloseReason == CloseReason.WindowsShutDown || e.CloseReason == CloseReason.TaskManagerClosing)
+        {
+            e.Cancel = true;
+            _closing = true;
+            await ShutdownAsync();
+            return;
+        }
+
         e.Cancel = true;
-        if (_closing) return;
+        var behavior = LoadCloseBehavior();
+        CloseChoice choice;
+        var remember = false;
+        if (behavior.Remember && behavior.Mode == "tray")
+        {
+            choice = CloseChoice.Tray;
+        }
+        else if (behavior.Remember && behavior.Mode == "close")
+        {
+            choice = CloseChoice.Exit;
+        }
+        else
+        {
+            using var dialog = new CloseConfirmForm();
+            if (dialog.ShowDialog(this) != DialogResult.OK) return;
+            choice = dialog.Choice;
+            remember = dialog.Remember;
+            if (remember) SaveCloseBehavior(choice == CloseChoice.Tray ? "tray" : "close");
+        }
+
+        if (choice == CloseChoice.Tray)
+        {
+            MinimizeToTray();
+            return;
+        }
+        if (choice != CloseChoice.Exit) return;
         _closing = true;
+        await ShutdownAsync();
+    }
+
+    private async Task ShutdownAsync()
+    {
         Text = "NEON//SCOPE — 正在关闭…";
         try
         {
@@ -605,9 +651,112 @@ internal sealed class MainForm : Form
         }
         finally
         {
+            if (_tray != null)
+            {
+                _tray.Visible = false;
+                _tray.Dispose();
+                _tray = null;
+            }
             _allowClose = true;
             Close();
         }
+    }
+
+    private void MinimizeToTray()
+    {
+        EnsureTray();
+        ShowInTaskbar = false;
+        Hide();
+        if (!_trayHintShown && _tray != null)
+        {
+            _tray.ShowBalloonTip(2600, "NEON//SCOPE", "程序已最小化到托盘，双击图标可恢复窗口。", ToolTipIcon.Info);
+            _trayHintShown = true;
+        }
+        AppPaths.Log("Main window minimized to tray.");
+    }
+
+    private void EnsureTray()
+    {
+        if (_tray != null) return;
+        var menu = new ContextMenuStrip();
+        var show = new ToolStripMenuItem("显示 NEON//SCOPE");
+        show.Click += (_, _) => RestoreFromTray();
+        var exit = new ToolStripMenuItem("退出");
+        exit.Click += async (_, _) =>
+        {
+            if (_closing) return;
+            _closing = true;
+            await ShutdownAsync();
+        };
+        menu.Items.Add(show);
+        menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add(exit);
+        _tray = new NotifyIcon
+        {
+            Icon = Icon ?? SystemIcons.Application,
+            Text = "NEON//SCOPE",
+            Visible = true,
+            ContextMenuStrip = menu,
+        };
+        _tray.DoubleClick += (_, _) => RestoreFromTray();
+        _tray.BalloonTipClicked += (_, _) => RestoreFromTray();
+    }
+
+    private void RestoreFromTray()
+    {
+        ShowInTaskbar = true;
+        Show();
+        if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal;
+        Activate();
+        BringToFront();
+    }
+
+    private sealed class CloseBehavior
+    {
+        public string Mode { get; set; } = string.Empty;
+        public bool Remember { get; set; }
+    }
+
+    private static string CloseBehaviorPath => Path.Combine(AppPaths.Root, "close-behavior.json");
+
+    private static CloseBehavior LoadCloseBehavior()
+    {
+        try
+        {
+            if (!File.Exists(CloseBehaviorPath)) return new CloseBehavior();
+            var behavior = JsonSerializer.Deserialize<CloseBehavior>(File.ReadAllText(CloseBehaviorPath));
+            return behavior ?? new CloseBehavior();
+        }
+        catch
+        {
+            return new CloseBehavior();
+        }
+    }
+
+    private static void SaveCloseBehavior(string mode)
+    {
+        try
+        {
+            Directory.CreateDirectory(AppPaths.Root);
+            File.WriteAllText(
+                CloseBehaviorPath,
+                JsonSerializer.Serialize(new CloseBehavior { Mode = mode, Remember = true }));
+        }
+        catch (Exception ex)
+        {
+            AppPaths.Log("Saving close behavior failed: " + ex.Message);
+        }
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing && _tray != null)
+        {
+            _tray.Visible = false;
+            _tray.Dispose();
+            _tray = null;
+        }
+        base.Dispose(disposing);
     }
 
     [DllImport("dwmapi.dll")]

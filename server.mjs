@@ -1,6 +1,6 @@
 import http from 'node:http';
 import { createReadStream, createWriteStream } from 'node:fs';
-import { mkdir, mkdtemp, rm, stat, readdir } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, stat, readdir, rename } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -303,6 +303,58 @@ function safeName(value, fallback = 'neon-scope') {
 
 const ARCHIVE_EXTS = new Set(['.neon']);
 const AUDIO_EXTS = new Set(['.mp3', '.wav', '.flac', '.ogg', '.oga', '.opus', '.m4a', '.aac', '.wma', '.aif', '.aiff']);
+const AUTOSAVE_DIR = path.join(ROOT, 'Autosave');
+const AUTOSAVE_FILE = path.join(AUTOSAVE_DIR, 'autosave.NEON');
+
+async function handleAutosave(req, res) {
+  if (req.method === 'GET') {
+    try {
+      const info = await stat(AUTOSAVE_FILE);
+      res.writeHead(200, {
+        'Content-Type': 'application/zip',
+        'Content-Length': info.size,
+        'X-File-Name': 'autosave.NEON',
+        'Cache-Control': 'no-store',
+      });
+      createReadStream(AUTOSAVE_FILE).pipe(res);
+    } catch {
+      sendJson(res, 404, { error: 'not found' });
+    }
+    return;
+  }
+  if (req.method === 'DELETE') {
+    await rm(AUTOSAVE_FILE, { force: true });
+    sendJson(res, 200, { ok: true });
+    return;
+  }
+  if (req.method !== 'POST') {
+    sendJson(res, 405, { error: 'Method not allowed' });
+    return;
+  }
+  await mkdir(AUTOSAVE_DIR, { recursive: true });
+  const temp = `${AUTOSAVE_FILE}.tmp`;
+  await pipeline(req, createWriteStream(temp));
+  await rm(AUTOSAVE_FILE, { force: true });
+  await rename(temp, AUTOSAVE_FILE);
+  sendJson(res, 200, { ok: true, path: AUTOSAVE_FILE });
+}
+
+async function handleSaveArchive(req, res) {
+  if (req.method !== 'POST') {
+    sendJson(res, 405, { error: 'Method not allowed' });
+    return;
+  }
+  const params = new URL(req.url, 'http://localhost').searchParams;
+  const folder = (params.get('folder') || '').trim() || path.join(ROOT, 'Saves');
+  const filename = safeName(path.basename(params.get('filename') || 'neon-scope.NEON'));
+  await mkdir(folder, { recursive: true });
+  const target = path.join(folder, filename);
+  const temp = `${target}.tmp`;
+  await pipeline(req, createWriteStream(temp));
+  await rm(target, { force: true });
+  await rename(temp, target);
+  sendJson(res, 200, { ok: true, path: target });
+}
 
 function recentSourceFolders(folder) {
   const list = [];
@@ -644,6 +696,20 @@ const server = http.createServer((req, res) => {
       encoders: info.encoders || [],
       hwVendors: info.hwVendors || [],
     }));
+    return;
+  }
+  if (req.url?.startsWith('/api/autosave')) {
+    handleAutosave(req, res).catch((err) => {
+      console.error(err);
+      if (!res.headersSent) sendJson(res, 500, { ok: false, message: err?.message || '自动存档失败' });
+    });
+    return;
+  }
+  if (req.url?.startsWith('/api/save-archive')) {
+    handleSaveArchive(req, res).catch((err) => {
+      console.error(err);
+      if (!res.headersSent) sendJson(res, 500, { ok: false, message: err?.message || '存档保存失败' });
+    });
     return;
   }
   if (req.url?.startsWith('/api/last-archive') || req.url?.startsWith('/api/recent-audio')) {

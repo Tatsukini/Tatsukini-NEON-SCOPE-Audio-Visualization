@@ -165,7 +165,8 @@ internal sealed class SettingsForm : Form
                 return;
             }
             if (action == "settings-updated" || action == "background-image" ||
-                action == "save-archive" || action == "archive-import")
+                action == "save-archive" || action == "archive-import" ||
+                action == "save-archive-request" || action == "archive-restore-request")
             {
                 SettingsChanged?.Invoke(this, e.WebMessageAsJson);
             }

@@ -1146,8 +1146,16 @@
               <p class="section-help">留空则使用系统默认位置。「查看文件」会在资源管理器中打开当前路径；浏览按钮会打开原生文件夹选择器；视频导出会保存到导出路径。</p>
             </div>
             <div class="setting-block">
+              <div class="setting-block-head"><span>自动存档</span><em>AUTOSAVE</em></div>
+              <label class="module-option-field"><span>存档间隔（秒）</span>
+                <input id="autoSaveIntervalInput" type="number" min="10" max="86400" step="10" value="360" />
+              </label>
+              <label class="check-row"><input type="checkbox" id="restoreAutosaveToggle" /><span>启动时自动开启上一次关闭时留下的自动存档</span></label>
+              <p class="section-help">自动存档会完整打包当前工程（动画、音频、MIDI、排版与背景），默认每 360 秒一次。连续 5 次检测到没有改动时会暂停，直到下一次改动出现。</p>
+            </div>
+            <div class="setting-block">
               <div class="setting-block-head"><span>恢复</span><em>RECOVERY</em></div>
-              <p class="section-help">编辑会自动写入本机恢复缓存；即使意外关闭，重新打开也会恢复最近一次自动保存。需要长期保存或迁移时，请使用上方“保存存档”。</p>
+              <p class="section-help">默认情况下，彻底关闭应用后再次开启会从干净的默认工程开始，不恢复关闭时的状态。如需继续上次的工程，请勾选上方「启动时自动开启上一次关闭时留下的自动存档」。</p>
             </div>
           </section>
           <section class="settings-panel hidden" data-settings-panel="about">
@@ -1429,7 +1437,7 @@
     <div class="alpha-card">
       <div class="alpha-mark" aria-hidden="true">!</div>
       <div class="alpha-body">
-        <div class="alpha-kicker">ALPHA BUILD / V0.1.4_Alpha_Canary_1114_2</div>
+        <div class="alpha-kicker">ALPHA BUILD / V0.1.4_Alpha_Canary_1114_3</div>
         <h2 id="alphaNoticeTitle">注意！这是 NEON//SCOPE 的 Alpha 测试版本。</h2>
         <p>Alpha 测试版本不代表最终产品的最终质量。感谢您的理解和支持，祝你好运！</p>
         <div class="alpha-foot">

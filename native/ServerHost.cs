@@ -285,6 +285,43 @@ internal sealed class ServerHost : IAsyncDisposable
             }
         }).DisableAntiforgery();
 
+        app.MapGet("/api/autosave", (HttpContext context) => ServeAutosaveAsync(context));
+
+        app.MapPost("/api/autosave", async (HttpRequest request) =>
+        {
+            try
+            {
+                var target = AutosavePath;
+                Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+                var temp = target + ".tmp";
+                await using (var stream = new FileStream(temp, FileMode.Create, FileAccess.Write, FileShare.None))
+                {
+                    await request.Body.CopyToAsync(stream);
+                }
+                if (File.Exists(target)) File.Delete(target);
+                File.Move(temp, target);
+                return Results.Json(new { ok = true, path = target });
+            }
+            catch (Exception ex)
+            {
+                AppPaths.Log("HTTP autosave failed: " + ex.Message);
+                return Results.Json(new { ok = false, message = ex.Message }, statusCode: 500);
+            }
+        }).DisableAntiforgery();
+
+        app.MapDelete("/api/autosave", () =>
+        {
+            try
+            {
+                if (File.Exists(AutosavePath)) File.Delete(AutosavePath);
+                return Results.Json(new { ok = true });
+            }
+            catch (Exception ex)
+            {
+                return Results.Json(new { ok = false, message = ex.Message }, statusCode: 500);
+            }
+        });
+
         var defaultFiles = new DefaultFilesOptions { FileProvider = _fileProvider };
         defaultFiles.DefaultFileNames.Clear();
         defaultFiles.DefaultFileNames.Add("index.html");
@@ -308,6 +345,7 @@ internal sealed class ServerHost : IAsyncDisposable
     }
 
     private static readonly HashSet<string> ArchiveExtensions = new(StringComparer.OrdinalIgnoreCase) { ".neon" };
+    private static string AutosavePath => Path.Combine(AppPaths.Root, "Autosave", "autosave.NEON");
     private static readonly HashSet<string> AudioExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
         ".mp3", ".wav", ".flac", ".ogg", ".oga", ".opus", ".m4a", ".aac", ".wma", ".aif", ".aiff",
@@ -376,6 +414,24 @@ internal sealed class ServerHost : IAsyncDisposable
         await using var stream = found.OpenRead();
         await stream.CopyToAsync(context.Response.Body, context.RequestAborted);
         return Results.Empty;
+    }
+
+    private static async Task ServeAutosaveAsync(HttpContext context)
+    {
+        var path = AutosavePath;
+        if (!File.Exists(path))
+        {
+            context.Response.StatusCode = StatusCodes.Status404NotFound;
+            await context.Response.WriteAsJsonAsync(new { error = "not found" });
+            return;
+        }
+        var info = new FileInfo(path);
+        context.Response.ContentType = "application/zip";
+        context.Response.ContentLength = info.Length;
+        context.Response.Headers["X-File-Name"] = "autosave.NEON";
+        context.Response.Headers.CacheControl = "no-store";
+        await using var stream = info.OpenRead();
+        await stream.CopyToAsync(context.Response.Body, context.RequestAborted);
     }
 
     private async Task<IResult> HandleConvertAsync(HttpContext context)
