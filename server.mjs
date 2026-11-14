@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Tatsukini
 import http from 'node:http';
 import { createReadStream, createWriteStream } from 'node:fs';
-import { mkdir, mkdtemp, rm, stat, readdir, rename } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, stat, statfs, readdir, rename } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -46,6 +46,15 @@ const MIME = {
 
 const EMPTY_FFMPEG = { ok: false, version: '', encoders: [], hwVendors: [], codecs: [], audioCodecs: [] };
 let ffmpegCache = null;
+
+async function freeSpaceBytes(target = ROOT) {
+  try {
+    const info = await statfs(target);
+    return Math.max(0, Number(info.bavail) * Number(info.bsize));
+  } catch {
+    return -1;
+  }
+}
 
 function listEncoders() {
   return new Promise((resolve) => {
@@ -688,7 +697,7 @@ async function handleStatic(req, res) {
 
 const server = http.createServer((req, res) => {
   if (req.url?.startsWith('/api/health')) {
-    getFfmpegInfo().then((info) => sendJson(res, 200, {
+    getFfmpegInfo().then(async (info) => sendJson(res, 200, {
       ffmpeg: info.ok,
       version: info.version,
       platform: process.platform,
@@ -696,6 +705,7 @@ const server = http.createServer((req, res) => {
       audioCodecs: info.audioCodecs || [],
       encoders: info.encoders || [],
       hwVendors: info.hwVendors || [],
+      tempFreeBytes: await freeSpaceBytes(ROOT),
     }));
     return;
   }

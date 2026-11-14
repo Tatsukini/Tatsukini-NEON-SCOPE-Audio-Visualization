@@ -2244,6 +2244,13 @@ function midiOCFitText(ctx, text, maxW) {
   return `${out}…`;
 }
 
+function midiOCLabel(track) {
+  let raw = String(track?.name || '').trim();
+  if (/^track\s*\d+$/i.test(raw)) return '';
+  raw = raw.replace(/\s*·\s*track\s*\d+\s*$/i, '').trim();
+  return raw.toUpperCase();
+}
+
 function midiOCVisualState(track, time, cfg) {
   const last = midiOCStateAt(track, time);
   if (!last) return null;
@@ -2271,7 +2278,6 @@ function drawMidiOC(ctx, mod, body, frame, st, env) {
   const detect = modNum(mod, 'detect', 1, 0.1, 10);
   const fadeIn = modNum(mod, 'fadeIn', 0.3, 0, 2);
   const fadeOut = modNum(mod, 'fadeOut', 0.5, 0, 2);
-  const maxRows = Math.round(modNum(mod, 'rows', 8, 1, 16));
   const showUp = modOpt(mod, 'showIncrease', true);
   const showDown = modOpt(mod, 'showDecrease', true);
   const showHold = modOpt(mod, 'showHold', true);
@@ -2326,8 +2332,8 @@ function drawMidiOC(ctx, mod, body, frame, st, env) {
     }
   }
 
-  const rows = st.tracks.filter((track) => track.intervals.length).slice(0, maxRows);
-  if (!rows.length) {
+  const activeTracks = st.tracks.filter((track) => track.intervals.length);
+  if (!activeTracks.length) {
     ctx.save();
     mono(ctx, 9, '500');
     ctx.fillStyle = rgba(textColor, 0.42);
@@ -2338,31 +2344,58 @@ function drawMidiOC(ctx, mod, body, frame, st, env) {
   }
 
   const cfg = { showUp, showDown, showHold, upColor, downColor, holdColor, fadeIn, fadeOut };
-  const rowH = clamp(bandH / rows.length, framed ? 10 : 16, 40);
+  const columns = moduleW >= 760 ? 2 : 1;
+  const gutter = columns > 1 ? 24 : 0;
+  const minRowH = framed ? 10 : 16;
+  const slotsPerColumn = Math.max(1, Math.floor(bandH / minRowH));
+  const capacity = slotsPerColumn * columns;
+  const total = activeTracks.length;
+  let visible = Math.min(capacity, total);
+  let moreCount = 0;
+  if (total > visible && visible > 1) {
+    visible -= 1;
+    moreCount = total - visible;
+  }
+  const entries = activeTracks.slice(0, visible).map((track) => ({ track }));
+  if (moreCount > 0) entries.push({ note: `+ ${moreCount} More Track` });
+
+  const rowsPerColumn = Math.ceil(entries.length / columns);
+  const rowH = Math.min(44, bandH / rowsPerColumn);
   const fontSize = Math.max(10, Math.round(rowH * 0.64));
-  const left = Math.round(originX - moduleW / 2) + 6;
-  const right = Math.round(originX + moduleW / 2) - 6;
-  const centerY = messageY;
-  let top = Math.round(centerY - (rows.length * rowH) / 2);
-  if (framed) top = Math.max(Math.round(bandTop), top);
+  const contentLeft = Math.round(originX - moduleW / 2) + 6;
+  const contentRight = Math.round(originX + moduleW / 2) - 6;
+  const columnW = Math.max(24, (contentRight - contentLeft - gutter * (columns - 1)) / columns);
+  const perColumn = Math.ceil(entries.length / columns);
+  const top = Math.max(Math.round(bandTop), Math.round(bandCenterY - (rowsPerColumn * rowH) / 2));
 
   ctx.save();
   ctx.textAlign = 'left';
   ctx.textBaseline = 'middle';
   mono(ctx, fontSize, '700');
-  for (let i = 0; i < rows.length; i += 1) {
-    const track = rows[i];
-    const state = midiOCVisualState(track, time, cfg);
-    if (!state) continue;
-    const label = String(track.name || `TRACK ${track.index + 1}`).toUpperCase();
-    const signText = state.sign ? `${state.sign} ` : '';
-    const signW = signText ? ctx.measureText(signText).width : 0;
-    const rowCenter = top + i * rowH + rowH / 2;
-    ctx.fillStyle = rgba(state.color, state.alpha);
-    ctx.shadowColor = rgba(state.color, state.alpha * 0.65);
-    ctx.shadowBlur = Math.round(rowH * 0.28);
-    if (signText) ctx.fillText(signText, left, rowCenter);
-    ctx.fillText(midiOCFitText(ctx, label, Math.max(8, right - left - signW)), left + signW, rowCenter);
+  for (let column = 0; column < columns; column += 1) {
+    const columnLeft = contentLeft + column * (columnW + gutter);
+    for (let row = 0; row < perColumn; row += 1) {
+      const entry = entries[column * perColumn + row];
+      if (!entry) break;
+      const rowCenter = top + row * rowH + rowH / 2;
+      if (entry.note) {
+        ctx.fillStyle = rgba(textColor, 0.6);
+        ctx.shadowBlur = 0;
+        ctx.fillText(entry.note, columnLeft, rowCenter);
+        continue;
+      }
+      const state = midiOCVisualState(entry.track, time, cfg);
+      const label = midiOCLabel(entry.track);
+      const signText = state?.sign ? `${state.sign} ` : '';
+      const signW = signText ? ctx.measureText(signText).width : 0;
+      const color = state ? state.color : textColor;
+      const alpha = state ? state.alpha : 0.2;
+      ctx.fillStyle = rgba(color, alpha);
+      ctx.shadowColor = rgba(color, alpha * 0.65);
+      ctx.shadowBlur = state ? Math.round(rowH * 0.28) : 0;
+      if (signText) ctx.fillText(signText, columnLeft, rowCenter);
+      if (label) ctx.fillText(midiOCFitText(ctx, label, Math.max(8, columnW - signW)), columnLeft + signW, rowCenter);
+    }
   }
   ctx.restore();
 }

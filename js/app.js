@@ -12,7 +12,7 @@ import { createZip, readZip } from './neonzip.js';
 import { putPendingArchive, takePendingArchive, clearLastAudio, clearPendingArchive, putAutosaveArchive, getAutosaveArchive } from './archive-store.js';
 import { parseMidi } from './midi.js';
 import { Visualizer } from './visualizer.js';
-import { VideoExporter, downloadBlob, checkFfmpeg, sanitizeFilename, pickMime, pickDirectMime } from './exporter.js';
+import { VideoExporter, downloadBlob, checkFfmpeg, sanitizeFilename, pickMime, pickDirectMime, convertTempEstimate } from './exporter.js';
 import { registerPluginDrawer, unregisterPluginDrawer } from './modules.js';
 import { Sfx } from './sfx.js';
 
@@ -259,7 +259,6 @@ const MODULE_OPTIONS = {
     { key: 'holdColor', label: '保持颜色', type: 'color', default: SCHEME_COLORS[2] },
     { key: 'fadeIn', label: '淡入时间', type: 'range', min: 0, max: 2, step: 0.1, default: 0.3, unit: ' s' },
     { key: 'fadeOut', label: '淡出时间', type: 'range', min: 0, max: 2, step: 0.1, default: 0.5, unit: ' s' },
-    { key: 'rows', label: '最大轨道行数', type: 'range', min: 1, max: 16, step: 1, default: 8 },
     { key: 'frame', label: '显示面板边框', type: 'toggle', default: false },
   ],
   beatPulse: [
@@ -402,6 +401,7 @@ class NeonScopeApp {
       ffmpegCodecs: [],
       ffmpegEncoders: [],
       ffmpegHwVendors: [],
+      ffmpegFreeBytes: -1,
       exporting: false,
     };
     this.exportSettings = { ...EXPORT_DEFAULTS };
@@ -8128,6 +8128,7 @@ class NeonScopeApp {
     this.dom.exportSetup.classList.remove('hidden');
     this.dom.exportProgress.classList.add('hidden');
     this.dom.startExportBtn.classList.remove('hidden');
+    void this._checkHealth();
     this._syncExportUI();
     this._openModal('export');
   }
@@ -8340,6 +8341,12 @@ class NeonScopeApp {
     if (es.format === 'mkv' || es.format === 'mov') {
       warning.push(`${es.format.toUpperCase()} 需要通过本机 FFmpeg 封装，转码时间会明显长于直录。`);
     }
+    if (es.format !== 'webm' && this.state.ffmpegAvailable && this.state.ffmpegFreeBytes >= 0 && duration > 0) {
+      const need = convertTempEstimate(es.bitrate, duration, es.audioBitrate);
+      if (need > this.state.ffmpegFreeBytes) {
+        warning.push(`FFmpeg 转码预计需要约 ${humanBytes(need)} 临时空间，当前临时盘仅剩 ${humanBytes(this.state.ffmpegFreeBytes)}；直录不可用时会直接失败，请先清理磁盘。`);
+      }
+    }
     if (es.quality === 2160) warning.push('4K 实时录制对 GPU/CPU 压力较大，建议保持页面在前台。');
     if (es.fps > 120) warning.push('高帧率录制需要显示器与编码器同时支持，可能触发自动降帧。');
     d.exportWarning.textContent = warning.join(' ');
@@ -8433,7 +8440,7 @@ class NeonScopeApp {
       } else if (result?.blob) {
         downloadBlob(result.blob, result.filename);
         const note = result.note ? ` · ${result.note}` : '';
-        this._toast(`导出完成 · ${result.filename}${note}`, 'success', 5200);
+        this._toast(`导出完成 · ${result.filename}${note}`, 'success', result.note ? 9000 : 5200);
       }
     } catch (err) {
       console.error(err);
@@ -8536,6 +8543,7 @@ class NeonScopeApp {
     this.state.ffmpegCodecs = info.codecs || [];
     this.state.ffmpegEncoders = info.encoders || [];
     this.state.ffmpegHwVendors = info.hwVendors || [];
+    this.state.ffmpegFreeBytes = Number(info.freeBytes) >= 0 ? Number(info.freeBytes) : -1;
     this.dom.footerFfmpeg.textContent = info.ok ? 'READY · MP4' : 'WEBM ONLY';
     this.dom.footerFfmpeg.style.color = info.ok ? 'var(--lime)' : 'var(--muted)';
     this._syncExportUI();

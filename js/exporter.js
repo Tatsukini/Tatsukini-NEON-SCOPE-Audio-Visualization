@@ -56,6 +56,28 @@ export function pickDirectMime(container = 'mp4', codec = 'h264') {
   return '';
 }
 
+const CONVERT_HEADROOM_BYTES = 512 * 1024 * 1024;
+
+// FFmpeg conversion writes the uploaded WebM and the transcoded file side by
+// side, so the temp drive needs roughly twice the media size plus headroom.
+export function convertTempEstimate(bitrateMbps = 24, duration = 60, outputAudioKbps = 192) {
+  const seconds = Math.max(0, Number(duration) || 0);
+  const video = Math.max(1, Number(bitrateMbps) || 1) * 1_000_000;
+  const audio = (192 + Math.max(64, Number(outputAudioKbps) || 192)) * 1000;
+  return Math.ceil(((video * 2 + audio) / 8) * seconds + CONVERT_HEADROOM_BYTES);
+}
+
+function bytesLabel(bytes) {
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let value = Math.max(0, Number(bytes) || 0);
+  let index = 0;
+  while (value >= 1024 && index < units.length - 1) {
+    value /= 1024;
+    index += 1;
+  }
+  return `${value >= 100 || index === 0 ? Math.round(value) : value.toFixed(1)} ${units[index]}`;
+}
+
 export function sanitizeFilename(name) {
   return String(name || 'neon-scope')
     .replace(/[\\/:*?"<>|]+/g, '-')
@@ -195,8 +217,23 @@ export class VideoExporter {
     const direct = !!directMime && crfValue === null && !slowed && encoderPref === 'auto';
     const mime = direct ? directMime : (pickMime('webm', 'vp9') || pickMime('webm'));
     if (!mime) {
+      this.visualizer.setExportMode(false);
       this.active = false;
       throw new Error('当前浏览器不支持 WebM / MP4 视频编码');
+    }
+
+    if (!direct) {
+      const health = await checkFfmpeg();
+      const freeBytes = Number(health?.freeBytes);
+      const needBytes = convertTempEstimate(bitrateMbps, duration, audioBitrate);
+      if (health?.ok && Number.isFinite(freeBytes) && freeBytes >= 0) {
+        this._log(`[ffmpeg] 临时盘可用 ${bytesLabel(freeBytes)} · 转码预计需要 ${bytesLabel(needBytes)}`);
+        if (needBytes > freeBytes) {
+          this.visualizer.setExportMode(false);
+          this.active = false;
+          throw new Error(`磁盘空间不足：FFmpeg 封装需要约 ${bytesLabel(needBytes)} 临时空间，当前可用 ${bytesLabel(freeBytes)}。请先清理磁盘重试，或改用 WebM 导出。`);
+        }
+      }
     }
 
     this._log(`[render] 目标 ${fps} FPS · 画布 ${width}×${height} · ${container.toUpperCase()} / ${codec.toUpperCase()}`);
@@ -414,9 +451,7 @@ export class VideoExporter {
         } else {
           console.warn('[NEON//SCOPE] FFmpeg conversion failed, falling back to WebM:', err);
           this._log(`[ffmpeg] 转码失败：${err?.message || err}`);
-          const reason = String(err?.message || '').includes('503')
-            ? '未检测到 FFmpeg'
-            : '转码失败';
+          const reason = describeConvertError(err);
           convertedNote = `${container.toUpperCase()} 转码不可用（${reason}），已自动回退为 WebM`;
           ext = 'webm';
           outBlob = raw;
@@ -515,6 +550,15 @@ function formatSeconds(sec) {
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
+function describeConvertError(err) {
+  const text = String(err?.message || err || '').trim();
+  if (/磁盘空间|ENOSPC|no space|space left/i.test(text)) return '临时磁盘空间不足';
+  if (/\b503\b/.test(text)) return '未检测到 FFmpeg';
+  const json = text.match(/"error"\s*:\s*"([^"]{1,140})"/);
+  if (json) return json[1];
+  return text.replace(/\s+/g, ' ').slice(0, 140) || '转码失败';
+}
+
 export function downloadBlob(blob, filename) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -530,7 +574,7 @@ export function downloadBlob(blob, filename) {
 export async function checkFfmpeg() {
   try {
     const res = await fetch('/api/health', { cache: 'no-store' });
-    if (!res.ok) return { ok: false, version: '', codecs: [], audioCodecs: [], encoders: [], hwVendors: [] };
+    if (!res.ok) return { ok: false, version: '', codecs: [], audioCodecs: [], encoders: [], hwVendors: [], freeBytes: -1 };
     const data = await res.json();
     return {
       ok: !!data.ffmpeg,
@@ -539,8 +583,9 @@ export async function checkFfmpeg() {
       audioCodecs: Array.isArray(data.audioCodecs) ? data.audioCodecs : [],
       encoders: Array.isArray(data.encoders) ? data.encoders : [],
       hwVendors: Array.isArray(data.hwVendors) ? data.hwVendors : [],
+      freeBytes: Number.isFinite(Number(data.tempFreeBytes)) ? Number(data.tempFreeBytes) : -1,
     };
   } catch {
-    return { ok: false, version: '', codecs: [], audioCodecs: [], encoders: [], hwVendors: [] };
+    return { ok: false, version: '', codecs: [], audioCodecs: [], encoders: [], hwVendors: [], freeBytes: -1 };
   }
 }

@@ -182,6 +182,7 @@ internal sealed class ServerHost : IAsyncDisposable
             audioCodecs = AvailableAudioCodecs(),
             encoders = _encoders.OrderBy(name => name, StringComparer.OrdinalIgnoreCase).ToArray(),
             hwVendors = _hwVendors.OrderBy(name => name, StringComparer.OrdinalIgnoreCase).ToArray(),
+            tempFreeBytes = FreeSpaceBytes(_tempRoot),
         }));
 
         app.MapPost("/api/convert/cancel", (string? id) =>
@@ -1172,6 +1173,20 @@ internal sealed class ServerHost : IAsyncDisposable
             if (Directory.Exists(path)) Directory.Delete(path, true);
         }
         catch { }
+    }
+
+    private static long FreeSpaceBytes(string target)
+    {
+        try
+        {
+            var root = Path.GetPathRoot(Path.GetFullPath(target));
+            if (string.IsNullOrEmpty(root)) return -1;
+            return new DriveInfo(root).AvailableFreeSpace;
+        }
+        catch
+        {
+            return -1;
+        }
     }
 
     public async ValueTask DisposeAsync()
