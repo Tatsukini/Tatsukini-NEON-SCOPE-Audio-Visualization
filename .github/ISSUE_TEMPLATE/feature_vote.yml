@@ -1,0 +1,107 @@
+name: 新功能投票
+description: 提交一个功能候选，由社区用表情反应投票，维护者按票数评估优先级
+title: "[Vote] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        本模板用于**功能候选投票**：一个 Issue 只放一个功能，其他人直接在 Issue 上点表情投票，不需要评论。
+
+        | 反应 | 含义 |
+        | --- | --- |
+        | 👍 | 支持，希望做 |
+        | 🚀 | 非常需要，会直接影响我的工作流 |
+        | 👀 | 观望，做出来会试 |
+        | 👎 | 不赞成，或已有更好的做法 |
+
+        - 维护者按当前票数（👍 + 🚀 − 👎）与实现成本排序评估，**不承诺排期**。
+        - 提交前请先搜索已有 Issue；已存在的候选请去原 Issue 投票，不要重复开。
+        - 可复现的软件问题请使用 Bug 报告模板，不要占用投票位。
+
+  - type: input
+    id: feature_name
+    attributes:
+      label: 功能名称
+      description: 一句话概括，将显示在标题和投票列表里。
+      placeholder: 例如：导出时支持自定义水印位置与透明度
+    validations:
+      required: true
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: 功能概述
+      description: 这个功能具体做什么？请描述最终的使用效果。
+      placeholder: 在导出设置中新增 ...，可以 ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: usecase
+    attributes:
+      label: 使用场景与价值
+      description: 谁会用、解决什么问题、相比现在的做法能省下什么。
+      placeholder: 我每周要出 ... 条视频，目前需要手动 ...，每次约 ... 分钟。
+    validations:
+      required: true
+
+  - type: textarea
+    id: design
+    attributes:
+      label: 交互或实现设想
+      description: 可描述界面位置、参数、快捷键、参考作品或类似软件的做法。
+    validations:
+      required: false
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: 涉及模块
+      multiple: true
+      options:
+        - 视频导出
+        - 可视化模块 / 插件
+        - MIDI 与钢琴卷帘
+        - 动画时间轴 / 关键帧
+        - 工程存档 / 舞台排版
+        - 设置 / 界面
+        - 性能
+        - 文档
+        - 其他
+    validations:
+      required: true
+
+  - type: dropdown
+    id: impact
+    attributes:
+      label: 对你的影响程度
+      options:
+        - 阻塞工作流，没有它无法完成
+        - 明显提升效率或成片效果
+        - 锦上添花，可选
+    validations:
+      required: true
+
+  - type: dropdown
+    id: contribution
+    attributes:
+      label: 是否愿意参与
+      options:
+        - 愿意协助测试
+        - 愿意提交 Pull Request
+        - 仅投票，不参与实现
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: confirm
+    attributes:
+      label: 确认
+      options:
+        - label: 我已搜索过已有 Issue，确认这不是重复候选。
+          required: true
+        - label: 我理解投票只用于排序参考，不代表一定会实现或进入某个版本。
+          required: true
+        - label: 这是我希望新增的功能，不是 Bug 报告或使用咨询。
+          required: true
