@@ -87,7 +87,7 @@ Canary 与稳定版共享同一套前端资源与桌面外壳，代码同源；�
 
 **双击 `dist\NEON-SCOPE.exe`**。无需安装 Node.js 或 .NET 运行时。
 
-- 运行环境：Windows 10 / 11 x64，依赖系统自带的 **Microsoft Edge WebView2 Runtime**。
+- 运行环境：Windows 10 / 11 x64 + **Microsoft Edge WebView2 Runtime**；视频导出可选安装 **FFmpeg**（硬件编码、手动码率 / CRF 等进阶选项需要，详见下方「运行环境与硬件下限」）。
 - 未签名构建，首次运行可能出现 SmartScreen 提示：更多信息 → 仍要运行。
 - 数据目录优先 `%LOCALAPPDATA%\NEONScope\`，不可写时回退到 EXE 同目录的 `NEONScopeData\`；日志为其中的 `neon-scope.log`。
 - 设置、布局与主色自动保存；工程状态默认不跨启动恢复，可在 设置 → 文件 开启「自动存档恢复」。
@@ -105,23 +105,26 @@ node server.mjs
 
 ## 运行环境与硬件下限
 
+当前构建仍是 **WinForms 外壳 + WebView2（Chromium）**：界面、音频分析与 Canvas 2D 渲染全部运行在 WebView2 内，EXE 已自带 .NET 运行时，不需要额外安装 Node.js 或 .NET。
+
 | 项目 | 要求 |
 | --- | --- |
-| 平台 | Windows 10 1809（17763）及以上 / Windows 11，仅 x64；暂无 ARM64 原生构建 |
-| 运行时 | Microsoft Edge WebView2 Runtime（大多数 Win10 / 11 已预装；缺失时程序会给出下载地址） |
+| 平台 | Windows 10 1803（17134）及以上 / Windows 11，仅 x64；深色标题栏在 1809 及以上生效；暂无 ARM64 原生构建 |
+| 运行时 | Microsoft Edge WebView2 Runtime（Windows 11 通常预装；Windows 10 随 Edge 更新安装，缺失时程序会给出下载地址） |
+| 视频导出 | 可选。建议安装 FFmpeg 并加入 PATH，或把 `ffmpeg.exe` 放在 EXE 同目录 / `resources\` 下；硬件编码、手动码率 / CRF / 预设、降速录制恢复原速与 MKV / MOV 封装都需要它。未安装时，默认设置下使用 WebView2 原生直录（运行时支持 MP4/H.264 时输出 MP4，否则回退 WebM）；选择上述进阶选项时会回退到 WebM 直录 |
 | 内存 | 8 GB 起；4K 导出建议 16 GB |
 | 显卡 | 支持 DirectX 11 的 GPU，并启用硬件加速；无独显时依赖核显 |
-| 磁盘 | 程序约 90 MB；默认 24 Mbps 导出约 180 MB/分钟，40 Mbps 约 300 MB/分钟 |
+| 磁盘 | 程序与示例资源约 100 MB；默认 24 Mbps 导出约 180 MB/分钟，40 Mbps 约 300 MB/分钟 |
 | 显示 | 1366×768 起可编辑；1920×1080 及以上推荐 |
 | 音频 | 任意可用的 Windows 输出设备；导出音频直接取自 WebAudio，无需声卡回录或虚拟声卡 |
 
 ### 硬件下限
 
-推算依据（当前应用结构）：WebView2 / Chromium 多进程外壳；舞台按 1920×1080 × DPR（上限 1.5）直绘，1080p 窗口实际缓冲约 2880×1620；默认 FFT 8192、双声道分析；示例工程 19 个模块，单帧逐模块绘制并叠加辉光与扫描线；导出为实时录制后由 FFmpeg 转码。
+推算依据（当前应用结构）：WebView2 / Chromium 多进程 + Canvas 2D 直绘；预览画布按 CSS 宽度 × DPR（上限 1.5）计算后截断到最大 1920×1080，导出可到 3840×2160；默认 FFT 8192、双声道分析；示例工程 19 个模块，单帧逐模块绘制并叠加辉光与扫描线；导出为实时录制，安装 FFmpeg 时再转码 / 封装。
 
 | 平台 | 最低配置 | 推荐配置 |
 | --- | --- | --- |
-| Intel | 第 8 代 Core i3-8100 / i5-8250U（4 核起）+ HD 530 / UHD 630 核显 + 8 GB 内存 | 第 12 代 Core i5-12400 及以上 + UHD 730 / 770 或 Arc A380 / RTX 3050 + 16 GB 内存 |
+| Intel | 第 8 代 Core i3-8100 / i5-8250U（4 核起）+ UHD 620 / 630 核显 + 8 GB 内存 | 第 12 代 Core i5-12400 及以上 + UHD 730 / 770 或 Arc A380 / RTX 3050 + 16 GB 内存 |
 | AMD | Ryzen 3 1200 + RX 550，或 Ryzen 3 2200G（Vega 8 核显），4 核起 + 8 GB 内存 | Ryzen 5 5600 及以上 + RX 6600 或更强 + 16 GB 内存 |
 
 - **最低配置**：1080p 预览约 30 FPS，适合 1080p30 导出；模块较多时把 `设置 → 硬件 → FFT` 降到 4096 / 2048，或隐藏部分模块。
@@ -151,7 +154,7 @@ node server.mjs
 
 Canary 具备稳定版的全部工作台能力，并先行接收新功能；完整功能清单、插件规范与架构说明以[稳定版 README](https://github.com/Tatsukini/Tatsukini-NEON-SCOPE-Audio-Visualization)为准。当前基于 `V0.1.4` 线先行落地：
 
-- **预览原生分辨率直绘**：不降分辨率、不由 CSS 放大，预览与导出共用同一套直绘路径。
+- **预览原生分辨率直绘**：按画布原生分辨率直接绘制（最大 1920×1080），不由 CSS 放大；预览与导出共用同一套绘制路径。
 - **界面音效**：开关、按钮与关键操作使用合成音效，无外部音频文件。
 - **退出自动存档握手**：退出前等待存档写完，失败时显示状态覆盖层。
 - **方向键 / Delete 语义**：方向键微调模块，Delete 无需先聚焦面板即可删除。
@@ -162,7 +165,7 @@ Canary 具备稳定版的全部工作台能力，并先行接收新功能；完�
 ## 已知限制
 
 - 实时录制导出，不支持后台静默渲染；导出期间保持窗口在前台。
-- 4K / 60FPS 对性能要求高；硬件不稳时会自动降速录制，封装阶段依赖 FFmpeg 恢复原速。
+- 4K / 60FPS 对性能要求高；硬件不稳时会自动降速录制。安装 FFmpeg 时由其恢复原速并封装；未安装时只能按原速直录，帧率不足会出现掉帧。
 - MIDI 仅驱动可视化，不参与音频合成或分析。
 - Canary 构建间的存档、设置与键位可能变化；跨构建异常请先清空应用数据目录再复测。
 - 未签名构建在签名启用前仍可能触发 SmartScreen 提示。
@@ -198,6 +201,6 @@ build-native.ps1           重建 EXE
 dist/                      可分发 EXE
 ```
 
-GitHub Actions（`.github/workflows/build-windows.yml`）在推送 `V*` 标签或手动触发时构建未签名产物。Windows 构建正在接入 [SignPath Foundation](https://signpath.org/) 可信代码签名。
+GitHub Actions（`.github/workflows/build-windows.yml`）在推送 `V*` 标签或手动触发时构建未签名产物；当前仍未启用代码签名，EXE 首次运行可能触发 SmartScreen。
 
 反馈请使用本仓库 Issues，并注明构建号与复现步骤。
