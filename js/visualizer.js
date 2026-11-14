@@ -1073,6 +1073,10 @@ export class Visualizer {
     }
   }
 
+  invalidateModule(id) {
+    this.moduleKeys.delete(id);
+  }
+
   _moduleCacheKey(mod, color, palette) {
     return [
       mod.type, mod.x, mod.y, mod.w, mod.h, mod.title || '', mod.color || '', mod.colorAlpha ?? 1, mod.opacity ?? 1,
@@ -1139,6 +1143,7 @@ export class Visualizer {
         info: this.state.info,
         palette,
         cardBody,
+        invalidate: () => this.invalidateModule(mod.id),
       });
     } catch (err) {
       this._reportModuleError(mod, err);

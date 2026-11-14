@@ -1,4 +1,4 @@
-NEON//SCOPE  V0.1.4_Alpha_Canary_1114_11  (Windows x64)
+NEON//SCOPE  V0.1.4_Alpha_Canary_1114_12  (Windows x64)
 
 启动：
   双击 NEON-SCOPE.exe
@@ -7,6 +7,10 @@ NEON//SCOPE  V0.1.4_Alpha_Canary_1114_11  (Windows x64)
   - Windows 10 / 11 64 位
   - Microsoft Edge WebView2 Runtime（Windows 10/11 通常已经自带；
     如未安装，程序会给出下载地址）
+  - 内存最低 8 GB；4K 导出建议 16 GB
+  - 支持 DirectX 11 的显卡（Intel 第 8 代酷睿核显 / AMD Vega 8 级别起）
+  - 磁盘预留 2 GB 以上；视频导出按码率另计（24 Mbps 约 180 MB/分钟）
+  完整的最低 / 推荐配置见 README「运行环境与硬件下限」。
 
 功能：
   - 导入音频；MIDI 作为钢琴卷帘可视化叠加，不合成音频

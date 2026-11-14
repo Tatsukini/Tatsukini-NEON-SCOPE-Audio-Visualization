@@ -2063,10 +2063,17 @@ function drawBasicInfo(ctx, mod, body, frame, st, env) {
   const tx = coverX + coverSize + p * 1.15;
   const tw = x + w - p - tx;
   const coverSrc = info.cover || '';
-  if (coverSrc && st.coverSrc !== coverSrc) {
+  if (!coverSrc) {
+    st.coverSrc = '';
+    st.coverImage = null;
+  } else if (st.coverSrc !== coverSrc) {
     st.coverSrc = coverSrc;
     const img = new Image();
-    img.onload = () => { st.coverImage = img; };
+    img.onload = () => {
+      if (st.coverSrc !== coverSrc) return;
+      st.coverImage = img;
+      env.invalidate?.();
+    };
     img.src = coverSrc;
   }
 
