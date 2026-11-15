@@ -11,6 +11,7 @@ import { AudioEngine } from './audio.js';
 import { createZip, readZip } from './neonzip.js';
 import { putPendingArchive, takePendingArchive, clearLastAudio, clearPendingArchive, putAutosaveArchive, getAutosaveArchive } from './archive-store.js';
 import { parseMidi } from './midi.js';
+import { resolveTimeSignature, formatTimeSignature, parseTimeSignature, parseKey, suggestDrumTracks, resolveMidiTrackIndex, midiTrackKey, drumStepRows, stepCountFor, emptyPattern, STEPS_PER_BEAT, DRUM_TRACK_LIMIT, GM_DRUMS } from './music.js';
 import { Visualizer } from './visualizer.js';
 import { VideoExporter, downloadBlob, checkFfmpeg, sanitizeFilename, pickMime, pickDirectMime, convertTempEstimate } from './exporter.js';
 import { registerPluginDrawer, unregisterPluginDrawer } from './modules.js';
@@ -261,6 +262,25 @@ const MODULE_OPTIONS = {
     { key: 'fadeOut', label: '淡出时间', type: 'range', min: 0, max: 2, step: 0.1, default: 0.5, unit: ' s' },
     { key: 'frame', label: '显示面板边框', type: 'toggle', default: false },
   ],
+  flPlaylist: [
+    { key: 'ruler', label: '小节刻度', type: 'toggle', default: true },
+    { key: 'playhead', label: '播放头与当前小节', type: 'toggle', default: true },
+    { key: 'intensity', label: '按音符密度着色', type: 'toggle', default: true },
+    { key: 'rowHeight', label: '行高上限', type: 'range', min: 12, max: 44, step: 2, default: 28, unit: ' px' },
+  ],
+  harmony: [
+    { key: 'track', label: '推算和弦的轨道', type: 'select', default: 'auto', options: [['auto', '自动 · 最具和声性']] },
+    { key: 'followChart', label: '高亮跟随主题图表色', type: 'toggle', default: true },
+    { key: 'highlight', label: '自定义高亮颜色', type: 'color', default: '#9DDBFF' },
+    { key: 'key', label: '调性（留空用基础信息 / 自动）', type: 'text', default: '' },
+    { key: 'division', label: '和弦细分', type: 'select', default: '2', options: [['1', '每拍 1 格'], ['2', '每拍 2 格'], ['4', '每拍 4 格']] },
+    { key: 'showKeyboard', label: '键盘高亮', type: 'toggle', default: true },
+    { key: 'showProgression', label: '和弦进行预览', type: 'toggle', default: true },
+  ],
+  drumStep: [
+    { key: 'showVelocity', label: '按力度显示大小', type: 'toggle', default: false },
+    { key: 'playhead', label: '小节播放头', type: 'toggle', default: true },
+  ],
   beatPulse: [
     { key: 'pulseSensitivity', label: '节拍灵敏度', type: 'range', min: 50, max: 200, step: 5, default: 100, unit: '%' },
     { key: 'pulseRings', label: '脉冲环数量', type: 'range', min: 3, max: 10, step: 1, default: 6, unit: '' },
@@ -395,7 +415,8 @@ class NeonScopeApp {
       midi: null,
       midiLayers: [],
       preset: 'studio',
-      info: { title: '', artist: '', composer: '', album: '', genre: '', bpm: '', trackNo: '', cover: '', show: false },
+      info: { title: '', artist: '', composer: '', album: '', genre: '', bpm: '', trackNo: '', cover: '', show: false, timeSignature: '', key: '' },
+      drumBoard: { tracks: [], initialized: false },
       animationCues: [],
       ffmpegAvailable: false,
       ffmpegCodecs: [],
@@ -837,6 +858,7 @@ class NeonScopeApp {
       moduleOptionsHelp: $('#moduleOptionsHelp'), resetModuleOptionsBtn: $('#resetModuleOptionsBtn'),
       infoTitle: $('#infoTitle'), infoArtist: $('#infoArtist'), infoComposer: $('#infoComposer'),
       infoAlbum: $('#infoAlbum'), infoGenre: $('#infoGenre'), infoBpm: $('#infoBpm'), infoTrackNo: $('#infoTrackNo'),
+      infoTimeSig: $('#infoTimeSig'), infoKey: $('#infoKey'),
       infoCoverBtn: $('#infoCoverBtn'),
       infoCoverFile: $('#infoCoverFile'), infoCoverPreview: $('#infoCoverPreview'), infoOverlay: $('#infoOverlay'),
       animOpenBuilder: $('#animOpenBuilder'), animCueList: $('#animCueList'), animClearBtn: $('#animClearBtn'),
@@ -866,6 +888,9 @@ class NeonScopeApp {
       stageWindowView: $('#stageWindowView'), stageMirrorCanvas: $('#stageMirrorCanvas'),
       timelineMenu: $('#timelineMenu'), keyframeMenu: $('#keyframeMenu'), keyframePanel: $('#keyframePanel'), keyframeList: $('#keyframeList'),
       midiBusPanel: $('#midiBusPanel'), midiBusList: $('#midiBusList'), midiBusCount: $('#midiBusCount'), midiBusImportBtn: $('#midiBusImportBtn'),
+      drumBoardPanel: $('#drumBoardPanel'), drumBoardList: $('#drumBoardList'), drumBoardCount: $('#drumBoardCount'),
+      drumBoardAddBtn: $('#drumBoardAddBtn'), drumBoardAutoBtn: $('#drumBoardAutoBtn'), drumBoardClearBtn: $('#drumBoardClearBtn'),
+      drumBoardSampleBtn: $('#drumBoardSampleBtn'),
       aboutDeveloperBtn: $('#aboutDeveloperBtn'), aboutLicensesBtn: $('#aboutLicensesBtn'), aboutRepositoryBtn: $('#aboutRepositoryBtn'),
       licenseModal: $('#licenseModal'), licenseList: $('#licenseList'),
       developerModal: $('#developerModal'), developerSiteBtn: $('#developerSiteBtn'),
@@ -993,7 +1018,9 @@ class NeonScopeApp {
     }
     if (this.state.midiLayers.length) {
       this._rebuildMidiMerged();
-      this._ensureMidiMaster();
+      // Respect a project where the MIDI 3D module was deliberately removed;
+      // importing MIDI or adding a piano roll brings the bus back.
+      if (this.state.modules.some((m) => m.type === 'pianoRoll')) this._ensureMidiMaster();
     }
     if (data.info && typeof data.info === 'object') {
       const info = data.info;
@@ -1007,6 +1034,14 @@ class NeonScopeApp {
         trackNo: typeof info.trackNo === 'string' ? info.trackNo.slice(0, 12) : '',
         cover: typeof info.cover === 'string' ? info.cover : '',
         show: !!info.show,
+        timeSignature: typeof info.timeSignature === 'string' ? info.timeSignature.slice(0, 8) : '',
+        key: typeof info.key === 'string' ? info.key.slice(0, 24) : '',
+      };
+    }
+    if (data.drumBoard && typeof data.drumBoard === 'object') {
+      this.state.drumBoard = {
+        tracks: this._sanitizeDrumTracks(data.drumBoard.tracks),
+        initialized: !!data.drumBoard.initialized,
       };
     }
     if (Array.isArray(data.animationCues)) {
@@ -1157,6 +1192,10 @@ class NeonScopeApp {
           options.depthVersion = 2;
         }
       }
+      if (raw.type === 'harmony' && raw.options?.track !== undefined && raw.options.track !== null) {
+        const track = String(raw.options.track).slice(0, 64);
+        if (track === 'auto' || /^\d{1,2}$/.test(track) || /^[\w-]{1,48}:\d{1,2}$/.test(track)) options.track = track;
+      }
       out.push({
         id, type: raw.type, x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h),
         color, colorAlpha: clamp(Number(raw.colorAlpha) || 1, 0, 1),
@@ -1304,6 +1343,7 @@ class NeonScopeApp {
     });
     d.midiBusImportBtn?.addEventListener('click', () => d.midiFile.click());
     this._bindMidiBus();
+    this._bindDrumBoard();
     d.bgFile.addEventListener('change', () => {
       const file = d.bgFile.files?.[0];
       d.bgFile.value = '';
@@ -1977,6 +2017,12 @@ class NeonScopeApp {
 
   _showConfirm(message, { title = '确认操作', confirmText = '确认恢复', cancelText = '取消' } = {}) {
     if (!this.dom.confirmModal) return Promise.resolve(false);
+    // A newer request supersedes a modal that is still waiting for an answer.
+    if (this._confirmResolve) {
+      const previous = this._confirmResolve;
+      this._confirmResolve = null;
+      previous(false);
+    }
     this.dom.confirmMessage.textContent = message;
     const titleEl = this.dom.confirmModal.querySelector('#confirmTitle');
     if (titleEl) titleEl.textContent = title;
@@ -3127,6 +3173,7 @@ class NeonScopeApp {
         info: this.state.info,
         midi: this.state.midi,
         midiLayers: this.state.midiLayers,
+        drumBoard: this.state.drumBoard,
         animationCues: this.state.animationCues,
         exportSettings: this.exportSettings,
       },
@@ -3763,11 +3810,13 @@ class NeonScopeApp {
       ['title', this.dom.infoTitle], ['artist', this.dom.infoArtist],
       ['composer', this.dom.infoComposer], ['album', this.dom.infoAlbum],
       ['genre', this.dom.infoGenre], ['bpm', this.dom.infoBpm], ['trackNo', this.dom.infoTrackNo],
+      ['timeSignature', this.dom.infoTimeSig], ['key', this.dom.infoKey],
     ];
     for (const [key, el] of fields) {
       el.addEventListener('input', () => {
         this.state.info[key] = el.value;
         if (key === 'bpm') this.audio.setManualBpm(el.value);
+        if (key === 'timeSignature' || key === 'key') this._applyTimeSignature();
         this._persist();
       });
     }
@@ -4342,6 +4391,9 @@ class NeonScopeApp {
     this.dom.infoBpm.value = info.bpm || '';
     this.audio?.setManualBpm(info.bpm);
     this.dom.infoTrackNo.value = info.trackNo || '';
+    if (this.dom.infoTimeSig) this.dom.infoTimeSig.value = info.timeSignature || '';
+    if (this.dom.infoKey) this.dom.infoKey.value = info.key || '';
+    this._applyTimeSignature();
     this.dom.infoOverlay.checked = !!info.show;
     if (info.cover) {
       this.dom.infoCoverPreview.innerHTML = `<img alt="cover" src="${info.cover}">`;
@@ -5028,7 +5080,7 @@ class NeonScopeApp {
 
   _initSubpanels() {
     const specs = [];
-    const reserve = new Set(['source', 'library', 'info', 'animation', 'keyframes', 'midiBus', 'geometry', 'style', 'options', 'layer', 'about', 'output', 'tips']);
+    const reserve = new Set(['source', 'library', 'info', 'animation', 'keyframes', 'midiBus', 'drumBoard', 'geometry', 'style', 'options', 'layer', 'about', 'output', 'tips']);
     const add = (id, el, title) => {
       if (!el || !reserve.has(id)) return;
       specs.push({ id, el, title: title || el.querySelector('.section-head > span')?.textContent || id });
@@ -5040,6 +5092,7 @@ class NeonScopeApp {
     add('animation', leftSections[3], '动画设计');
     add('keyframes', leftSections[4], '关键帧管理总线');
     add('midiBus', leftSections[5], 'MIDI 模块总线');
+    add('drumBoard', leftSections[6], '鼓组步进');
     const propSections = $$('#inspectorModule > .inspector-section');
     add('geometry', propSections[0], '位置与尺寸');
     add('style', propSections[1], '模块外观');
@@ -5053,7 +5106,7 @@ class NeonScopeApp {
     this._subpanels = {};
     for (const [index, spec] of specs.entries()) {
       const st = this.subpanelState[spec.id] || {
-        hidden: spec.id === 'info' || spec.id === 'animation' || spec.id === 'keyframes' || spec.id === 'midiBus',
+        hidden: spec.id === 'info' || spec.id === 'animation' || spec.id === 'keyframes' || spec.id === 'midiBus' || spec.id === 'drumBoard',
         floating: false, x: null, y: null, w: null, h: null,
       };
       if (st.hidden && st.floating) st.floating = false;
@@ -5095,6 +5148,8 @@ class NeonScopeApp {
     this._bindSubpanelEvents();
     this._applySubpanelState();
     this._renderMidiBus();
+    if (this._ensureDrumBoard()) this._sampleDrumPattern(null, { quiet: true });
+    this._renderDrumBoard();
   }
 
   _subpanelDefaults(index, el = null) {
@@ -5107,6 +5162,16 @@ class NeonScopeApp {
         y: Math.round(clamp(vp.h - mh - 72, 8, vp.h - mh - 8)),
         w: mw,
         h: mh,
+      };
+    }
+    if (el?.id === 'drumBoardPanel') {
+      const dw = Math.round(clamp(vp.w * 0.3, 360, 440));
+      const dh = Math.round(clamp(vp.h * 0.42, 280, 420));
+      return {
+        x: Math.round(clamp(vp.w - dw - 36, 8, vp.w - dw - 8)),
+        y: Math.round(clamp(vp.h - dh - 72, 8, vp.h - dh - 8)),
+        w: dw,
+        h: dh,
       };
     }
     if (el?.id === 'keyframePanel') {
@@ -5353,9 +5418,9 @@ class NeonScopeApp {
     if (st.hidden) {
       this._ensureSubpanelParent(id);
       st.hidden = false;
-      st.floating = id === 'keyframes' || id === 'midiBus';
+      st.floating = id === 'keyframes' || id === 'midiBus' || id === 'drumBoard';
       this._applySubpanelState();
-      if (id !== 'keyframes' && id !== 'midiBus') {
+      if (id !== 'keyframes' && id !== 'midiBus' && id !== 'drumBoard') {
         setTimeout(() => this._subpanels[id]?.el.scrollIntoView({ block: 'nearest', behavior: 'smooth' }), 40);
       }
     } else if (st.floating) {
@@ -5370,7 +5435,7 @@ class NeonScopeApp {
   _resetSubpanels() {
     for (const spec of this._subpanelSpecs || []) {
       this.subpanelState[spec.id] = {
-        hidden: spec.id === 'keyframes' || spec.id === 'midiBus',
+        hidden: spec.id === 'keyframes' || spec.id === 'midiBus' || spec.id === 'drumBoard',
         floating: false, x: null, y: null, w: null, h: null,
       };
     }
@@ -6375,6 +6440,35 @@ class NeonScopeApp {
       }
     }
     if (token !== this._midiLoadToken) return;
+    this._pruneMidiLayers();
+    if (loaded.length && (this.state.midiLayers || []).length) {
+      // The bundled demo MIDI is a placeholder: importing real stems replaces it
+      // without asking, so the bus never shows demo tracks mixed with the user's.
+      const isDemo = (layer) => /^When Rain In My Mind/i.test(layer.title || layer.fileName || '');
+      const realLayers = this.state.midiLayers.filter((layer) => !isDemo(layer));
+      if (!realLayers.length) {
+        this.state.midiLayers = [];
+        this.state.drumBoard = { tracks: [], initialized: false };
+      } else {
+        // Mixing stems from two different songs silently is what makes the bus
+        // look "wrong"; ask only when the tempo actually differs.
+        const base = realLayers.find((layer) => Number(layer.bpm) > 0);
+        const oldBpm = Number(base?.bpm) || 0;
+        const newBpm = Number(loaded[0].bpm) || 0;
+        if (oldBpm && newBpm && Math.abs(oldBpm - newBpm) > 0.5) {
+          const replace = await this._showConfirm(
+            `当前工程已有 ${realLayers.length} 个 MIDI 文件（${Math.round(oldBpm)} BPM），本次导入 ${loaded.length} 个文件为 ${Math.round(newBpm)} BPM。`
+            + '选择「替换现有 MIDI」只保留本次导入；选择「追加导入」会把两批轨道合并。',
+            { title: '导入 MIDI', confirmText: '替换现有 MIDI', cancelText: '追加导入' }
+          );
+          if (token !== this._midiLoadToken) return;
+          if (replace) {
+            this.state.midiLayers = [];
+            this.state.drumBoard = { tracks: [], initialized: false };
+          }
+        }
+      }
+    }
     for (const midi of loaded) {
       const id = uid('midi');
       this.state.midiLayers.push({ ...midi, id });
@@ -6388,6 +6482,10 @@ class NeonScopeApp {
       this._syncCanvasMeta();
       this._persist();
       this._renderMidiBus();
+      this._applyTimeSignature();
+      if (this._ensureDrumBoard()) this._sampleDrumPattern(null, { quiet: true });
+      this._renderDrumBoard();
+      if (this._selected()?.type === 'harmony') this._syncModuleOptions(this._selected());
       const bus = this.subpanelState.midiBus;
       if (openBus && bus?.hidden) {
         bus.hidden = false;
@@ -6528,6 +6626,21 @@ class NeonScopeApp {
     if (this.state.modules.some((m) => m.type === type && m.title === def.code)) {
       mod.title = `${def.code} ${this.state.modules.filter((m) => m.type === type).length + 1}`;
     }
+    if (type === 'drumStep') {
+      mod.hidden = true;
+      const detected = this._ensureDrumBoard();
+      if (detected) this._sampleDrumPattern(null, { quiet: true });
+      const boardState = this.subpanelState.drumBoard;
+      if (boardState?.hidden) {
+        boardState.hidden = false;
+        boardState.floating = true;
+        this._applySubpanelState();
+      }
+      this._renderDrumBoard();
+      this._toast(detected
+        ? '已从 MIDI 识别鼓轨 · 鼓组步进模块默认隐藏，用模块库眼睛图标显示'
+        : '鼓组步进模块已添加（默认隐藏）· 在「鼓组步进」板块定义鼓轨', 'info', 4200);
+    }
     this.state.modules.push(mod);
     this.state.selectedId = mod.id;
     this.visualizer.states.delete(mod.id);
@@ -6615,17 +6728,44 @@ class NeonScopeApp {
     return decimals > 0 ? Number(value).toFixed(decimals) : String(Math.round(Number(value)));
   }
 
+  _moduleSchema(mod) {
+    const schema = MODULE_OPTIONS[mod.type] || [];
+    if (mod.type !== 'harmony') return schema;
+    const midi = this.state.midiMerged || this.state.midi;
+    const options = [['auto', '自动 · 全部轨道（排除鼓）']];
+    const tracks = midi?.tracks || [];
+    // Legacy projects stored a positional index; convert it once to a stable
+    // layer+track key so later imports or deletions cannot re-point it.
+    const legacy = /^\d{1,2}$/.test(String(mod.options?.track ?? '')) ? Number(mod.options.track) : -1;
+    if (legacy >= 0) {
+      const track = tracks.find((item) => item.index === legacy);
+      if (track) mod.options = { ...(mod.options || {}), track: midiTrackKey(track) };
+      else mod.options = { ...(mod.options || {}), track: 'auto' };
+    }
+    for (const track of tracks.slice(0, 64)) {
+      const label = track.name || track.trackName || `Track ${track.index + 1}`;
+      options.push([midiTrackKey(track), `${String(track.index + 1).padStart(2, '0')} · ${label}`]);
+    }
+    return schema.map((option) => option.key === 'track' ? { ...option, options } : option);
+  }
+
   _syncModuleOptions(mod) {
     const d = this.dom;
     if (!d.moduleOptions) return;
-    const schema = MODULE_OPTIONS[mod.type] || [];
+    const schema = this._moduleSchema(mod);
     const def = MODULE_DEFS[mod.type];
     d.moduleOptionsType.textContent = (def?.code || mod.type).toUpperCase();
     d.moduleOptionsHelp.textContent = mod.type === 'pianoRoll'
       ? '所有导入 MIDI 的轨道强制合并进同一 3D 场景；列表顺序决定纵深（上远下近），近大远小、近快远慢。'
-      : schema.length
-        ? '这类模块的独立参数；与布局一起自动保存。'
-        : '这个模块暂时没有额外参数。';
+      : mod.type === 'harmony'
+        ? '「自动」用全部轨道（排除鼓）合并推算；也可以指定单条轨道，调性留空时依次使用基础信息里的调性与自动推断。'
+        : mod.type === 'drumStep'
+          ? '鼓轨在「鼓组步进」板块里增删（上限 7 条），这里只控制步进显示。'
+          : mod.type === 'flPlaylist'
+            ? '色块只表示该小节有没有音符；轨道颜色沿用 MIDI 总线设置，纵向放不下时自动收缩。'
+            : schema.length
+              ? '这类模块的独立参数；与布局一起自动保存。'
+              : '这个模块暂时没有额外参数。';
     d.moduleOptions.innerHTML = schema.map((option) => {
       const value = this._moduleOptionValue(mod, option);
       if (option.type === 'toggle') {
@@ -6697,6 +6837,7 @@ class NeonScopeApp {
   }
 
   _rebuildMidiMerged() {
+    this._pruneMidiLayers();
     const layers = this.state.midiLayers || [];
     const tracks = [];
     const notes = [];
@@ -6742,7 +6883,81 @@ class NeonScopeApp {
       timeSignature: layers.find((layer) => layer.timeSignature)?.timeSignature || { numerator: 4, denominator: 4 },
     };
     this.state.midi = this.state.midiMerged;
+    for (const mod of this.state.modules || []) {
+      if (mod.type === 'harmony' && mod.options?.track && mod.options.track !== 'auto'
+        && resolveMidiTrackIndex(this.state.midiMerged, mod.options.track) < 0) {
+        mod.options = { ...mod.options, track: 'auto' };
+      }
+    }
+    this._applyTimeSignature();
     return this.state.midiMerged;
+  }
+
+  _pruneMidiLayers() {
+    const layers = this.state.midiLayers || [];
+    const kept = layers.filter((layer) => layer && Array.isArray(layer.notes) && layer.notes.length);
+    if (kept.length !== layers.length) this.state.midiLayers = kept;
+    return layers.length - kept.length;
+  }
+
+  _deleteMidiLayer(layerId) {
+    const layers = this.state.midiLayers || [];
+    const layer = layers.find((item) => item.id === layerId);
+    if (!layer) return;
+    const midi = this.state.midiMerged || this._rebuildMidiMerged();
+    const removed = (midi.tracks || []).filter((track) => track.layerId === layerId).map((track) => track.index);
+    const mod = this._midiMasterModule();
+    if (mod?.options && removed.length) {
+      const drop = (array) => {
+        if (!Array.isArray(array)) return array;
+        return array.filter((_, index) => index < removed[0] || index > removed[removed.length - 1]);
+      };
+      mod.options.trackColors = drop(mod.options.trackColors);
+      mod.options.trackDepths = drop(mod.options.trackDepths);
+      mod.options.trackMutes = drop(mod.options.trackMutes);
+      mod.options.trackSolos = drop(mod.options.trackSolos);
+      if (Array.isArray(mod.options.trackOrder)) {
+        mod.options.trackOrder = mod.options.trackOrder
+          .filter((value) => !removed.includes(value))
+          .map((value) => value - removed.filter((index) => index < value).length);
+      }
+    }
+    this.state.midiLayers = layers.filter((item) => item !== layer);
+    const layerModules = this.state.modules.filter((item) => item.options?.midiId === layerId);
+    if (layerModules.length) {
+      this.state.modules = this.state.modules.filter((item) => !layerModules.includes(item));
+      this.visualizer.states.clear();
+    }
+    this._rebuildMidiMerged();
+    this._renderMidiBus();
+    this._renderLibrary();
+    this.visualizer.syncOverlay();
+    this._syncCanvasMeta();
+    if (this._selected()?.type === 'harmony') this._syncModuleOptions(this._selected());
+    this._persist();
+    this._toast(`已移除 MIDI 文件 · ${layer.title || layer.fileName || ''}`, 'info', 2800);
+  }
+
+  async _clearMidiFiles() {
+    const layers = this.state.midiLayers || [];
+    if (!layers.length) return;
+    const ok = await this._showConfirm(
+      `清空当前工程已导入的 ${layers.length} 个 MIDI 文件？MIDI 轨道、FL 播放流、和弦与鼓组步进都会随之清空，音频与模块排版不受影响。`,
+      { title: '清空 MIDI', confirmText: '清空', cancelText: '取消' }
+    );
+    if (!ok) return;
+    this.state.midiLayers = [];
+    this.state.midiMerged = null;
+    this.state.midi = null;
+    this.state.drumBoard = { tracks: [], initialized: false };
+    this._renderMidiBus();
+    this._renderDrumBoard();
+    this._renderLibrary();
+    this.visualizer.syncOverlay();
+    this._syncCanvasMeta();
+    if (this._selected()?.type === 'harmony') this._syncModuleOptions(this._selected());
+    this._persist();
+    this._toast('已清空 MIDI，可重新导入', 'info', 2600);
   }
 
   _ensureMidiMaster() {
@@ -6831,8 +7046,14 @@ class NeonScopeApp {
       .filter((note) => note.track !== local)
       .map((note) => ({ ...note, track: note.track > local ? note.track - 1 : note.track }));
     if (Array.isArray(layer.trackNames)) layer.trackNames.splice(local, 1);
+    if (Array.isArray(layer.tracks)) {
+      layer.tracks = layer.tracks.filter((track) => Number(track.index) !== local);
+      layer.tracks.forEach((track, index) => { track.index = index; });
+    }
     layer.trackCount = Math.max(0, (layer.trackCount || 0) - 1);
     layer.noteCount = layer.notes.length;
+    const emptyLayer = !layer.notes.length;
+    if (emptyLayer) this.state.midiLayers = this.state.midiLayers.filter((item) => item !== layer);
     const drop = (array) => {
       if (!Array.isArray(array)) return array;
       if (trackIndex < array.length) array.splice(trackIndex, 1);
@@ -6853,23 +7074,42 @@ class NeonScopeApp {
     if (this.state.selectedId === mod.id) this._syncSelectionUI(mod.id);
     this._renderMidiBus();
     this._persist();
-    this._toast(`已删除 MIDI 轨道 · ${info.trackName || info.name || trackIndex + 1}`, 'info', 2400);
+    this._toast(`已删除 MIDI 轨道 · ${info.trackName || info.name || trackIndex + 1}${emptyLayer ? '（该 MIDI 已没有轨道，已从列表移除）' : ''}`, 'info', 2600);
   }
 
   _renderMidiBus() {
     if (!this.dom.midiBusList) return;
     const layers = this.state.midiLayers || [];
     const midi = this.state.midiMerged || this._rebuildMidiMerged();
+    const escape = (value) => String(value).replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
     if (this.dom.midiBusCount) this.dom.midiBusCount.textContent = midi?.trackCount || 0;
     if (!layers.length || !midi?.trackCount) {
       this.dom.midiBusList.innerHTML = '<div class="midi-bus-empty">还没有 MIDI。一次可以选择多个 .mid / .midi 文件，所有轨道会强制合并进同一个 3D 钢琴卷帘模块。</div>';
       return;
     }
-    const mod = this._midiMasterModule() || this._ensureMidiMaster();
+    const mod = this._midiMasterModule();
+    if (!mod) {
+      // The 3D module is optional: without it the bus is read-only but still
+      // shows exactly which files and tracks the project is carrying.
+      const files = layers.map((layer, index) => {
+        const names = (layer.trackNames || []).map((name) => escape(name)).join(' / ');
+        return `<div class="midi-bus-file">
+          <span class="midi-bus-file-no">${String(index + 1).padStart(2, '0')}</span>
+          <span class="midi-bus-file-main"><strong>${escape(layer.title || layer.fileName || 'MIDI')}</strong><em>${names || '—'}</em></span>
+          <span class="midi-bus-file-meta">${Number(layer.trackCount) || 0} TRACKS<br/>${(layer.notes || []).length} NOTES · ${Math.round(Number(layer.bpm) || 0)} BPM</span>
+          <button type="button" class="midi-bus-file-remove" data-bus-file-remove="${escape(layer.id)}" title="移除此 MIDI 文件（只影响工程，不删除磁盘文件）">×</button>
+        </div>`;
+      }).join('');
+      this.dom.midiBusList.innerHTML = `<div class="midi-bus-empty">MIDI 3D 模块已被删除，MIDI 数据仍然保留。当前工程实际载入：<strong>${layers.length} 个文件 · ${midi.trackCount} 条轨道 · ${midi.noteCount || 0} 个音符</strong>。
+        <div class="midi-bus-actions"><button type="button" class="mini-action" data-bus-create>创建 MIDI 3D 模块</button><button type="button" class="mini-action" data-bus-clear>清空全部 MIDI</button></div>
+        创建后即可在这里管理轨道颜色与深度；也可以从「模块库 → MIDI 钢琴卷帘」添加。</div>
+        <div class="midi-bus-files">${files}</div>`;
+      return;
+    }
+    if (!mod.options?.midiMaster) mod.options = { ...(mod.options || {}), midiMaster: true };
     const busId = mod.id;
     const options = mod.options || {};
     const value = (key, fallback) => options[key] === undefined || options[key] === null || options[key] === '' ? fallback : options[key];
-    const escape = (value) => String(value).replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
     const palette = [this.state.settings.accent || '#ff4f8b', SCHEME_COLORS[1], SCHEME_COLORS[3], SCHEME_COLORS[2], '#b9ff8a', '#ff8a6b'];
     const fonts = [['Bahnschrift', 'Bahnschrift'], ['Segoe UI', 'Segoe UI'], ['Microsoft YaHei UI', '微软雅黑'], ['Georgia', 'Georgia'], ['Cascadia Code', 'Cascadia Code']];
     const colors = Array.isArray(options.trackColors) ? options.trackColors : [];
@@ -6908,7 +7148,7 @@ class NeonScopeApp {
       <input type="range" data-bus-layer="${busId}" data-bus-key="midiOffset" min="-2000" max="2000" step="10" value="${offset}" />
       <output data-bus-output="${busId}:midiOffset">${offsetLabel}</output>
     </div><details class="midi-bus-layer" data-bus-card="${busId}" open>
-      <summary><span class="midi-bus-layer-name">MIDI 3D 合并层</span><em>${midi.noteCount || 0} NOTES · ${midi.trackCount} TRACKS · ${layers.length} FILES</em><button type="button" class="mini-action" data-bus-select="${busId}">定位</button></summary>
+      <summary><span class="midi-bus-layer-name">MIDI 3D 合并层</span><em>${midi.noteCount || 0} NOTES · ${midi.trackCount} TRACKS · ${layers.length} FILES</em><button type="button" class="mini-action" data-bus-clear title="清空全部已导入的 MIDI">清空</button><button type="button" class="mini-action" data-bus-select="${busId}">定位</button></summary>
       <div class="midi-bus-grid">
         ${selectControl('noteStyle', '音符样式', [['rect', '长方形'], ['rounded', '圆角长方形']], 'rect')}
         ${checkbox('autoSpeed', '跟随 MIDI BPM')}
@@ -6987,6 +7227,24 @@ class NeonScopeApp {
       this._persist();
     });
     list.addEventListener('click', (e) => {
+      if (e.target.closest('[data-bus-create]')) {
+        const master = this._ensureMidiMaster();
+        this._renderMidiBus();
+        this._renderLibrary();
+        this._syncSelectionUI(master.id);
+        this._persist();
+        this._toast('MIDI 3D 模块已创建，可继续管理轨道', 'success', 2600);
+        return;
+      }
+      if (e.target.closest('[data-bus-clear]')) {
+        this._clearMidiFiles();
+        return;
+      }
+      const removeFile = e.target.closest('[data-bus-file-remove]');
+      if (removeFile) {
+        this._deleteMidiLayer(removeFile.dataset.busFileRemove);
+        return;
+      }
       const deleteTrack = e.target.closest('[data-bus-delete]');
       if (deleteTrack) {
         const mod = this._busMidiModule(deleteTrack.dataset.busLayer);
@@ -7069,6 +7327,280 @@ class NeonScopeApp {
         solo.classList.toggle('solo', solos[index]);
         this._persist();
       }
+    });
+  }
+
+  // ── Drum step board ───────────────────────────────────────────────────────
+
+  _sanitizeDrumTracks(list) {
+    if (!Array.isArray(list)) return [];
+    const out = [];
+    for (const raw of list.slice(0, DRUM_TRACK_LIMIT)) {
+      if (!raw || typeof raw !== 'object') continue;
+      const pitches = Array.isArray(raw.pitches)
+        ? [...new Set(raw.pitches.map((value) => Math.round(Number(value)))
+          .filter((value) => Number.isInteger(value) && value >= 0 && value <= 127))].slice(0, 16)
+        : [];
+      const channelRaw = Number(raw.channel);
+      const channel = raw.channel === null || raw.channel === undefined || raw.channel === ''
+        || !Number.isInteger(channelRaw) || channelRaw < 0 || channelRaw > 15 ? null : channelRaw;
+      const pattern = Array.isArray(raw.pattern)
+        ? raw.pattern.slice(0, 64).map((value) => clamp(Number(value) || 0, 0, 1))
+        : [];
+      out.push({
+        id: typeof raw.id === 'string' && raw.id ? raw.id : uid('drum'),
+        name: String(raw.name || `DRUM ${out.length + 1}`).slice(0, 24),
+        color: isHexColor(raw.color) ? normalizeHexInput(raw.color, '#FF4F8B') : GM_DRUMS[out.length % GM_DRUMS.length].color,
+        pitches,
+        channel,
+        pattern,
+      });
+    }
+    return out;
+  }
+
+  _ensureDrumBoard() {
+    if (!this.state.drumBoard) this.state.drumBoard = { tracks: [], initialized: false };
+    const board = this.state.drumBoard;
+    if (board.initialized) return false;
+    if (board.tracks.length) {
+      board.initialized = true;
+      return false;
+    }
+    const suggested = suggestDrumTracks(this.state.midiMerged || this.state.midi, DRUM_TRACK_LIMIT);
+    if (!suggested.length) return false;
+    const steps = this._drumSteps();
+    board.initialized = true;
+    board.tracks = suggested.map((track) => ({ id: uid('drum'), channel: null, pattern: emptyPattern(steps), ...track }));
+    return true;
+  }
+
+  _drumSteps() {
+    return stepCountFor(resolveTimeSignature(this.state.info, this.state.midiMerged || this.state.midi));
+  }
+
+  _drumTempo() {
+    const manual = Number(this.state.info?.bpm);
+    if (Number.isFinite(manual) && manual > 0) return manual;
+    return this.audio?.manualBpm || this.audio?.track?.bpm || this.state.midiMerged?.bpm || 120;
+  }
+
+  /** Fill board rows from the MIDI bar under the playhead (sequencer "record"). */
+  _sampleDrumPattern(indexes = null, { quiet = false } = {}) {
+    const board = this.state.drumBoard;
+    if (!board?.tracks.length) return 0;
+    const midi = this.state.midiMerged || this.state.midi;
+    const sig = resolveTimeSignature(this.state.info, midi);
+    const steps = stepCountFor(sig);
+    const time = Number(this.audio?.getTime?.()) || 0;
+    const source = board.tracks.map((track) => ({ pitches: track.pitches, channel: track.channel }));
+    const { rows } = drumStepRows(source, midi, { time, bpm: this._drumTempo(), sig });
+    let hits = 0;
+    rows.forEach((row, index) => {
+      if (indexes && !indexes.includes(index)) return;
+      const track = board.tracks[index];
+      if (!track) return;
+      track.pattern = row.values.map((value) => (value > 0 ? value : 0));
+      hits += track.pattern.filter((value) => value > 0).length;
+    });
+    this._renderDrumBoard();
+    this._persist();
+    if (!quiet) {
+      this._toast(hits ? `已按当前小节填充 ${hits} 个步进` : '当前小节没有可采样的鼓点', hits ? 'success' : 'info', 2600);
+    }
+    return hits;
+  }
+
+  _applyTimeSignature() {
+    const sig = resolveTimeSignature(this.state.info, this.state.midiMerged || this.state.midi);
+    this.audio?.setTimeSignature(sig);
+    const d = this.dom || {};
+    if (d.infoTimeSig) {
+      d.infoTimeSig.placeholder = sig.source === 'midi' ? `${formatTimeSignature(sig)} · MIDI` : '4/4';
+      d.infoTimeSig.classList.toggle('invalid', !!this.state.info.timeSignature && !parseTimeSignature(this.state.info.timeSignature));
+    }
+    if (d.infoKey) {
+      d.infoKey.classList.toggle('invalid', !!this.state.info.key && !parseKey(this.state.info.key));
+    }
+    return sig;
+  }
+
+  _renderDrumBoard() {
+    const list = this.dom.drumBoardList;
+    if (!list) return;
+    const tracks = this.state.drumBoard?.tracks || [];
+    const sig = resolveTimeSignature(this.state.info, this.state.midiMerged || this.state.midi);
+    const steps = stepCountFor(sig);
+    const beats = Math.max(1, Number(sig.beats) || 4);
+    if (this.dom.drumBoardCount) this.dom.drumBoardCount.textContent = `${tracks.length} / ${DRUM_TRACK_LIMIT}`;
+    if (this.dom.drumBoardAddBtn) this.dom.drumBoardAddBtn.disabled = tracks.length >= DRUM_TRACK_LIMIT;
+    if (!tracks.length) {
+      list.innerHTML = '<div class="midi-bus-empty">还没有鼓轨。点「＋ 添加鼓轨」或用「从 MIDI 识别」抓取打击乐通道（Channel 10），然后在网格上点击 / 拖动编排步进。上限 7 条。</div>';
+      return;
+    }
+    const escape = (value) => String(value).replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
+    const beatHeader = Array.from({ length: beats }, (_, beat) => `<span class="drum-board-beat">${beat + 1}</span>`).join('');
+    const rows = tracks.map((track, index) => {
+      const color = isHexColor(track.color) ? track.color : '#FF4F8B';
+      const pattern = Array.isArray(track.pattern) ? track.pattern : [];
+      const cells = Array.from({ length: steps }, (_, step) => {
+        const value = clamp(Number(pattern[step]) || 0, 0, 1);
+        const style = value > 0
+          ? `background:${withAlpha(color, 0.35 + value * 0.6)};border-color:${withAlpha(color, 0.75)}`
+          : '';
+        return `<button type="button" class="drum-step${value > 0 ? ' on' : ''}${step % STEPS_PER_BEAT === 0 ? ' beat' : ''}" data-drum-step="${index}" data-step-index="${step}" style="${style}" title="第 ${step + 1} 步"></button>`;
+      }).join('');
+      const pitches = (track.pitches || []).join(', ');
+      return `<div class="drum-board-row" data-drum-row="${index}">
+        <div class="drum-board-meta">
+          <input type="color" data-drum-color="${index}" ${this._colorInputAttrs(color, '#FF4F8B', '鼓轨颜色')} />
+          <input type="text" class="drum-board-name" data-drum-name="${index}" value="${escape(track.name)}" maxlength="24" title="鼓轨名称（采样音高：${escape(pitches) || '跟随通道'}）" />
+        </div>
+        <div class="drum-board-steps" style="--steps:${steps}">${cells}</div>
+        <span class="drum-board-end">
+          <button type="button" class="drum-board-act" data-drum-sample="${index}" title="采样本轨当前小节">⟳</button>
+          <button type="button" class="drum-board-act drum-board-del" data-drum-delete="${index}" title="删除鼓轨">×</button>
+        </span>
+      </div>`;
+    }).join('');
+    list.innerHTML = `<div class="drum-board">
+      <div class="drum-board-head">
+        <span class="drum-board-corner">TRACK</span>
+        <div class="drum-board-steps drum-board-ruler" style="--steps:${steps}">${beatHeader}</div>
+        <span class="drum-board-end"></span>
+      </div>
+      ${rows}
+    </div>`;
+  }
+
+  _bindDrumBoard() {
+    const d = this.dom;
+    const list = d.drumBoardList;
+    if (!list) return;
+    let paint = null;
+    const paintCell = (cell) => {
+      if (!paint) return false;
+      const track = this.state.drumBoard.tracks[Number(cell.dataset.drumStep)];
+      const step = Number(cell.dataset.stepIndex);
+      if (!track || !Number.isInteger(step)) return false;
+      if (!Array.isArray(track.pattern)) track.pattern = emptyPattern(this._drumSteps());
+      if ((Number(track.pattern[step]) || 0) === paint.value) return false;
+      track.pattern[step] = paint.value;
+      const color = isHexColor(track.color) ? track.color : '#FF4F8B';
+      cell.classList.toggle('on', paint.value > 0);
+      cell.style.background = paint.value > 0 ? withAlpha(color, 0.95) : '';
+      cell.style.borderColor = paint.value > 0 ? withAlpha(color, 0.75) : '';
+      paint.dirty = true;
+      return true;
+    };
+    const endPaint = () => {
+      if (!paint) return;
+      const dirty = paint.dirty;
+      paint = null;
+      if (dirty) this._persist();
+    };
+    list.addEventListener('pointerdown', (e) => {
+      const cell = e.target.closest('[data-drum-step]');
+      if (!cell || e.button !== 0) return;
+      e.preventDefault();
+      const track = this.state.drumBoard.tracks[Number(cell.dataset.drumStep)];
+      if (!track) return;
+      if (!Array.isArray(track.pattern)) track.pattern = emptyPattern(this._drumSteps());
+      const step = Number(cell.dataset.stepIndex);
+      paint = { value: (Number(track.pattern[step]) || 0) > 0 ? 0 : 1, dirty: false };
+      paintCell(cell);
+      try { list.setPointerCapture(e.pointerId); } catch { /* optional */ }
+    });
+    list.addEventListener('pointermove', (e) => {
+      if (!paint) return;
+      const cell = document.elementFromPoint(e.clientX, e.clientY)?.closest?.('[data-drum-step]');
+      if (cell) paintCell(cell);
+    });
+    list.addEventListener('pointerup', endPaint);
+    list.addEventListener('pointercancel', endPaint);
+    window.addEventListener('pointerup', endPaint);
+    list.addEventListener('contextmenu', (e) => {
+      const cell = e.target.closest('[data-drum-step]');
+      if (!cell) return;
+      e.preventDefault();
+      const track = this.state.drumBoard.tracks[Number(cell.dataset.drumStep)];
+      const step = Number(cell.dataset.stepIndex);
+      if (!track || !Array.isArray(track.pattern)) return;
+      track.pattern[step] = 0;
+      cell.classList.remove('on');
+      cell.style.background = '';
+      cell.style.borderColor = '';
+      this._persist();
+    });
+    list.addEventListener('input', (e) => {
+      const tracks = this.state.drumBoard.tracks;
+      const nameEl = e.target.closest('[data-drum-name]');
+      if (nameEl) {
+        const track = tracks[Number(nameEl.dataset.drumName)];
+        if (track) track.name = nameEl.value.slice(0, 24);
+        this._persist();
+        return;
+      }
+      const colorEl = e.target.closest('[data-drum-color]');
+      if (colorEl) {
+        const track = tracks[Number(colorEl.dataset.drumColor)];
+        if (track) {
+          track.color = colorEl.dataset.color8 || colorEl.value;
+          this._renderDrumBoard();
+        }
+        this._persist();
+      }
+    });
+    list.addEventListener('click', (e) => {
+      const sample = e.target.closest('[data-drum-sample]');
+      if (sample) {
+        this._sampleDrumPattern([Number(sample.dataset.drumSample)]);
+        return;
+      }
+      const del = e.target.closest('[data-drum-delete]');
+      if (!del) return;
+      const index = Number(del.dataset.drumDelete);
+      const [removed] = this.state.drumBoard.tracks.splice(index, 1);
+      this._renderDrumBoard();
+      this._persist();
+      if (removed) this._toast(`已删除鼓轨 · ${removed.name}`, 'info', 2200);
+    });
+    d.drumBoardAddBtn?.addEventListener('click', () => {
+      const tracks = this.state.drumBoard.tracks;
+      if (tracks.length >= DRUM_TRACK_LIMIT) {
+        this._toast(`鼓轨上限为 ${DRUM_TRACK_LIMIT} 条`, 'error');
+        return;
+      }
+      const preset = GM_DRUMS[tracks.length % GM_DRUMS.length];
+      tracks.push({
+        id: uid('drum'), name: preset.name, color: preset.color,
+        pitches: preset.pitches.slice(0, 2), channel: null, pattern: emptyPattern(this._drumSteps()),
+      });
+      this.state.drumBoard.initialized = true;
+      this._renderDrumBoard();
+      this._persist();
+      this.sfx?.play('module');
+    });
+    d.drumBoardAutoBtn?.addEventListener('click', () => {
+      const midi = this.state.midiMerged || this.state.midi;
+      const suggested = suggestDrumTracks(midi, DRUM_TRACK_LIMIT);
+      if (!suggested.length) {
+        this._toast('MIDI 中没有打击乐通道（Channel 10）的音符', 'error');
+        return;
+      }
+      const steps = this._drumSteps();
+      this.state.drumBoard.tracks = suggested.map((track) => ({ id: uid('drum'), channel: null, pattern: emptyPattern(steps), ...track }));
+      this.state.drumBoard.initialized = true;
+      this._sampleDrumPattern(null, { quiet: true });
+      this._toast(`已识别 ${suggested.length} 条鼓轨，并按当前小节填入步进`, 'success', 3200);
+    });
+    d.drumBoardSampleBtn?.addEventListener('click', () => this._sampleDrumPattern());
+    d.drumBoardClearBtn?.addEventListener('click', () => {
+      if (!this.state.drumBoard.tracks.length) return;
+      this.state.drumBoard.tracks = [];
+      this.state.drumBoard.initialized = true;
+      this._renderDrumBoard();
+      this._persist();
     });
   }
 
@@ -8595,6 +9127,7 @@ class NeonScopeApp {
         info: this.state.info,
         midi: this.state.midi,
         midiLayers: (this.state.midiLayers || []).map(({ bytes, ...rest }) => rest),
+        drumBoard: this.state.drumBoard,
         animationCues: this.state.animationCues,
       });
     }

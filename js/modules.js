@@ -3,6 +3,11 @@ import {
   STAGE_W, STAGE_H, MODULE_DEFS, clamp, lerp, rgba, mixHex, lighten, darken, hexToRgb,
   luminance, roundRect, spacedText, formatShortTime, isHexColor, hexAlpha, SCHEME_COLORS,
 } from './core.js';
+import {
+  resolveTimeSignature, formatTimeSignature, barSeconds, clampTempo,
+  chordSegments, chordAt, resolveMidiTrackIndex, inferKey, parseKey, noteLabel,
+  patternRows, stepCountFor, STEPS_PER_BEAT, DRUM_TRACK_LIMIT, NOTE_NAMES,
+} from './music.js';
 
 const MONO = '"Cascadia Code", "Consolas", "SFMono-Regular", monospace';
 const SANS = '"Bahnschrift", "Segoe UI Variable", "Microsoft YaHei UI", sans-serif';
@@ -23,6 +28,7 @@ const META_LABELS = {
   lissajous: 'X-Y', spectrum: 'FFT', phase: 'CORR', rhythm: 'BPM',
   dynamics: 'DYN', spectrogram: 'STFT', stereometer: 'POLAR',
   waveform: 'FULL', pianoRoll: 'MIDI', midiOC: 'NOTE Δ', peakSlope: 'PEAK', stereoField: 'WIDE',
+  flPlaylist: 'ARRANGE', harmony: 'CHORD', drumStep: 'STEP',
   basicInfo: 'INFO',
 };
 
@@ -1441,10 +1447,14 @@ function drawRhythm(ctx, mod, body, frame, st, env) {
   // Beat dots.
   const dotY = y + 62;
   if (modOpt(mod, 'beatDots', true)) {
-    for (let i = 0; i < 4; i++) {
-      const active = Math.floor(phase * 4) === i && frame.playing;
+    const sig = env.timeSignature || { numerator: 4, denominator: 4 };
+    const beats = clamp(Math.round(Number(sig.numerator)) || 4, 1, 16);
+    const activeBeat = Number.isFinite(frame.beatInBar) ? frame.beatInBar : Math.floor(phase * beats);
+    const spacing = Math.min(13, Math.max(6, (leftW - 64) / beats));
+    for (let i = 0; i < beats; i++) {
+      const active = activeBeat === i && frame.playing;
       ctx.beginPath();
-      ctx.arc(x + 4 + i * 13, dotY, active ? 3.3 : 2.2, 0, TAU);
+      ctx.arc(x + 4 + i * spacing, dotY, active ? 3.3 : 2.2, 0, TAU);
       ctx.fillStyle = active ? accent : 'rgba(255,255,255,.15)';
       if (active) {
         ctx.shadowColor = accent;
@@ -1455,7 +1465,7 @@ function drawRhythm(ctx, mod, body, frame, st, env) {
     }
     mono(ctx, 5.8, '400');
     ctx.fillStyle = 'rgba(255,255,255,.22)';
-    ctx.fillText('BAR / 4-4', x + 58, dotY + 2);
+    ctx.fillText(`BAR / ${sig.numerator}-${sig.denominator}`, x + 10 + beats * spacing, dotY + 2);
   }
 
   // Band bars.
@@ -1810,7 +1820,7 @@ function drawPianoRoll(ctx, mod, body, frame, st, env) {
   const autoSpeed = modOpt(mod, 'autoSpeed', true);
   const syncAudioLength = modOpt(mod, 'syncAudioLength', true);
   const barsVisible = modNum(mod, 'barsVisible', 16, 1, 32);
-  const signature = midi.timeSignature || { numerator: 4, denominator: 4 };
+  const signature = env.timeSignature || midi.timeSignature || { numerator: 4, denominator: 4 };
   const beatsPerBar = Math.max(1, Number(signature.numerator) || 4) * (4 / Math.max(1, Number(signature.denominator) || 4));
   const midiBpm = Math.max(40, Number(midi.bpm) || 120);
   const audioDuration = Number(env.engine?.duration) || 0;
@@ -2752,6 +2762,621 @@ function drawChladni(ctx, mod, body, frame, st, env) {
   ctx.fillText(`AMP ${Math.round(amplitude * 100)}% · GRID ${sampling}`, x + w - 1, y + h + 8);
 }
 
+// ── Arrangement / harmony / drum modules ────────────────────────────────────
+
+/** Tempo used by bar-grid modules: manual BPM > audio-length calibration > MIDI. */
+function projectTempo(env, midi, frame) {
+  const manual = Number(env.info?.bpm);
+  if (Number.isFinite(manual) && manual > 0) return clampTempo(manual);
+  const audioDuration = Number(env.engine?.duration) || 0;
+  const totalBeats = Number(midi?.totalBeats) || 0;
+  if (totalBeats > 0 && audioDuration > 0) {
+    const derived = (totalBeats / audioDuration) * 60;
+    if (derived >= 20 && derived <= 400) return derived;
+  }
+  return clampTempo(midi?.bpm || frame?.bpm || 120);
+}
+
+function busTrackPalette(env) {
+  const master = (env.modules || []).find((m) => m.type === 'pianoRoll' && m.options?.midiMaster)
+    || (env.modules || []).find((m) => m.type === 'pianoRoll');
+  const fallback = [env.settings?.accent || '#ff4f8b', SCHEME_COLORS[1], SCHEME_COLORS[3], SCHEME_COLORS[2], '#b9ff8a', '#ff8a6b'];
+  const colors = Array.isArray(master?.options?.trackColors) ? master.options.trackColors : [];
+  const all = master?.options?.allTrackColor === true;
+  const global = isHexColor(master?.options?.globalTrackColor) ? master.options.globalTrackColor : '#ffc46b';
+  const mutes = Array.isArray(master?.options?.trackMutes) ? master.options.trackMutes : [];
+  const solos = Array.isArray(master?.options?.trackSolos) ? master.options.trackSolos : [];
+  const soloActive = solos.some(Boolean);
+  return {
+    color: (index) => all ? global : (isHexColor(colors[index]) ? colors[index] : fallback[index % fallback.length]),
+    audible: (index) => !mutes[index] && (!soloActive || !!solos[index]),
+  };
+}
+
+function moduleInk(env) {
+  const palette = env.palette || {};
+  const bg = palette.bg || '#050308';
+  const win = palette.window || '#171020';
+  const light = luminance(bg) * 0.65 + luminance(win) * 0.35 > 0.52;
+  return { light, ink: light ? '#1b1526' : (palette.text || '#f7eef3') };
+}
+
+function fitText(ctx, text, maxWidth) {
+  if (ctx.measureText(text).width <= maxWidth) return text;
+  let out = text;
+  while (out.length > 1 && ctx.measureText(`${out}…`).width > maxWidth) out = out.slice(0, -1);
+  return `${out}…`;
+}
+
+function drawFlPlaylist(ctx, mod, body, frame, st, env) {
+  const palette = env.palette || {};
+  const { ink: textColor } = moduleInk(env);
+  const accent = body.accent;
+  const midi = env.midiMerged || env.midi;
+  const p = 8;
+  const x = body.x + p, y = body.y + p;
+  const w = body.w - p * 2, h = body.h - p * 2;
+
+  if (!midi || !midi.notes?.length) {
+    mono(ctx, 7, '500');
+    ctx.fillStyle = rgba(accent, 0.55);
+    ctx.textAlign = 'center';
+    ctx.fillText('导入 MIDI 后，这里将铺出整首编排的色块', x + w / 2, y + h / 2);
+    ctx.fillStyle = rgba(textColor, 0.25);
+    mono(ctx, 5.8, '400');
+    ctx.fillText('FL PLAYLIST / ARRANGEMENT', x + w / 2, y + h / 2 + 13);
+    return;
+  }
+
+  const sig = env.timeSignature || resolveTimeSignature(env.info, midi);
+  const bpm = projectTempo(env, midi, frame);
+  const barSec = barSeconds(sig, bpm);
+  const midiDuration = Number(midi.duration) || 0;
+  const duration = midiDuration > 0 ? midiDuration : Math.max(Number(env.engine?.duration) || 0, barSec);
+  const bars = clamp(Math.ceil(duration / barSec), 1, 1024);
+  const time = Number(frame.time) || 0;
+
+  const bus = busTrackPalette(env);
+  const trackCount = Math.max(1, Number(midi.trackCount) || 1);
+  const tracks = [];
+  for (let index = 0; index < trackCount; index += 1) {
+    if (!bus.audible(index)) continue;
+    const meta = (midi.tracks || []).find((item) => item.index === index) || {};
+    tracks.push({
+      index,
+      name: meta.trackName || meta.name || midi.trackNames?.[index] || `Track ${index + 1}`,
+      color: bus.color(index),
+    });
+  }
+
+  const cacheKey = `${bars}|${barSec.toFixed(4)}|${trackCount}`;
+  if (st.midiRef !== midi || st.cacheKey !== cacheKey) {
+    st.midiRef = midi;
+    st.cacheKey = cacheKey;
+    st.cells = tracks.map(() => new Float32Array(bars));
+    const byIndex = new Map(tracks.map((track, i) => [track.index, i]));
+    for (const note of midi.notes) {
+      const row = byIndex.get(Number(note.track) || 0);
+      if (row === undefined) continue;
+      const startBar = clamp(Math.floor(note.start / barSec), 0, bars - 1);
+      const endBar = clamp(Math.floor((Number(note.end) || note.start) / barSec), 0, bars - 1);
+      for (let bar = startBar; bar <= endBar; bar += 1) st.cells[row][bar] += 1;
+    }
+    st.maxCell = 1;
+    for (const cells of st.cells) for (const value of cells) if (value > st.maxCell) st.maxCell = value;
+  }
+
+  const showRuler = modOpt(mod, 'ruler', true);
+  const showPlayhead = modOpt(mod, 'playhead', true);
+  const intensity = modOpt(mod, 'intensity', true);
+  const rulerH = showRuler ? 14 : 0;
+  const footerH = 12;
+  const labelW = clamp(w * 0.2, 64, 168);
+  const gridX = x + labelW + 6;
+  const gridW = Math.max(20, w - labelW - 6);
+  const rowsY = y + rulerH + 2;
+  const rowsH = Math.max(12, h - rulerH - footerH - 4);
+
+  // Vertical capacity follows the MIDI O/C rule: shrink rows, reserve the last
+  // slot for a "+ N More Track" notice instead of clipping the arrangement.
+  const minRowH = 9;
+  const capacity = Math.max(1, Math.floor(rowsH / minRowH));
+  const total = tracks.length;
+  let visible = Math.min(capacity, total);
+  let moreCount = 0;
+  if (total > visible && visible > 1) {
+    visible -= 1;
+    moreCount = total - visible;
+  }
+  const rowCount = visible + (moreCount > 0 ? 1 : 0);
+  const rowH = Math.min(modNum(mod, 'rowHeight', 28, 12, 44), rowsH / Math.max(1, rowCount));
+  const cellW = gridW / bars;
+  const gap = cellW > 3 ? Math.min(1.5, cellW * 0.18) : 0;
+  const blockH = Math.max(2, rowH - Math.min(4, rowH * 0.22));
+
+  ctx.save();
+  ctx.textBaseline = 'middle';
+
+  // Bar ruler.
+  if (showRuler) {
+    mono(ctx, 5.5, '400');
+    ctx.fillStyle = rgba(textColor, 0.35);
+    ctx.textAlign = 'left';
+    const minGap = 30;
+    const steps = [1, 2, 4, 8, 16, 32, 64, 128];
+    let step = steps[steps.length - 1];
+    for (const candidate of steps) {
+      if (candidate * cellW >= minGap) { step = candidate; break; }
+    }
+    for (let bar = 0; bar < bars; bar += step) {
+      const px = gridX + bar * cellW;
+      ctx.fillText(String(bar + 1), px + 1, y + rulerH / 2);
+      ctx.strokeStyle = rgba(textColor, 0.08);
+      ctx.beginPath();
+      ctx.moveTo(px + 0.5, rowsY);
+      ctx.lineTo(px + 0.5, rowsY + rowCount * rowH);
+      ctx.stroke();
+    }
+  }
+
+  const currentBar = clamp(Math.floor(time / barSec), 0, bars - 1);
+  if (showPlayhead) {
+    ctx.fillStyle = rgba(accent, 0.08);
+    ctx.fillRect(gridX + currentBar * cellW, rowsY, Math.max(cellW, 1.5), rowCount * rowH);
+  }
+
+  for (let row = 0; row < visible; row += 1) {
+    const track = tracks[row];
+    const ry = rowsY + row * rowH;
+    const cy = ry + rowH / 2;
+    ctx.fillStyle = rgba(textColor, row % 2 ? 0.025 : 0.05);
+    ctx.fillRect(x, ry, w, rowH - 1);
+    mono(ctx, Math.max(5, Math.min(7, rowH * 0.42)), '600');
+    ctx.fillStyle = rgba(track.color, 0.92);
+    ctx.textAlign = 'left';
+    ctx.fillText(fitText(ctx, track.name, labelW - 4), x + 2, cy);
+    const cells = st.cells[row];
+    for (let bar = 0; bar < bars; bar += 1) {
+      const value = cells[bar];
+      if (!value) continue;
+      const alpha = intensity ? 0.3 + 0.7 * Math.min(1, value / st.maxCell) : 0.85;
+      ctx.fillStyle = rgba(track.color, alpha);
+      ctx.fillRect(gridX + bar * cellW + gap / 2, cy - blockH / 2, Math.max(0.8, cellW - gap), blockH);
+    }
+  }
+  if (moreCount > 0) {
+    const cy = rowsY + visible * rowH + rowH / 2;
+    mono(ctx, Math.max(5, Math.min(7, rowH * 0.42)), '600');
+    ctx.fillStyle = rgba(textColor, 0.55);
+    ctx.textAlign = 'left';
+    ctx.fillText(`+ ${moreCount} More Track`, x + 2, cy);
+  }
+
+  if (showPlayhead) {
+    const px = gridX + clamp(time / duration, 0, 1) * gridW;
+    ctx.strokeStyle = rgba(accent, 0.9);
+    ctx.lineWidth = 1.2;
+    ctx.shadowColor = accent;
+    ctx.shadowBlur = 6;
+    ctx.beginPath();
+    ctx.moveTo(px, rowsY - 2);
+    ctx.lineTo(px, rowsY + rowCount * rowH);
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+  }
+
+  mono(ctx, 5.5, '400');
+  ctx.fillStyle = rgba(textColor, 0.35);
+  ctx.textAlign = 'left';
+  ctx.fillText(`${total} TRACKS · ${bars} BARS`, x, y + h - 4);
+  ctx.textAlign = 'right';
+  ctx.fillStyle = rgba(accent, 0.6);
+  ctx.fillText(`${formatTimeSignature(sig)} · ${bpm.toFixed(1)} BPM · BAR ${currentBar + 1}`, x + w, y + h - 4);
+  ctx.restore();
+}
+
+function drawHarmony(ctx, mod, body, frame, st, env) {
+  const palette = env.palette || {};
+  const { light, ink } = moduleInk(env);
+  const accent = body.accent;
+  const midi = env.midiMerged || env.midi;
+  const p = 12;
+  const x = body.x + p, y = body.y + p;
+  const w = body.w - p * 2, h = body.h - p * 2;
+  const highlight = modOpt(mod, 'followChart', true)
+    ? (palette.chart || accent)
+    : (isHexColor(modOpt(mod, 'highlight', '')) ? modOpt(mod, 'highlight', '') : (palette.chart || accent));
+  const onHighlight = luminance(highlight) > 0.62 ? '#1b1526' : '#ffffff';
+
+  if (!midi || !midi.notes?.length) {
+    mono(ctx, 7, '500');
+    ctx.fillStyle = rgba(ink, 0.5);
+    ctx.textAlign = 'center';
+    ctx.fillText('导入 MIDI 后，这里将推算当前和弦', x + w / 2, y + h / 2);
+    ctx.fillStyle = rgba(ink, 0.3);
+    mono(ctx, 5.8, '400');
+    ctx.fillText('HARMONY / CHORDS', x + w / 2, y + h / 2 + 13);
+    return;
+  }
+
+  const sig = env.timeSignature || resolveTimeSignature(env.info, midi);
+  const bpm = projectTempo(env, midi, frame);
+  const trackOpt = String(modOpt(mod, 'track', 'auto'));
+  const resolved = trackOpt === 'auto' ? -1 : resolveMidiTrackIndex(midi, trackOpt);
+  // A stale reference (track deleted, or a layer removed) falls back to auto
+  // instead of silently pointing at whatever track took its place.
+  const autoTrack = resolved < 0;
+  const trackIndex = autoTrack ? -1 : resolved;
+  const division = clamp(Math.round(modNum(mod, 'division', 2, 1, 4)), 1, 4);
+  const time = Number(frame.time) || 0;
+
+  const cacheKey = `${autoTrack ? 'auto' : trackIndex}|${bpm.toFixed(3)}|${division}|${sig.numerator}/${sig.denominator}`;
+  if (st.midiRef !== midi || st.cacheKey !== cacheKey) {
+    st.midiRef = midi;
+    st.cacheKey = cacheKey;
+    st.trackIndex = trackIndex;
+    // Auto means "the whole arrangement" (minus drums); picking a single track
+    // remains available when the user wants that track's own harmony.
+    st.notes = autoTrack
+      ? midi.notes.filter((note) => Number(note.channel) !== 9)
+      : midi.notes.filter((note) => (Number(note.track) || 0) === trackIndex);
+    st.segments = chordSegments(st.notes, { bpm, sig, division });
+    st.key = inferKey(st.notes);
+  }
+
+  const manualKey = parseKey(modOpt(mod, 'key', '')) || parseKey(env.info?.key);
+  const keyInfo = manualKey || st.key;
+  const keyName = keyInfo ? keyInfo.name : 'KEY —';
+
+  const { current, next, progress } = chordAt(st.segments, time);
+  const currentIndex = current ? st.segments.indexOf(current) : -1;
+  const rootName = current && current.root != null ? NOTE_NAMES[current.root] : '';
+  const quality = current?.label || '';
+
+  ctx.save();
+  ctx.textBaseline = 'alphabetic';
+
+  // Header: source on the left, key on the right.
+  const trackMeta = (midi.tracks || []).find((item) => item.index === trackIndex);
+  const trackName = autoTrack
+    ? 'ALL TRACKS'
+    : (trackMeta?.name || trackMeta?.trackName || `Track ${trackIndex + 1}`);
+  mono(ctx, 5.6, '500');
+  ctx.textAlign = 'left';
+  ctx.fillStyle = rgba(ink, 0.4);
+  spacedText(ctx, 'SOURCE', x, y + 7, 0.9);
+  mono(ctx, 5.6, '400');
+  ctx.fillStyle = rgba(ink, 0.62);
+  ctx.fillText(fitText(ctx, trackName.toUpperCase(), w * 0.44), x + 38, y + 7);
+
+  ctx.textAlign = 'right';
+  mono(ctx, 5.6, '500');
+  ctx.fillStyle = rgba(ink, 0.4);
+  ctx.fillText('KEY', x + w - 70, y + 7);
+  sans(ctx, 10, '700');
+  ctx.fillStyle = rgba(highlight, 0.95);
+  ctx.fillText(keyName.toUpperCase(), x + w, y + 7);
+
+  // Next chord capsule.
+  const capsuleW = clamp(w * 0.28, 78, 118);
+  const capsuleH = 34;
+  const capsuleX = x + w - capsuleW;
+  const capsuleY = y + 18;
+  if (next?.name && h > 110) {
+    roundRect(ctx, capsuleX, capsuleY, capsuleW, capsuleH, 6);
+    ctx.fillStyle = rgba(ink, light ? 0.035 : 0.05);
+    ctx.fill();
+    ctx.strokeStyle = rgba(ink, 0.16);
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    mono(ctx, 5.4, '500');
+    ctx.textAlign = 'left';
+    ctx.fillStyle = rgba(ink, 0.42);
+    ctx.fillText('NEXT', capsuleX + 9, capsuleY + 13);
+    sans(ctx, 13, '600');
+    ctx.fillStyle = rgba(ink, 0.85);
+    ctx.fillText(fitText(ctx, next.name, capsuleW - 18), capsuleX + 9, capsuleY + 27);
+  }
+
+  // Big chord name: solid root, lighter quality suffix.
+  const chordSize = clamp(h * 0.19, 22, 54);
+  const nameBaseline = y + 26 + chordSize;
+  sans(ctx, chordSize, '700');
+  ctx.textAlign = 'left';
+  ctx.fillStyle = current?.name ? ink : rgba(ink, 0.35);
+  const rootText = current?.name ? (rootName || current.name) : 'N.C.';
+  ctx.fillText(rootText, x, nameBaseline);
+  const rootW = ctx.measureText(rootText).width;
+  if (current?.name && quality) {
+    sans(ctx, chordSize * 0.72, '300');
+    ctx.fillStyle = rgba(highlight, 0.9);
+    ctx.fillText(quality, x + rootW + 2, nameBaseline);
+  }
+
+  // Quality chip (like the reference "Isus2" pill).
+  let cursorY = nameBaseline + 12;
+  if (current?.name && quality && h > 150) {
+    sans(ctx, 8.5, '600');
+    const chipW = ctx.measureText(current.name).width + 18;
+    roundRect(ctx, x, cursorY - 11, chipW, 17, 8.5);
+    ctx.fillStyle = rgba(highlight, 0.16);
+    ctx.fill();
+    ctx.strokeStyle = rgba(highlight, 0.45);
+    ctx.lineWidth = 0.8;
+    ctx.stroke();
+    ctx.fillStyle = rgba(onHighlight === '#1b1526' ? darken(highlight, 0.2) : highlight, 0.95);
+    ctx.fillText(current.name, x + 9, cursorY + 1);
+    cursorY += 16;
+  }
+
+  // Segment progress.
+  const progW = Math.min(w * 0.45, 240);
+  ctx.fillStyle = rgba(ink, 0.12);
+  ctx.fillRect(x, cursorY, progW, 3);
+  ctx.fillStyle = rgba(highlight, 0.9);
+  ctx.fillRect(x, cursorY, progW * clamp(progress, 0, 1), 3);
+  cursorY += 12;
+
+  // Keyboard (two octaves, C3–B4).
+  const showKeyboard = modOpt(mod, 'showKeyboard', true);
+  const showProgression = modOpt(mod, 'showProgression', true);
+  const footerH = 12;
+  const progChipsH = showProgression && h > 190 ? 26 : 0;
+  if (showKeyboard && h > 150) {
+    const keyH = clamp(y + h - cursorY - progChipsH - footerH, 34, 96);
+    if (keyH >= 34) {
+      drawHarmonyKeys(ctx, x, cursorY, w, keyH, highlight, light, ink, current);
+      cursorY += keyH + 10;
+    }
+  }
+
+  // Progression chips: current chord highlighted, then upcoming ones.
+  if (progChipsH && h - (cursorY - y) >= progChipsH + footerH - 4) {
+    const items = [];
+    if (current?.name) items.push({ name: current.name, active: true });
+    for (let i = currentIndex + 1; i < st.segments.length && items.length < 6; i += 1) {
+      const segment = st.segments[i];
+      if (!segment.name) continue;
+      if (items.length && items[items.length - 1].name === segment.name) continue;
+      items.push({ name: segment.name, active: false });
+    }
+    sans(ctx, 8.5, '600');
+    let chipX = x;
+    const chipH = 18;
+    for (const item of items) {
+      const chipW = ctx.measureText(item.name).width + 18;
+      if (chipX + chipW > x + w) break;
+      roundRect(ctx, chipX, cursorY - chipH, chipW, chipH, chipH / 2);
+      if (item.active) {
+        ctx.fillStyle = rgba(highlight, 0.9);
+        ctx.fill();
+        ctx.fillStyle = onHighlight;
+      } else {
+        ctx.fillStyle = rgba(ink, light ? 0.04 : 0.07);
+        ctx.fill();
+        ctx.strokeStyle = rgba(ink, 0.12);
+        ctx.lineWidth = 0.7;
+        ctx.stroke();
+        ctx.fillStyle = rgba(ink, 0.65);
+      }
+      ctx.textAlign = 'center';
+      ctx.fillText(item.name, chipX + chipW / 2, cursorY - 5);
+      ctx.textAlign = 'left';
+      chipX += chipW + 6;
+    }
+  }
+
+  // Footer.
+  mono(ctx, 5.5, '400');
+  ctx.textAlign = 'left';
+  ctx.fillStyle = rgba(ink, 0.38);
+  ctx.fillText(`${formatTimeSignature(sig)} · ${bpm.toFixed(1)} BPM`, x, y + h);
+  ctx.textAlign = 'right';
+  ctx.fillStyle = rgba(ink, 0.32);
+  ctx.fillText('HARMONY', x + w, y + h);
+  ctx.restore();
+}
+
+/** Two-octave keyboard strip used by the harmony module. */
+function drawHarmonyKeys(ctx, x, y, width, height, highlight, light, ink, current) {
+  const startPitch = 48;
+  const keys = 24;
+  const whiteOffsets = new Set([0, 2, 4, 5, 7, 9, 11]);
+  const whites = [];
+  for (let i = 0; i < keys; i += 1) {
+    if (whiteOffsets.has(i % 12)) whites.push(startPitch + i);
+  }
+  const whiteW = width / whites.length;
+  const activePcs = new Set(current?.pitches || []);
+  const rootPc = current?.root;
+  const whiteIndex = new Map(whites.map((pitch, i) => [pitch, i]));
+  const onHighlight = luminance(highlight) > 0.62 ? '#1b1526' : '#ffffff';
+
+  ctx.lineWidth = 1;
+  ctx.strokeStyle = light ? 'rgba(24,18,38,.28)' : 'rgba(0,0,0,.55)';
+  for (const pitch of whites) {
+    const pc = pitch % 12;
+    const kx = x + whiteIndex.get(pitch) * whiteW;
+    const active = activePcs.has(pc);
+    roundRect(ctx, kx + 0.5, y, Math.max(2, whiteW - 1.2), height, 2);
+    ctx.fillStyle = active ? highlight : (light ? '#ffffff' : 'rgba(255,255,255,.13)');
+    ctx.fill();
+    ctx.stroke();
+    if (active) {
+      ctx.shadowColor = rgba(highlight, 0.8);
+      ctx.shadowBlur = 7;
+      ctx.fill();
+      ctx.shadowBlur = 0;
+    }
+    if (pc === 0) {
+      mono(ctx, 4.8, '500');
+      ctx.fillStyle = active ? onHighlight : rgba(ink, 0.45);
+      ctx.textAlign = 'center';
+      ctx.fillText(noteLabel(pitch), kx + whiteW / 2, y + height - 4);
+    } else if (active && whiteW > 16) {
+      mono(ctx, 4.8, '600');
+      ctx.fillStyle = onHighlight;
+      ctx.textAlign = 'center';
+      ctx.fillText(noteLabel(pitch), kx + whiteW / 2, y + height - 4);
+    }
+  }
+
+  const blackOffsets = { 1: 0, 3: 1, 6: 3, 8: 4, 10: 5 };
+  const blackW = whiteW * 0.58;
+  const blackH = height * 0.62;
+  for (let i = 0; i < keys; i += 1) {
+    const off = i % 12;
+    if (!(off in blackOffsets)) continue;
+    const pitch = startPitch + i;
+    const wi = whiteIndex.get(pitch - 1);
+    if (wi === undefined) continue;
+    const kx = x + (wi + 1) * whiteW - blackW / 2;
+    const active = activePcs.has(pitch % 12);
+    roundRect(ctx, kx, y, blackW, blackH, 1.5);
+    ctx.fillStyle = active ? highlight : (light ? '#1b1526' : '#07050a');
+    ctx.fill();
+    if (active) {
+      ctx.shadowColor = rgba(highlight, 0.85);
+      ctx.shadowBlur = 8;
+      ctx.fill();
+      ctx.shadowBlur = 0;
+    } else {
+      ctx.strokeStyle = light ? 'rgba(24,18,38,.35)' : 'rgba(255,255,255,.1)';
+      ctx.stroke();
+    }
+    if (active && pcLabelFits(blackW)) {
+      mono(ctx, 4.4, '600');
+      ctx.fillStyle = onHighlight;
+      ctx.textAlign = 'center';
+      ctx.fillText(noteLabel(pitch), kx + blackW / 2, y + blackH - 4);
+    }
+  }
+}
+
+function pcLabelFits(width) {
+  return width > 13;
+}
+
+function drawDrumStep(ctx, mod, body, frame, st, env) {
+  const palette = env.palette || {};
+  const { ink: textColor } = moduleInk(env);
+  const accent = body.accent;
+  const midi = env.midiMerged || env.midi;
+  const board = (env.drumBoard?.tracks || []).slice(0, DRUM_TRACK_LIMIT);
+  const p = 10;
+  const x = body.x + p, y = body.y + p;
+  const w = body.w - p * 2, h = body.h - p * 2;
+
+  if (!board.length) {
+    mono(ctx, 7, '500');
+    ctx.fillStyle = rgba(accent, 0.55);
+    ctx.textAlign = 'center';
+    ctx.fillText('在「鼓组步进」板块里编排步进（上限 7 条鼓轨）', x + w / 2, y + h / 2);
+    ctx.fillStyle = rgba(textColor, 0.25);
+    mono(ctx, 5.8, '400');
+    ctx.fillText('DRUM STEP / SEQUENCER', x + w / 2, y + h / 2 + 13);
+    return;
+  }
+
+  const sig = env.timeSignature || resolveTimeSignature(env.info, midi);
+  const showVelocity = modOpt(mod, 'showVelocity', false);
+  const showPlayhead = modOpt(mod, 'playhead', true);
+  const steps = stepCountFor(sig);
+  const beats = Math.max(1, Number(sig.beats) || 4);
+  const rows = patternRows(board, steps);
+  const playhead = clamp(Number(frame.barPhase) || 0, 0, 1);
+  const beatInBar = clamp(Math.floor(playhead * beats), 0, beats - 1);
+  st.steps = steps;
+  st.rows = rows.length;
+
+  const rulerH = 14;
+  const footerH = 12;
+  const labelW = clamp(w * 0.2, 56, 120);
+  const gridX = x + labelW + 6;
+  const gridW = Math.max(20, w - labelW - 6);
+  const bandH = Math.max(14, h - footerH - 2);
+  const rowH = Math.min(48, (bandH - rulerH - 2) / rows.length);
+  const totalH = rulerH + rows.length * rowH;
+  const bandTop = y + Math.max(0, (bandH - totalH) / 2);
+  const rowsY = bandTop + rulerH + 2;
+  const cellW = gridW / steps;
+  const gap = Math.min(2, cellW * 0.16);
+  const dotSize = Math.max(3, Math.min(rowH - 5, cellW - gap) * 0.72);
+
+  ctx.save();
+  ctx.textBaseline = 'middle';
+
+  // Beat ruler.
+  mono(ctx, 5.5, '500');
+  ctx.textAlign = 'center';
+  for (let beat = 0; beat < beats; beat += 1) {
+    const bx = gridX + beat * STEPS_PER_BEAT * cellW;
+    ctx.fillStyle = beat === beatInBar ? rgba(accent, 0.95) : rgba(textColor, 0.35);
+    ctx.fillText(String(beat + 1), bx + (STEPS_PER_BEAT * cellW) / 2, bandTop + rulerH / 2);
+    ctx.strokeStyle = rgba(textColor, beat === 0 ? 0.16 : 0.08);
+    ctx.beginPath();
+    ctx.moveTo(bx + 0.5, rowsY);
+    ctx.lineTo(bx + 0.5, rowsY + rows.length * rowH);
+    ctx.stroke();
+  }
+
+  for (let row = 0; row < rows.length; row += 1) {
+    const { track, values } = rows[row];
+    const ry = rowsY + row * rowH;
+    const cy = ry + rowH / 2;
+    const color = isHexColor(track.color) ? track.color : accent;
+    ctx.fillStyle = rgba(textColor, row % 2 ? 0.025 : 0.05);
+    ctx.fillRect(x, ry, w, rowH - 1);
+    mono(ctx, Math.max(5, Math.min(7, rowH * 0.4)), '600');
+    ctx.fillStyle = rgba(color, 0.92);
+    ctx.textAlign = 'left';
+    ctx.fillText(fitText(ctx, String(track.name || `DRUM ${row + 1}`).toUpperCase(), labelW - 4), x + 2, cy);
+    for (let step = 0; step < steps; step += 1) {
+      const cx = gridX + step * cellW + cellW / 2;
+      const velocity = values[step];
+      const onBeat = step % STEPS_PER_BEAT === 0;
+      if (velocity > 0) {
+        const alpha = showVelocity ? 0.4 + 0.6 * velocity : 0.9;
+        const size = dotSize * (showVelocity ? 0.7 + 0.3 * velocity : 1);
+        ctx.fillStyle = rgba(color, alpha);
+        ctx.shadowColor = rgba(color, 0.7);
+        ctx.shadowBlur = 6 * velocity;
+        roundRect(ctx, cx - size / 2, cy - size / 2, size, size, Math.min(3, size * 0.3));
+        ctx.fill();
+        ctx.shadowBlur = 0;
+      } else {
+        ctx.fillStyle = rgba(textColor, onBeat ? 0.14 : 0.06);
+        const size = dotSize * 0.34;
+        roundRect(ctx, cx - size / 2, cy - size / 2, size, size, 1);
+        ctx.fill();
+      }
+    }
+  }
+
+  if (showPlayhead) {
+    const px = gridX + clamp(playhead, 0, 1) * gridW;
+    ctx.strokeStyle = rgba(accent, 0.9);
+    ctx.lineWidth = 1.2;
+    ctx.shadowColor = accent;
+    ctx.shadowBlur = 6;
+    ctx.beginPath();
+    ctx.moveTo(px, rowsY - 2);
+    ctx.lineTo(px, rowsY + rows.length * rowH);
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+  }
+
+  const barIndex = Math.max(0, Number(frame.barIndex) || 0);
+  mono(ctx, 5.5, '400');
+  ctx.fillStyle = rgba(textColor, 0.35);
+  ctx.textAlign = 'left';
+  ctx.fillText(`${rows.length} / ${DRUM_TRACK_LIMIT} DRUM TRACKS`, x, y + h - 4);
+  ctx.textAlign = 'right';
+  ctx.fillStyle = rgba(accent, 0.6);
+  ctx.fillText(`BAR ${barIndex + 1} · ${formatTimeSignature(sig)} · ${steps} STEPS`, x + w, y + h - 4);
+  ctx.restore();
+}
+
 const DRAWERS = {
   levels: drawLevels,
   loudness: drawLoudness,
@@ -2767,6 +3392,9 @@ const DRAWERS = {
   waveform: drawWaveform,
   pianoRoll: drawPianoRoll,
   midiOC: drawMidiOC,
+  flPlaylist: drawFlPlaylist,
+  harmony: drawHarmony,
+  drumStep: drawDrumStep,
   peakSlope: drawPeakSlope,
   stereoField: drawStereoField,
   bandRings: drawBandRings,
@@ -2803,7 +3431,7 @@ export function drawVisualModule(ctx, mod, accent, env) {
   ctx.save();
   if (!frameless) clipRect(ctx, body.x, body.y, body.w, body.h);
   const originalFillText = ctx.fillText;
-  if (mod.type !== 'basicInfo' && mod.type !== 'midiOC' && palette.text) {
+  if (!['basicInfo', 'midiOC', 'flPlaylist', 'harmony', 'drumStep'].includes(mod.type) && palette.text) {
     ctx.fillText = function (text, x, y, maxWidth) {
       ctx.fillStyle = palette.text;
       return originalFillText.call(ctx, text, x, y, maxWidth);

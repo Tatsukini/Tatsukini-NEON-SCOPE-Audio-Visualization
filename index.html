@@ -145,6 +145,8 @@
               <label>流派<input id="infoGenre" type="text" placeholder="Genre" maxlength="40" /></label>
               <label>BPM<input id="infoBpm" type="number" min="0" max="300" step="0.1" placeholder="BPM" /></label>
               <label>曲序<input id="infoTrackNo" type="text" placeholder="01" maxlength="12" /></label>
+              <label>拍号<input id="infoTimeSig" type="text" placeholder="4/4" maxlength="8" title="如 3/4、6/8、7/8；留空时跟随 MIDI 推算，影响所有节拍相关模块" /></label>
+              <label>调性<input id="infoKey" type="text" placeholder="自动推断" maxlength="24" title="如 F# minor、Bb major；留空时由和弦模块自动推断" /></label>
             </div>
             <div class="meta-cover-row">
               <div class="meta-cover-preview" id="infoCoverPreview"><span>COVER</span></div>
@@ -194,6 +196,18 @@
               <span>多层可视化</span>
             </div>
             <div class="midi-bus-list" id="midiBusList"></div>
+          </section>
+
+          <section class="panel-section extra-panel subpanel-hidden" id="drumBoardPanel">
+            <div class="section-head"><span>鼓组步进</span><em>STEP SEQUENCER <b id="drumBoardCount">0 / 7</b></em></div>
+            <p class="section-help">步进器按当前拍号铺出 1/16 步进：点击或拖动格子添加 / 移除鼓点，右键清空单格。鼓轨上限 7 条；添加鼓组步进模块时会自动从 MIDI 识别轨道并填充当前小节。</p>
+            <div class="midi-bus-toolbar">
+              <button class="mini-action" id="drumBoardAddBtn">＋ 添加鼓轨</button>
+              <button class="mini-action" id="drumBoardAutoBtn">从 MIDI 识别</button>
+              <button class="mini-action" id="drumBoardSampleBtn">采样本节</button>
+              <button class="mini-action" id="drumBoardClearBtn">清空</button>
+            </div>
+            <div class="drum-board-list" id="drumBoardList"></div>
           </section>
 
         </div>
@@ -1443,7 +1457,7 @@
     <div class="alpha-card">
       <div class="alpha-mark" aria-hidden="true">!</div>
       <div class="alpha-body">
-        <div class="alpha-kicker">ALPHA BUILD / V0.1.4_Alpha_Canary_1115_1</div>
+        <div class="alpha-kicker">ALPHA BUILD / V0.1.4_Alpha_Canary_1116_1</div>
         <h2 id="alphaNoticeTitle">注意！这是 NEON//SCOPE 的 Alpha 测试版本。</h2>
         <p>Alpha 测试版本不代表最终产品的最终质量。感谢您的理解和支持，祝你好运！</p>
         <div class="alpha-foot">

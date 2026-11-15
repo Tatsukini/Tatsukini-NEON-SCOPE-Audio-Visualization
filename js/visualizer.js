@@ -2,6 +2,7 @@
 import { STAGE_W, STAGE_H, clamp, formatTC, formatShortTime, mixHex, withAlpha, automationValueAt, resolveThemeColors, hexAlpha, isHexColor } from './core.js';
 import { BackgroundRenderer } from './background.js';
 import { drawVisualModule } from './modules.js';
+import { resolveTimeSignature } from './music.js';
 
 const GUIDE_THRESHOLD = 10;
 const GRID = 8;
@@ -1140,6 +1141,9 @@ export class Visualizer {
         midi: this.state.midi,
         midiMerged: this.state.midiMerged,
         midiLayers: this.state.midiLayers,
+        modules: this.state.modules,
+        drumBoard: this.state.drumBoard,
+        timeSignature: resolveTimeSignature(this.state.info, this.state.midiMerged || this.state.midi),
         info: this.state.info,
         palette,
         cardBody,

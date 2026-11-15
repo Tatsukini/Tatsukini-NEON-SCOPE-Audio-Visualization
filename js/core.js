@@ -101,6 +101,27 @@ export const MODULE_DEFS = {
     about: '以字符逐轨显示 MIDI 的出现与消失：音符出现时显示增加 (+)，识别范围内仍有后续音符时显示保持，音符结束且范围内无后续音符时显示减少 (−)；文字随模块移动，默认只有字符、无面板背景。',
     w: 640, h: 260, category: 'MIDI',
   },
+  flPlaylist: {
+    name: 'FL 播放流',
+    code: 'FL PLAYLIST',
+    glyph: '≣',
+    about: '按 MIDI 推算每条轨道在哪些小节有音符，用色块铺出整首编排；不画具体音符。轨道颜色沿用 MIDI 总线的设置，纵向放不下时自动收缩并显示剩余轨道数。',
+    w: 900, h: 300, category: 'MIDI',
+  },
+  harmony: {
+    name: '和弦显示',
+    code: 'HARMONY',
+    glyph: '♪',
+    about: '从指定 MIDI 轨道推算当前和弦与下一个和弦，配键盘高亮与和弦进行；调性可在基础信息或本模块设置中填写，留空时自动推断。',
+    w: 480, h: 360, category: 'MIDI',
+  },
+  drumStep: {
+    name: '鼓组步进',
+    code: 'DRUM STEP',
+    glyph: '▩',
+    about: '按「鼓组步进」板块里定义的鼓轨显示当前小节的步进点阵与播放头；默认隐藏，轨道可在板块中增删，上限 7 条。',
+    w: 560, h: 300, category: 'RHYTHM',
+  },
   peakSlope: {
     name: '峰值倾斜',
     code: 'PEAK SLOPE SHARP',
@@ -162,7 +183,8 @@ export const MODULE_DEFS = {
 export const MODULE_ORDER = [
   'levels', 'loudness', 'dial', 'scope', 'lissajous', 'spectrum',
   'phase', 'rhythm', 'dynamics', 'spectrogram', 'stereometer',
-  'waveform', 'pianoRoll', 'midiOC', 'peakSlope', 'stereoField',
+  'waveform', 'pianoRoll', 'midiOC', 'flPlaylist', 'harmony', 'drumStep',
+  'peakSlope', 'stereoField',
   'bandRings', 'peakSpectrum', 'beatPulse', 'circularScope', 'chladni', 'basicInfo',
 ];
 

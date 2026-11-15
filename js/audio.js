@@ -1,5 +1,6 @@
 // Copyright (C) 2026 Tatsukini
 import { clamp, formatTime } from './core.js';
+import { DEFAULT_TIME_SIGNATURE } from './music.js';
 
 /**
  * AudioEngine
@@ -65,6 +66,7 @@ export class AudioEngine {
     this.volume = 0.78;
     this.playbackRate = 1;
     this.manualBpm = 0;
+    this.timeSignature = { ...DEFAULT_TIME_SIGNATURE };
     this._offset = 0;
     this._startCtx = 0;
     this._source = null;
@@ -125,6 +127,31 @@ export class AudioEngine {
     this.manualBpm = Number.isFinite(bpm) && bpm > 0 ? clamp(bpm, 20, 300) : 0;
     if (this.manualBpm) this.beat.phase = (this.getTime() * this.manualBpm / 60) % 1;
     return this.manualBpm;
+  }
+
+  setTimeSignature(sig) {
+    const numerator = Math.round(Number(sig?.numerator));
+    const denominator = Math.round(Number(sig?.denominator));
+    this.timeSignature = Number.isFinite(numerator) && numerator >= 1 && numerator <= 32
+      && [1, 2, 4, 8, 16, 32].includes(denominator)
+      ? { numerator, denominator }
+      : { ...DEFAULT_TIME_SIGNATURE };
+    return this.timeSignature;
+  }
+
+  /** Bar-level position derived from the transport time, tempo and signature. */
+  barPosition(time, bpm) {
+    const sig = this.timeSignature || DEFAULT_TIME_SIGNATURE;
+    const beats = sig.numerator;
+    const tempo = Number(bpm) > 0 ? Number(bpm) : 0;
+    if (!tempo) {
+      return { beats, bar: 0, barPhase: this.beat.phase, beatInBar: Math.floor(this.beat.phase * beats), barSec: 0 };
+    }
+    const barSec = beats * (4 / sig.denominator) * 60 / tempo;
+    const total = Math.max(0, Number(time) || 0) / barSec;
+    const bar = Math.floor(total);
+    const barPhase = total - bar;
+    return { beats, bar, barPhase, beatInBar: Math.min(beats - 1, Math.floor(barPhase * beats)), barSec };
   }
 
   setFftSize(v) {
@@ -282,14 +309,22 @@ export class AudioEngine {
 
     if (!this.playing && this._lastFrame) {
       const f = this._lastFrame;
-      return {
+      const bar = this.barPosition(now, f.bpm);
+      const paused = {
         ...f,
         time: now,
         playing: false,
         beatPulse: 0,
         energy: 0,
         fade: Math.max(0, (f.fade ?? 1) - dt * 1.2),
+        timeSignature: this.timeSignature,
+        beatsPerBar: bar.beats,
+        barIndex: bar.bar,
+        barPhase: bar.barPhase,
+        beatInBar: bar.beatInBar,
       };
+      this._lastFrame = paused;
+      return paused;
     }
 
     this.analyserL.getFloatTimeDomainData(this.tdL);
@@ -361,6 +396,8 @@ export class AudioEngine {
     const lufsS = rms > 1e-7 ? 20 * Math.log10(rms) - 0.691 : -60;
     const lufsI = this._integratedN > 4 ? this._integrated - 0.691 : -60;
 
+    const bpm = this.manualBpm || this.track?.bpm || this.beat.bpm || 0;
+    const bar = this.barPosition(now, bpm);
     const frame = {
       time: now,
       duration: this.duration,
@@ -391,7 +428,12 @@ export class AudioEngine {
       energy,
       beatPulse: this.beat.pulse,
       beatPhase: this.beat.phase,
-      bpm: this.manualBpm || this.track?.bpm || this.beat.bpm || 0,
+      bpm,
+      timeSignature: this.timeSignature,
+      beatsPerBar: bar.beats,
+      barIndex: bar.bar,
+      barPhase: bar.barPhase,
+      beatInBar: bar.beatInBar,
       fade: 1,
     };
     this._lastFrame = frame;
@@ -400,8 +442,14 @@ export class AudioEngine {
 
   _emptyFrame(time = 0) {
     if (this._lastFrame && !this.playing) {
-      return { ...this._lastFrame, time, playing: false, beatPulse: 0, energy: 0, fade: 0 };
+      const bar = this.barPosition(time, this._lastFrame.bpm);
+      return {
+        ...this._lastFrame, time, playing: false, beatPulse: 0, energy: 0, fade: 0,
+        barIndex: bar.bar, barPhase: bar.barPhase, beatInBar: bar.beatInBar, beatsPerBar: bar.beats,
+      };
     }
+    const bpm = this.manualBpm || this.track?.bpm || 0;
+    const bar = this.barPosition(time, bpm);
     return {
       time,
       duration: this.duration,
@@ -416,7 +464,12 @@ export class AudioEngine {
       lufsS: -60, lufsI: -60, truePeakDb: -60, truePeak: 0,
       low: 0, mid: 0, high: 0, centroid: 0, peakHz: 0, spectrumPeak: 0,
       energy: 0, beatPulse: 0, beatPhase: 0,
-      bpm: this.manualBpm || this.track?.bpm || 0, fade: 1,
+      bpm, fade: 1,
+      timeSignature: this.timeSignature,
+      beatsPerBar: bar.beats,
+      barIndex: bar.bar,
+      barPhase: bar.barPhase,
+      beatInBar: bar.beatInBar,
     };
   }
 
