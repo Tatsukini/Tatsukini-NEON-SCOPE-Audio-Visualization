@@ -1,5 +1,6 @@
 // Copyright (C) 2026 Tatsukini
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
 using System.IO;
@@ -320,11 +321,51 @@ internal sealed class MainForm : Form
                 case "autosave-flushed":
                     _autosaveFlush?.TrySetResult(true);
                     break;
+                case "plugin-update-prompt":
+                    ShowPluginUpdatePrompt(doc.RootElement);
+                    break;
             }
         }
         catch (Exception ex)
         {
             AppPaths.Log("Native bridge message failed: " + ex.Message);
+        }
+    }
+
+    private void ShowPluginUpdatePrompt(System.Text.Json.JsonElement element)
+    {
+        if (!element.TryGetProperty("updates", out var updates) || updates.ValueKind != JsonValueKind.Array) return;
+        var items = new List<PluginUpdateItem>();
+        foreach (var update in updates.EnumerateArray())
+        {
+            var id = update.TryGetProperty("id", out var idElement) ? idElement.GetString() : null;
+            if (string.IsNullOrWhiteSpace(id)) continue;
+            var name = update.TryGetProperty("name", out var nameElement) ? nameElement.GetString() : id;
+            var current = update.TryGetProperty("currentVersion", out var currentElement) ? currentElement.GetString() : null;
+            var latest = update.TryGetProperty("latestVersion", out var latestElement) ? latestElement.GetString() : null;
+            items.Add(new PluginUpdateItem(id!, name ?? id!, current ?? "0.0.0", latest ?? "0.0.0"));
+        }
+        if (items.Count == 0) return;
+        try
+        {
+            using var dialog = new PluginUpdateForm(items);
+            if (dialog.ShowDialog(this) != DialogResult.OK)
+            {
+                PostToMain("{\"action\":\"plugin-update-cancel\"}");
+                return;
+            }
+            if (dialog.SelectedIds.Count == 0)
+            {
+                PostToMain("{\"action\":\"plugin-update-cancel\"}");
+                return;
+            }
+            var ids = JsonSerializer.Serialize(dialog.SelectedIds);
+            PostToMain($"{{\"action\":\"plugin-update-apply\",\"ids\":{ids}}}");
+        }
+        catch (Exception ex)
+        {
+            AppPaths.Log("Plugin update dialog failed: " + ex);
+            PostToMain("{\"action\":\"plugin-update-cancel\"}");
         }
     }
 

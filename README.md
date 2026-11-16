@@ -2,7 +2,7 @@
 
 **前沿测试频道 · 功能最先落地 · 不保证稳定**
 
-[![Canary build](https://img.shields.io/badge/canary-V0.1.4__Alpha__Canary__1116__5-e5397f)](https://github.com/Tatsukini/Tatsukini-NEON-SCOPE-Audio-Visualization-Canary/releases/tag/V0.1.4_Alpha_Canary_1116_5)
+[![Canary build](https://img.shields.io/badge/canary-V0.1.4__Alpha__Canary__1117__1-e5397f)](https://github.com/Tatsukini/Tatsukini-NEON-SCOPE-Audio-Visualization-Canary/releases/tag/V0.1.4_Alpha_Canary_1117_1)
 [![License](https://img.shields.io/badge/license-AGPL--3.0--or--later-1f6feb)](LICENSE)
 [![Stable channel](https://img.shields.io/badge/stable-V0.1.1_1104_alpha_Num.2-6e7681)](https://github.com/Tatsukini/Tatsukini-NEON-SCOPE-Audio-Visualization)
 
@@ -30,7 +30,7 @@ Canary 与稳定版共享同一套前端资源与桌面外壳，代码同源；�
 
 ## 界面测试图
 
-以下截图全部取自当前构建 `V0.1.4_Alpha_Canary_1116_5`，1920×1080，示例工程 `WHEN RAIN`。
+以下截图全部取自当前构建 `V0.1.4_Alpha_Canary_1117_1`，1920×1080，示例工程 `WHEN RAIN`。
 
 | 工作台 · 编辑与吸附 | 专注预览 · 无侧栏 |
 | --- | --- |
@@ -50,15 +50,18 @@ Canary 与稳定版共享同一套前端资源与桌面外壳，代码同源；�
 
 | 项目 | 值 |
 | --- | --- |
-| 构建号 | `V0.1.4_Alpha_Canary_1116_5` |
+| 构建号 | `V0.1.4_Alpha_Canary_1117_1` |
 | 通道 | Canary / Alpha |
-| 基于 | `V0.1.4_Alpha_Canary_1116_4` |
+| 基于 | `V0.1.4_Alpha_Canary_1116_5` |
 | 构建日期 | 2026-11-16 |
 | 许可 | AGPL-3.0-or-later（见 [LICENSE](LICENSE)、[NOTICE](NOTICE)） |
 | 可执行文件 | `dist\NEON-SCOPE.exe`、`NEON-SCOPE-win64.zip` |
 
 ### 本轮改动
 
+- **插件更新检查**：插件管理器新增「检查更新」，逐个检查 GitHub / PNPM 插件的最新版本；有更新时弹出原生 Windows 对话框，「当前版本 → 最新版本」可勾选（全选 / 全不选），确认后逐个下载并热加载。设置窗口中检查时同样由主窗口弹出。
+- **卸载无残留**：卸载插件时同步清理模块注册、绘制器、舞台实例、选中状态、工程存档与排版槽位中的引用。
+- **插件热加载**：安装、更新或重载插件后立即生效，无需重启应用。更新时先调用旧实例的 `deactivate()`，再整体替换模块定义、选项与 `draw`，舞台上已有模块直接使用新版绘制；失败更新会保留上一个可用版本。原生设置窗口中的插件操作会通知主窗口立即同步并保持启用。
 - **原生窗口菜单栏「文件」**：使用 Windows 系统标题栏与原生菜单栏（位于标题栏正下方），包含「设置…」（直达设置 → 文件）与「新建存档…」（确认后把当前工程保存为 `[基础信息名称]-MMDD-Num`.NEON，再清空舞台并开始新工程；同日编号自动递增）。菜单栏与下拉菜单为深色配色，支持 Alt 键访问；页面内容始终完整显示在菜单栏下方。
 - **无改动直接退出**：启动到关闭期间工程没有任何改动时，跳过关闭确认与自动存档遮罩直接退出；有改动时保持原有保存 / 托盘流程。
 - **关于界面新增打赏通道**：设置 → 关于新增「支持项目开发」区块，提供爱发电（https://afdian.com/a/tatsukini2333）与 Unifans（https://app.unifans.io/c/tatsukini2333）两个入口；文案为「支持项目开发，并且 Buy Me a Coffee！选择其中一个通道即可」，点击任一按钮在系统浏览器打开对应页面。

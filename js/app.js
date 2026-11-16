@@ -473,6 +473,7 @@ class NeonScopeApp {
     this._autoSavePaused = false;
     this._autoSaveBusy = false;
     this._autoSaveSignature = '';
+    this._pluginRuntimes = new Map();
     this.audio = new AudioEngine();
     this.sfx = new Sfx();
     this._loadPersisted();
@@ -587,6 +588,18 @@ class NeonScopeApp {
         location.reload();
       } else if (data?.action === 'new-archive-request') {
         this._newArchiveFlow();
+      } else if (data?.action === 'plugins-changed') {
+        this._reloadPluginsFromStorage().catch((err) => {
+          console.error('[NEON//SCOPE] Plugin reload failed:', err);
+          this._toast(`插件重载失败：${err.message}`, 'error', 4200);
+        });
+      } else if (data?.action === 'plugin-update-apply') {
+        this._applyPluginUpdates(data.ids).catch((err) => {
+          console.error('[NEON//SCOPE] Plugin update failed:', err);
+          this._toast(`插件更新失败：${err.message}`, 'error', 4200);
+        });
+      } else if (data?.action === 'plugin-update-cancel') {
+        if (this.dom.pluginStatus) this.dom.pluginStatus.textContent = '已取消插件更新';
       } else if (data?.action === 'flush-autosave') {
         // The host tears the WebView down as soon as this returns, so the
         // save must complete before answering.
@@ -878,6 +891,7 @@ class NeonScopeApp {
       layoutExportBtn: $('#layoutExportBtn'), layoutImportBtn: $('#layoutImportBtn'), layoutFile: $('#layoutFile'),
       layoutSlotInfo: $('#layoutSlotInfo'),
       pluginSourceInput: $('#pluginSourceInput'), pluginInstallGithub: $('#pluginInstallGithub'), pluginInstallPnpm: $('#pluginInstallPnpm'),
+      pluginCheckUpdates: $('#pluginCheckUpdates'),
       pluginImportLocal: $('#pluginImportLocal'), pluginFolder: $('#pluginFolder'),
       pluginReloadAll: $('#pluginReloadAll'), pluginStatus: $('#pluginStatus'), pluginList: $('#pluginList'),
       archiveFile: $('#archiveFile'), fileAnimExportBtn: $('#fileAnimExportBtn'), fileAnimImportBtn: $('#fileAnimImportBtn'),
@@ -1931,6 +1945,7 @@ class NeonScopeApp {
     this._renderLayoutSlotInfo();
     this.dom.pluginInstallGithub?.addEventListener('click', () => this._installPlugin('github'));
     this.dom.pluginInstallPnpm?.addEventListener('click', () => this._installPlugin('pnpm'));
+    this.dom.pluginCheckUpdates?.addEventListener('click', () => this._checkPluginUpdates());
     this.dom.pluginImportLocal?.addEventListener('click', () => this.dom.pluginFolder?.click());
     this.dom.pluginFolder?.addEventListener('change', () => {
       const files = Array.from(this.dom.pluginFolder.files || []);
@@ -1949,6 +1964,11 @@ class NeonScopeApp {
       if (button.dataset.pluginAction === 'remove') this._removePlugin(id);
       else if (button.dataset.pluginAction === 'toggle') this._togglePlugin(id);
       else if (button.dataset.pluginAction === 'reload') {
+        if (this._standaloneSettings) {
+          this._notifyPluginsChanged();
+          this.dom.pluginStatus.textContent = '已通知主窗口重载插件';
+          return;
+        }
         const record = this._pluginRecords().find((p) => p.id === id);
         if (record) this._activatePlugin(record).then(() => this._renderPluginManager());
       }
@@ -3396,9 +3416,10 @@ class NeonScopeApp {
     if (!this._validPluginName(info.name)) throw new Error(`仓库名必须以 ${PLUGIN_PREFIX} 开头`);
     const branch = info.default_branch || 'main';
     const base = `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/`;
-    const manifest = this._validatePluginManifest(JSON.parse(await this._fetchPluginText(`${base}plugin.json`)), info.name);
+    const stamp = Date.now();
+    const manifest = this._validatePluginManifest(JSON.parse(await this._fetchPluginText(`${base}plugin.json?t=${stamp}`)), info.name);
     if (!manifest.repository) manifest.repository = info.html_url;
-    const code = await this._fetchPluginText(`${base}${manifest.entry}`);
+    const code = await this._fetchPluginText(`${base}${manifest.entry}?t=${stamp}`);
     return { manifest, code, source: `github:${owner}/${repo}`, version: manifest.version || info.default_branch || '0.0.0' };
   }
 
@@ -3438,6 +3459,13 @@ class NeonScopeApp {
       };
       records.push(record);
       this._savePluginRecords(records);
+      if (this._standaloneSettings) {
+        this._renderPluginManager();
+        this._notifyPluginsChanged();
+        this.dom.pluginStatus.textContent = `已安装 ${record.name}，主窗口正在启用`;
+        this._toast(`插件已安装 · ${record.name}`, 'success', 2800);
+        return;
+      }
       const loaded = await this._activatePlugin(record);
       this._renderPluginManager();
       this.dom.pluginStatus.textContent = loaded ? `已安装并启用 ${record.name}` : `已安装 ${record.name}，但激活失败`;
@@ -3481,6 +3509,13 @@ class NeonScopeApp {
       };
       records.push(record);
       this._savePluginRecords(records);
+      if (this._standaloneSettings) {
+        this._renderPluginManager();
+        this._notifyPluginsChanged();
+        this.dom.pluginStatus.textContent = `已导入本地插件 ${record.name}，主窗口正在启用`;
+        this._toast(`本地插件已导入 · ${record.name}`, 'success', 2800);
+        return;
+      }
       const loaded = await this._activatePlugin(record);
       this._renderPluginManager();
       this.dom.pluginStatus.textContent = loaded ? `已导入本地插件 ${record.name}` : `已导入 ${record.name}，但激活失败`;
@@ -3491,24 +3526,182 @@ class NeonScopeApp {
     }
   }
 
+  async _checkPluginUpdates() {
+    const records = this._pluginRecords();
+    if (!records.length) {
+      this.dom.pluginStatus.textContent = '还没有安装插件';
+      return;
+    }
+    const remote = records.filter((record) => !String(record.source || '').startsWith('local:'));
+    if (!remote.length) {
+      this.dom.pluginStatus.textContent = '本地插件没有更新源，请重新导入文件夹';
+      return;
+    }
+    this.dom.pluginStatus.textContent = '正在检查插件更新…';
+    const updates = [];
+    let checked = 0;
+    for (const record of remote) {
+      try {
+        const data = await this._fetchPluginUpdate(record);
+        checked += 1;
+        if (data && this._versionNewer(data.version, record.version)) {
+          updates.push({
+            id: record.id,
+            name: record.name,
+            currentVersion: record.version || '0.0.0',
+            latestVersion: data.version,
+            source: record.source,
+          });
+        }
+      } catch (err) {
+        console.warn(`[NEON//SCOPE] Update check failed for ${record.id}:`, err);
+      }
+    }
+    if (!updates.length) {
+      this.dom.pluginStatus.textContent = checked
+        ? `已检查 ${checked} 个插件，均为最新版本`
+        : '更新检查失败，请检查网络后重试';
+      if (checked) this._toast('所有插件均为最新版本', 'success', 2600);
+      return;
+    }
+    this.dom.pluginStatus.textContent = `发现 ${updates.length} 个可用更新`;
+    if (this._isNative) {
+      try { window.chrome.webview.postMessage({ action: 'plugin-update-prompt', updates }); } catch { /* bridge is optional */ }
+      return;
+    }
+    const confirmed = await this._showConfirm(
+      `发现 ${updates.length} 个插件更新，全部更新吗？`,
+      { title: '插件更新', confirmText: '全部更新', cancelText: '取消' }
+    );
+    if (confirmed) await this._applyPluginUpdates(updates.map((item) => item.id));
+  }
+
+  _versionNewer(latest, current) {
+    const parse = (value) => String(value || '0').split(/[.-]/).map((part) => {
+      const match = String(part).match(/^\d+/);
+      return match ? Number(match[0]) : 0;
+    });
+    const a = parse(latest);
+    const b = parse(current);
+    const length = Math.max(a.length, b.length);
+    for (let i = 0; i < length; i += 1) {
+      const left = a[i] || 0;
+      const right = b[i] || 0;
+      if (left !== right) return left > right;
+    }
+    return false;
+  }
+
+  async _fetchPluginUpdate(record) {
+    const source = String(record.source || '');
+    if (source.startsWith('github:')) return this._fetchGithubPlugin(source.slice(7));
+    if (source.startsWith('pnpm:')) return this._fetchPnpmPlugin(source.slice(5));
+    throw new Error('本地插件没有更新源');
+  }
+
+  async _applyPluginUpdates(ids) {
+    const wanted = new Set((Array.isArray(ids) ? ids : []).map((item) => String(item)));
+    if (!wanted.size) return;
+    if (this.dom.pluginStatus) this.dom.pluginStatus.textContent = `正在更新 ${wanted.size} 个插件…`;
+    let updated = 0;
+    const failures = [];
+    for (const id of wanted) {
+      const record = this._pluginRecords().find((item) => item.id === id);
+      if (!record) continue;
+      try {
+        const data = await this._fetchPluginUpdate(record);
+        if (!data) throw new Error('更新源没有返回数据');
+        const next = {
+          ...record,
+          name: data.manifest.name,
+          version: data.version,
+          entry: data.manifest.entry,
+          manifest: data.manifest,
+          code: data.code,
+          enabled: true,
+          installedAt: new Date().toISOString(),
+          lastError: '',
+        };
+        const records = this._pluginRecords().filter((item) => item.id !== id);
+        records.push(this._pluginPersistRecord(next));
+        this._savePluginRecords(records);
+        const ok = await this._activatePlugin(next);
+        if (ok) updated += 1;
+        else failures.push(`${record.name}: ${next.lastError || '激活失败'}`);
+      } catch (err) {
+        failures.push(`${record.name}: ${err.message}`);
+      }
+    }
+    this._renderPluginManager();
+    this._renderLibrary();
+    this.visualizer?.syncOverlay();
+    if (this.dom.pluginStatus) {
+      this.dom.pluginStatus.textContent = failures.length
+        ? `已更新 ${updated} 个，${failures.length} 个失败：${failures.join('；')}`
+        : `已更新 ${updated} 个插件`;
+    }
+    this._toast(failures.length ? `插件更新完成，${failures.length} 个失败` : `插件已更新 · ${updated} 个`,
+      failures.length ? 'error' : 'success', 4200);
+    if (this._standaloneSettings) this._notifyPluginsChanged();
+  }
+
+  _pluginPersistRecord(record) {
+    const { _deactivate, _modules, ...rest } = record;
+    return rest;
+  }
+
+  _notifyPluginsChanged() {
+    if (!this._isNative || !this._standaloneSettings) return;
+    try { window.chrome.webview.postMessage({ action: 'plugins-changed' }); } catch { /* bridge is optional */ }
+  }
+
   async _activatePlugin(record) {
+    const previous = this._pluginRuntimes.get(record.id);
     try {
-      if (record._deactivate) { try { await record._deactivate(); } catch { /* ignore */ } }
+      if (previous?.deactivate) { try { await previous.deactivate(); } catch { /* ignore */ } }
       const blob = new Blob([record.code], { type: 'text/javascript' });
       const url = URL.createObjectURL(blob);
       let module;
       try { module = await import(url); } finally { URL.revokeObjectURL(url); }
       if (typeof module.activate !== 'function') throw new Error('插件必须导出 activate(context)');
-      const registered = [];
+      const pending = [];
       const context = {
         apiVersion: 1,
         app: 'NEON//SCOPE',
         plugin: { id: record.id, name: record.name, version: record.version },
-        registerModule: (spec) => this._registerPluginModule(record, spec, registered),
+        registerModule: (spec) => pending.push(spec),
         log: (...args) => console.log(`[plugin:${record.id}]`, ...args),
         toast: (message, tone = 'info') => this._toast(String(message), tone, 3000),
       };
       await module.activate(context);
+
+      // Validate everything before touching the live registry so a broken
+      // update leaves the previously working version in place.
+      const prepared = pending.map((spec) => this._buildPluginModule(record, spec));
+
+      if (previous?.types?.length) {
+        for (const type of previous.types) {
+          delete MODULE_DEFS[type];
+          delete MODULE_OPTIONS[type];
+          unregisterPluginDrawer(type);
+          const index = MODULE_ORDER.indexOf(type);
+          if (index >= 0) MODULE_ORDER.splice(index, 1);
+        }
+      }
+
+      const registered = [];
+      for (const item of prepared) {
+        MODULE_DEFS[item.type] = item.def;
+        if (!MODULE_ORDER.includes(item.type)) MODULE_ORDER.push(item.type);
+        MODULE_OPTIONS[item.type] = item.options;
+        registerPluginDrawer(item.type, item.draw);
+        registered.push(item.type);
+      }
+
+      this._pluginRuntimes.set(record.id, {
+        deactivate: typeof module.deactivate === 'function' ? module.deactivate : null,
+        types: registered,
+      });
       record._deactivate = typeof module.deactivate === 'function' ? module.deactivate : null;
       record._modules = registered;
       record.moduleCount = registered.length;
@@ -3516,44 +3709,46 @@ class NeonScopeApp {
       record.enabled = true;
       const records = this._pluginRecords();
       const index = records.findIndex((p) => p.id === record.id);
+      const persistable = this._pluginPersistRecord(record);
       if (index >= 0) records[index] = { ...records[index], enabled: true, moduleCount: registered.length, lastError: '' };
-      else records.push({ ...record });
+      else records.push(persistable);
       this._savePluginRecords(records);
       this._renderLibrary();
       this.visualizer?.syncOverlay();
       return true;
     } catch (err) {
       record.lastError = err.message;
-      record.enabled = false;
+      record.enabled = Boolean(previous);
       const records = this._pluginRecords();
       const index = records.findIndex((p) => p.id === record.id);
-      if (index >= 0) records[index] = { ...records[index], enabled: false, lastError: err.message };
+      if (index >= 0) records[index] = { ...records[index], enabled: record.enabled, lastError: err.message };
       this._savePluginRecords(records);
       console.error(`[NEON//SCOPE] Plugin "${record.id}" failed:`, err);
       return false;
     }
   }
 
-  _registerPluginModule(plugin, spec, registered) {
+  _buildPluginModule(plugin, spec) {
     if (!spec || typeof spec !== 'object') throw new Error('registerModule 需要模块描述对象');
     if (typeof spec.draw !== 'function') throw new Error('模块缺少 draw 函数');
     const localId = String(spec.id || '').replace(/[^a-z0-9_-]/gi, '-').toLowerCase();
     if (!localId) throw new Error('模块缺少 id');
     const type = `${plugin.id}:${localId}`;
-    MODULE_DEFS[type] = {
-      name: String(spec.name || localId),
-      code: String(spec.code || 'PLUGIN MODULE'),
-      glyph: String(spec.glyph || '◆').slice(0, 2),
-      about: String(spec.about || `Plugin module from ${plugin.name}`),
-      w: clamp(Number(spec.w) || 360, 180, 1200),
-      h: clamp(Number(spec.h) || 220, 120, 800),
-      category: String(spec.category || 'PLUGIN'),
-      plugin: plugin.id,
+    return {
+      type,
+      def: {
+        name: String(spec.name || localId),
+        code: String(spec.code || 'PLUGIN MODULE'),
+        glyph: String(spec.glyph || '◆').slice(0, 2),
+        about: String(spec.about || `Plugin module from ${plugin.name}`),
+        w: clamp(Number(spec.w) || 360, 180, 1200),
+        h: clamp(Number(spec.h) || 220, 120, 800),
+        category: String(spec.category || 'PLUGIN'),
+        plugin: plugin.id,
+      },
+      options: Array.isArray(spec.options) ? spec.options.filter((o) => o && o.key) : [],
+      draw: spec.draw,
     };
-    if (!MODULE_ORDER.includes(type)) MODULE_ORDER.push(type);
-    MODULE_OPTIONS[type] = Array.isArray(spec.options) ? spec.options.filter((o) => o && o.key) : [];
-    registerPluginDrawer(type, spec.draw);
-    registered.push(type);
   }
 
   async _loadEnabledPlugins() {
@@ -3564,6 +3759,24 @@ class NeonScopeApp {
     }
     this._restorePluginModulesFromStorage();
     this._renderPluginManager();
+  }
+
+  async _reloadPluginsFromStorage() {
+    const records = this._pluginRecords();
+    const enabled = new Set(records.filter((record) => record.enabled).map((record) => record.id));
+    for (const id of [...this._pluginRuntimes.keys()]) {
+      if (enabled.has(id)) continue;
+      this._removePluginModules({ id, _modules: [] });
+    }
+    for (const record of records) {
+      if (!record.enabled) continue;
+      await this._activatePlugin(record);
+    }
+    this._restorePluginModulesFromStorage();
+    this._renderPluginManager();
+    this._renderLibrary();
+    this.visualizer?.syncOverlay();
+    this._persist();
   }
 
   _restorePluginModulesFromStorage() {
@@ -3582,14 +3795,41 @@ class NeonScopeApp {
   }
 
   _removePluginModules(record) {
-    for (const type of record._modules || []) {
+    const runtime = this._pluginRuntimes.get(record.id);
+    const types = runtime?.types?.length ? runtime.types : (record._modules || []);
+    for (const type of types) {
       delete MODULE_DEFS[type];
       delete MODULE_OPTIONS[type];
       unregisterPluginDrawer(type);
       const index = MODULE_ORDER.indexOf(type);
       if (index >= 0) MODULE_ORDER.splice(index, 1);
     }
-    this.state.modules = (this.state.modules || []).filter((m) => !String(m.type).startsWith(`${record.id}:`));
+    this._pluginRuntimes.delete(record.id);
+    const removed = (this.state.modules || []).filter((m) => String(m.type).startsWith(`${record.id}:`));
+    for (const mod of removed) {
+      this.visualizer?.states?.delete(mod.id);
+      if (this._moduleMenuId === mod.id) this._moduleMenuId = null;
+    }
+    if (removed.length) {
+      const removedIds = new Set(removed.map((mod) => mod.id));
+      this.state.modules = (this.state.modules || []).filter((m) => !removedIds.has(m.id));
+      if (this.state.selectedId && removedIds.has(this.state.selectedId)) {
+        this.state.selectedId = null;
+        this._syncSelectionUI(null);
+      }
+    }
+    const slots = this._layoutSlots();
+    let slotsChanged = false;
+    for (const slot of slots) {
+      const modules = slot?.layout?.modules;
+      if (!Array.isArray(modules)) continue;
+      const kept = modules.filter((m) => !String(m?.type).startsWith(`${record.id}:`));
+      if (kept.length !== modules.length) {
+        slot.layout.modules = kept;
+        slotsChanged = true;
+      }
+    }
+    if (slotsChanged) safeStore(LAYOUT_SLOTS_KEY, JSON.stringify(slots));
     record._modules = [];
   }
 
@@ -3597,6 +3837,13 @@ class NeonScopeApp {
     const records = this._pluginRecords();
     const record = records.find((p) => p.id === id);
     if (!record) return;
+    if (this._standaloneSettings) {
+      this._savePluginRecords(records.filter((p) => p.id !== id));
+      this._renderPluginManager();
+      this._notifyPluginsChanged();
+      this._toast(`插件已卸载 · ${record.name}`, 'info', 2400);
+      return;
+    }
     if (record._deactivate) { try { await record._deactivate(); } catch { /* ignore */ } }
     this._removePluginModules(record);
     this._savePluginRecords(records.filter((p) => p.id !== id));
@@ -3611,6 +3858,13 @@ class NeonScopeApp {
     const records = this._pluginRecords();
     const record = records.find((p) => p.id === id);
     if (!record) return;
+    if (this._standaloneSettings) {
+      record.enabled = !record.enabled;
+      this._savePluginRecords(records);
+      this._renderPluginManager();
+      this._notifyPluginsChanged();
+      return;
+    }
     if (record.enabled) {
       if (record._deactivate) { try { await record._deactivate(); } catch { /* ignore */ } }
       this._removePluginModules(record);
