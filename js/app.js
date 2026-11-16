@@ -7783,13 +7783,16 @@ class NeonScopeApp {
       d.inspectorEmpty.classList.remove('hidden');
       d.inspectorModule.classList.add('hidden');
       d.selectionBadge.textContent = 'NO SELECTION';
+      d.selectionBadge.title = '';
       d.selectionBadge.classList.remove('active');
       this.visualizer.updateSelectionClasses();
       return;
     }
     d.inspectorEmpty.classList.add('hidden');
     d.inspectorModule.classList.remove('hidden');
-    d.selectionBadge.textContent = `${mod.type.toUpperCase()} SELECTED`;
+    const shortType = String(mod.type).includes(':') ? String(mod.type).split(':').pop() : String(mod.type);
+    d.selectionBadge.textContent = `${shortType.toUpperCase()} SELECTED`;
+    d.selectionBadge.title = mod.type;
     d.selectionBadge.classList.add('active');
     this._lastSelectionKind = 'module';
     const def = MODULE_DEFS[mod.type];

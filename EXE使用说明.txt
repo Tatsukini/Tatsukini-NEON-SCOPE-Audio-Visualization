@@ -1,4 +1,4 @@
-NEON//SCOPE  V0.1.4_Alpha_Canary_1117_2  (Windows x64)
+NEON//SCOPE  V0.1.4_Alpha_Canary_1117_3  (Windows x64)
 
 启动：
   双击 NEON-SCOPE.exe

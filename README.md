@@ -2,7 +2,7 @@
 
 **前沿测试频道 · 功能最先落地 · 不保证稳定**
 
-[![Canary build](https://img.shields.io/badge/canary-V0.1.4__Alpha__Canary__1117__2-e5397f)](https://github.com/Tatsukini/Tatsukini-NEON-SCOPE-Audio-Visualization-Canary/releases/tag/V0.1.4_Alpha_Canary_1117_2)
+[![Canary build](https://img.shields.io/badge/canary-V0.1.4__Alpha__Canary__1117__3-e5397f)](https://github.com/Tatsukini/Tatsukini-NEON-SCOPE-Audio-Visualization-Canary/releases/tag/V0.1.4_Alpha_Canary_1117_3)
 [![License](https://img.shields.io/badge/license-AGPL--3.0--or--later-1f6feb)](LICENSE)
 [![Stable channel](https://img.shields.io/badge/stable-V0.1.1_1104_alpha_Num.2-6e7681)](https://github.com/Tatsukini/Tatsukini-NEON-SCOPE-Audio-Visualization)
 
@@ -30,7 +30,7 @@ Canary 与稳定版共享同一套前端资源与桌面外壳，代码同源；�
 
 ## 界面测试图
 
-以下截图全部取自当前构建 `V0.1.4_Alpha_Canary_1117_2`，1920×1080，示例工程 `WHEN RAIN`。
+以下截图全部取自当前构建 `V0.1.4_Alpha_Canary_1117_3`，1920×1080，示例工程 `WHEN RAIN`。
 
 | 工作台 · 编辑与吸附 | 专注预览 · 无侧栏 |
 | --- | --- |
@@ -50,7 +50,7 @@ Canary 与稳定版共享同一套前端资源与桌面外壳，代码同源；�
 
 | 项目 | 值 |
 | --- | --- |
-| 构建号 | `V0.1.4_Alpha_Canary_1117_2` |
+| 构建号 | `V0.1.4_Alpha_Canary_1117_3` |
 | 通道 | Canary / Alpha |
 | 基于 | `V0.1.4_Alpha_Canary_1117_1` |
 | 构建日期 | 2026-11-16 |
@@ -59,6 +59,7 @@ Canary 与稳定版共享同一套前端资源与桌面外壳，代码同源；�
 
 ### 本轮改动
 
+- **属性检查器头部溢出修复**：150% 缩放 / 全屏下选中徽标不再显示超长的完整模块类型，改为模块短名 + 省略号（悬停可看完整类型）；标题保持单行，不再与浮动/关闭按钮重叠。
 - **插件能力扩展**：插件可声明自己的设置面板（文本 / 密码 / 多行文本 / 开关 / 下拉 / 颜色 / 数值 / 图片），设置只存本机、不写入 `.NEON`，卸载时清除；新增 `context.storage`、`context.assets`、`context.net.fetch`（CORS 失败时走本机代理）、`context.loadImage` 与 `context.on(...)` 事件。
 - **插件模块与选项增强**：支持默认隐藏、尺寸边界、模块库图标与鼠标回调；选项新增 `password`、`textarea`、`image`、`button`，`select` 可动态生成，`text` 长度可配置。
 - **插件权限声明**：`permissions` 在安装时确认，`network` / `storage` / `assets` / `clipboard` / `openExternal` 未声明即拒绝。
