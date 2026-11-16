@@ -2,7 +2,7 @@
 
 **前沿测试频道 · 功能最先落地 · 不保证稳定**
 
-[![Canary build](https://img.shields.io/badge/canary-V0.1.4__Alpha__Canary__1117__1-e5397f)](https://github.com/Tatsukini/Tatsukini-NEON-SCOPE-Audio-Visualization-Canary/releases/tag/V0.1.4_Alpha_Canary_1117_1)
+[![Canary build](https://img.shields.io/badge/canary-V0.1.4__Alpha__Canary__1117__2-e5397f)](https://github.com/Tatsukini/Tatsukini-NEON-SCOPE-Audio-Visualization-Canary/releases/tag/V0.1.4_Alpha_Canary_1117_2)
 [![License](https://img.shields.io/badge/license-AGPL--3.0--or--later-1f6feb)](LICENSE)
 [![Stable channel](https://img.shields.io/badge/stable-V0.1.1_1104_alpha_Num.2-6e7681)](https://github.com/Tatsukini/Tatsukini-NEON-SCOPE-Audio-Visualization)
 
@@ -30,7 +30,7 @@ Canary 与稳定版共享同一套前端资源与桌面外壳，代码同源；�
 
 ## 界面测试图
 
-以下截图全部取自当前构建 `V0.1.4_Alpha_Canary_1117_1`，1920×1080，示例工程 `WHEN RAIN`。
+以下截图全部取自当前构建 `V0.1.4_Alpha_Canary_1117_2`，1920×1080，示例工程 `WHEN RAIN`。
 
 | 工作台 · 编辑与吸附 | 专注预览 · 无侧栏 |
 | --- | --- |
@@ -50,16 +50,22 @@ Canary 与稳定版共享同一套前端资源与桌面外壳，代码同源；�
 
 | 项目 | 值 |
 | --- | --- |
-| 构建号 | `V0.1.4_Alpha_Canary_1117_1` |
+| 构建号 | `V0.1.4_Alpha_Canary_1117_2` |
 | 通道 | Canary / Alpha |
-| 基于 | `V0.1.4_Alpha_Canary_1116_5` |
+| 基于 | `V0.1.4_Alpha_Canary_1117_1` |
 | 构建日期 | 2026-11-16 |
 | 许可 | AGPL-3.0-or-later（见 [LICENSE](LICENSE)、[NOTICE](NOTICE)） |
 | 可执行文件 | `dist\NEON-SCOPE.exe`、`NEON-SCOPE-win64.zip` |
 
 ### 本轮改动
 
-- **插件更新检查**：插件管理器新增「检查更新」，逐个检查 GitHub / PNPM 插件的最新版本；有更新时弹出原生 Windows 对话框，「当前版本 → 最新版本」可勾选（全选 / 全不选），确认后逐个下载并热加载。设置窗口中检查时同样由主窗口弹出。
+- **插件能力扩展**：插件可声明自己的设置面板（文本 / 密码 / 多行文本 / 开关 / 下拉 / 颜色 / 数值 / 图片），设置只存本机、不写入 `.NEON`，卸载时清除；新增 `context.storage`、`context.assets`、`context.net.fetch`（CORS 失败时走本机代理）、`context.loadImage` 与 `context.on(...)` 事件。
+- **插件模块与选项增强**：支持默认隐藏、尺寸边界、模块库图标与鼠标回调；选项新增 `password`、`textarea`、`image`、`button`，`select` 可动态生成，`text` 长度可配置。
+- **插件权限声明**：`permissions` 在安装时确认，`network` / `storage` / `assets` / `clipboard` / `openExternal` 未声明即拒绝。
+- **插件文字颜色不再被主题覆盖**：此前渲染层会把插件模块的 `fillText` 强制改成主题文字色，插件自定的灰/蓝等颜色失效（表现为「插件更新了但看起来仍是旧版」）。现在插件 `draw` 自行控制文字颜色，内置模块不变。
+- **GitHub 插件按提交拉取**：`raw.githubusercontent.com` 会忽略查询参数缓存旧文件，现改为先取分支最新 commit SHA，再按 SHA 读取 `plugin.json` 与入口（提交不可变、也不占 Contents API 额度），避免“检查不到更新/版本与代码不一致”；GitHub API 限流（60 次/小时）时自动回退 CDN 并在状态栏标注。
+- **插件代码哈希与强制重同步**：激活后记录入口代码 SHA-256；「检查更新」同时比较版本号与哈希，版本相同但代码不同也提示「代码已变化」；「重载」对远程插件重新下载后再激活；插件卡片显示 `CODE xxxxxxxx` 便于核对。
+- **插件更新检查**：插件管理器新增「检查更新」，逐个检查 GitHub / PNPM 插件的最新版本；有更新时弹出原生 Windows 对话框，「当前版本 → 最新版本」可勾选（全选 / 全不选），确认后逐个下载并热加载。设置窗口中检查时同样由主窗口弹出；更新完成后设置窗口的插件列表会立即刷出新版本。
 - **卸载无残留**：卸载插件时同步清理模块注册、绘制器、舞台实例、选中状态、工程存档与排版槽位中的引用。
 - **插件热加载**：安装、更新或重载插件后立即生效，无需重启应用。更新时先调用旧实例的 `deactivate()`，再整体替换模块定义、选项与 `draw`，舞台上已有模块直接使用新版绘制；失败更新会保留上一个可用版本。原生设置窗口中的插件操作会通知主窗口立即同步并保持启用。
 - **原生窗口菜单栏「文件」**：使用 Windows 系统标题栏与原生菜单栏（位于标题栏正下方），包含「设置…」（直达设置 → 文件）与「新建存档…」（确认后把当前工程保存为 `[基础信息名称]-MMDD-Num`.NEON，再清空舞台并开始新工程；同日编号自动递增）。菜单栏与下拉菜单为深色配色，支持 Alt 键访问；页面内容始终完整显示在菜单栏下方。

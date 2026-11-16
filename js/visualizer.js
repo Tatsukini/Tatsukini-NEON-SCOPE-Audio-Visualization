@@ -1,5 +1,5 @@
 // Copyright (C) 2026 Tatsukini
-import { STAGE_W, STAGE_H, clamp, formatTC, formatShortTime, mixHex, withAlpha, automationValueAt, resolveThemeColors, hexAlpha, isHexColor } from './core.js';
+import { STAGE_W, STAGE_H, clamp, formatTC, formatShortTime, mixHex, withAlpha, automationValueAt, resolveThemeColors, hexAlpha, isHexColor, MODULE_DEFS } from './core.js';
 import { BackgroundRenderer } from './background.js';
 import { drawVisualModule } from './modules.js';
 import { resolveTimeSignature } from './music.js';
@@ -185,6 +185,8 @@ export class Visualizer {
           <span class="handle sw"></span><span class="handle se"></span>
           <div class="resize-hint"></div>`;
         el.addEventListener('pointerdown', (e) => this._beginDrag(e, mod.id, el));
+        el.addEventListener('pointerenter', (e) => this._emitModulePointer(mod.id, 'enter', e));
+        el.addEventListener('pointerleave', (e) => this._emitModulePointer(mod.id, 'leave', e));
         this.overlay.appendChild(el);
       }
       el.dataset.label = (mod.title || mod.type).toUpperCase();
@@ -225,6 +227,7 @@ export class Visualizer {
     e.preventDefault();
     e.stopPropagation();
     this.select(id);
+    this._emitModulePointer(id, 'down', e);
     const handle = e.target.closest('.handle');
     const mode = handle ? Array.from(handle.classList).find((c) => ['nw', 'ne', 'sw', 'se'].includes(c)) || 'move' : 'move';
     const rect = this.stage.getBoundingClientRect();
@@ -250,6 +253,7 @@ export class Visualizer {
       const moved = this.drag.moved;
       this.drag = null;
       this._hideGuides();
+      this._emitModulePointer(id, 'up', ev);
       if (moved) this.callbacks.onLayoutCommit?.(mod);
     };
     el.addEventListener('pointermove', move);
@@ -289,7 +293,28 @@ export class Visualizer {
       this._applyResize(mod, geom);
     }
     this.updateModuleElement(mod);
+    this._emitModulePointer(mod.id, 'move', e);
     this.callbacks.onGeometry?.(mod);
+  }
+
+  _emitModulePointer(id, type, e) {
+    if (this.exportMode || !e) return;
+    const mod = this.state.modules.find((m) => m.id === id);
+    const def = mod ? MODULE_DEFS[mod.type] : null;
+    if (!def?.plugin || typeof def.onPointer !== 'function') return;
+    const rect = this.stage.getBoundingClientRect();
+    const sx = rect.width > 0 ? (e.clientX - rect.left) / rect.width * STAGE_W : 0;
+    const sy = rect.height > 0 ? (e.clientY - rect.top) / rect.height * STAGE_H : 0;
+    try {
+      def.onPointer(mod, {
+        type, x: sx - mod.x, y: sy - mod.y, stageX: sx, stageY: sy,
+        button: e.button, buttons: e.buttons,
+        shiftKey: e.shiftKey, ctrlKey: e.ctrlKey, altKey: e.altKey,
+        originalEvent: e,
+      });
+    } catch (err) {
+      console.warn(`[NEON//SCOPE] Module pointer handler failed (${mod.type}):`, err);
+    }
   }
 
   _resizeGeometry(mode, dx, dy, d) {
@@ -303,13 +328,26 @@ export class Visualizer {
 
   _applyResize(mod, g) {
     let x = g.x, y = g.y, w = g.w, h = g.h;
-    if (w < MIN_W) {
-      if (g.x !== mod.x) x = mod.x + mod.w - MIN_W;
-      w = MIN_W;
+    const def = MODULE_DEFS[mod.type] || {};
+    const minW = Math.max(MIN_W, Number(def.minW) || 0);
+    const minH = Math.max(MIN_H, Number(def.minH) || 0);
+    const maxW = Math.min(STAGE_W, Number(def.maxW) || STAGE_W);
+    const maxH = Math.min(STAGE_H, Number(def.maxH) || STAGE_H);
+    if (w < minW) {
+      if (g.x !== mod.x) x = mod.x + mod.w - minW;
+      w = minW;
     }
-    if (h < MIN_H) {
-      if (g.y !== mod.y) y = mod.y + mod.h - MIN_H;
-      h = MIN_H;
+    if (h < minH) {
+      if (g.y !== mod.y) y = mod.y + mod.h - minH;
+      h = minH;
+    }
+    if (w > maxW) {
+      if (g.x !== mod.x) x = mod.x + mod.w - maxW;
+      w = maxW;
+    }
+    if (h > maxH) {
+      if (g.y !== mod.y) y = mod.y + mod.h - maxH;
+      h = maxH;
     }
     x = clamp(x, 0, STAGE_W - w);
     y = clamp(y, 0, STAGE_H - h);

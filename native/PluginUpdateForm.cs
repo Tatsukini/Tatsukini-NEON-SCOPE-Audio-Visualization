@@ -7,7 +7,14 @@ using System.Windows.Forms;
 
 namespace NeonScope;
 
-internal sealed record PluginUpdateItem(string Id, string Name, string CurrentVersion, string LatestVersion);
+internal sealed record PluginUpdateItem(string Id, string Name, string CurrentVersion, string LatestVersion, string Note)
+{
+    public string Display =>
+        $"{Name}    v{CurrentVersion} → v{LatestVersion}" +
+        (string.IsNullOrWhiteSpace(Note) ? "" : $"（{Note}）");
+
+    public override string ToString() => Display;
+}
 
 internal sealed class PluginUpdateForm : Form
 {
@@ -67,8 +74,7 @@ internal sealed class PluginUpdateForm : Form
         };
         _list.Format += (_, e) =>
         {
-            if (e.ListItem is PluginUpdateItem item)
-                e.Value = $"{item.Name}    v{item.CurrentVersion} → v{item.LatestVersion}";
+            if (e.ListItem is PluginUpdateItem item) e.Value = item.Display;
         };
         foreach (var item in items) _list.Items.Add(item, true);
 

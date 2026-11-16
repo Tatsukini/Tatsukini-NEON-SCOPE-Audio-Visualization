@@ -324,6 +324,12 @@ internal sealed class MainForm : Form
                 case "plugin-update-prompt":
                     ShowPluginUpdatePrompt(doc.RootElement);
                     break;
+                case "plugins-changed":
+                    _settingsForm?.PostJson("{\"action\":\"plugins-changed\"}");
+                    break;
+                case "plugin-settings-changed":
+                    _settingsForm?.PostJson(e.WebMessageAsJson);
+                    break;
             }
         }
         catch (Exception ex)
@@ -332,7 +338,7 @@ internal sealed class MainForm : Form
         }
     }
 
-    private void ShowPluginUpdatePrompt(System.Text.Json.JsonElement element)
+    private void ShowPluginUpdatePrompt(System.Text.Json.JsonElement element, IWin32Window? owner = null)
     {
         if (!element.TryGetProperty("updates", out var updates) || updates.ValueKind != JsonValueKind.Array) return;
         var items = new List<PluginUpdateItem>();
@@ -343,13 +349,14 @@ internal sealed class MainForm : Form
             var name = update.TryGetProperty("name", out var nameElement) ? nameElement.GetString() : id;
             var current = update.TryGetProperty("currentVersion", out var currentElement) ? currentElement.GetString() : null;
             var latest = update.TryGetProperty("latestVersion", out var latestElement) ? latestElement.GetString() : null;
-            items.Add(new PluginUpdateItem(id!, name ?? id!, current ?? "0.0.0", latest ?? "0.0.0"));
+            var note = update.TryGetProperty("note", out var noteElement) ? noteElement.GetString() : null;
+            items.Add(new PluginUpdateItem(id!, name ?? id!, current ?? "0.0.0", latest ?? "0.0.0", note ?? ""));
         }
         if (items.Count == 0) return;
         try
         {
             using var dialog = new PluginUpdateForm(items);
-            if (dialog.ShowDialog(this) != DialogResult.OK)
+            if (dialog.ShowDialog(owner ?? this) != DialogResult.OK)
             {
                 PostToMain("{\"action\":\"plugin-update-cancel\"}");
                 return;
@@ -620,6 +627,16 @@ internal sealed class MainForm : Form
                 {
                     if (doc.RootElement.TryGetProperty("archive", out var archive))
                         PostToMain($"{{\"action\":\"archive-import\",\"archive\":{archive.GetRawText()}}}");
+                    return;
+                }
+                if (action == "plugin-update-prompt")
+                {
+                    ShowPluginUpdatePrompt(doc.RootElement, sender as IWin32Window);
+                    return;
+                }
+                if (action == "plugin-settings-changed")
+                {
+                    PostToMain(json);
                     return;
                 }
             }

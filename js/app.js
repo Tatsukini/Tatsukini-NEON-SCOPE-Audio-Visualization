@@ -24,6 +24,12 @@ const LAYOUT_SLOTS_KEY = 'neon-scope.layout-slots.v1';
 const HW_STATS_KEY = 'neon-scope.hw-stats.v1';
 const PLUGINS_KEY = 'neon-scope.plugins.v1';
 const PLUGIN_PREFIX = 'tatsukini-neon-';
+const PLUGIN_SETTINGS_PREFIX = 'neon-scope.plugin-settings.v1:';
+const PLUGIN_DATA_PREFIX = 'neon-scope.plugin-data.v1:';
+const PLUGIN_ASSET_PREFIX = 'neon-scope.plugin-assets.v1:';
+const PLUGIN_ALLOWED_PERMISSIONS = ['modules', 'network', 'storage', 'assets', 'clipboard', 'openExternal'];
+const PLUGIN_ASSET_MAX_BYTES = 2 * 1024 * 1024;
+const PLUGIN_DATA_MAX_CHARS = 128 * 1024;
 const SETTINGS_SYNC_KEY = 'neon-scope.settings-sync.v1';
 const FORCE_RESTORE_KEY = 'neon-scope.force-restore';
 const NEW_PROJECT_KEY = 'neon-scope.new-project-once';
@@ -589,10 +595,16 @@ class NeonScopeApp {
       } else if (data?.action === 'new-archive-request') {
         this._newArchiveFlow();
       } else if (data?.action === 'plugins-changed') {
-        this._reloadPluginsFromStorage().catch((err) => {
-          console.error('[NEON//SCOPE] Plugin reload failed:', err);
-          this._toast(`插件重载失败：${err.message}`, 'error', 4200);
-        });
+        if (this._standaloneSettings) {
+          this._renderPluginManager();
+          this._renderLibrary();
+          if (this.dom.pluginStatus) this.dom.pluginStatus.textContent = '插件列表已同步';
+        } else {
+          this._reloadPluginsFromStorage().catch((err) => {
+            console.error('[NEON//SCOPE] Plugin reload failed:', err);
+            this._toast(`插件重载失败：${err.message}`, 'error', 4200);
+          });
+        }
       } else if (data?.action === 'plugin-update-apply') {
         this._applyPluginUpdates(data.ids).catch((err) => {
           console.error('[NEON//SCOPE] Plugin update failed:', err);
@@ -600,6 +612,12 @@ class NeonScopeApp {
         });
       } else if (data?.action === 'plugin-update-cancel') {
         if (this.dom.pluginStatus) this.dom.pluginStatus.textContent = '已取消插件更新';
+      } else if (data?.action === 'plugin-settings-changed') {
+        if (this._standaloneSettings) {
+          this._renderPluginManager();
+        } else {
+          this._dispatchPluginSettings(data.id, String(data.key || ''));
+        }
       } else if (data?.action === 'flush-autosave') {
         // The host tears the WebView down as soon as this returns, so the
         // save must complete before answering.
@@ -705,6 +723,12 @@ class NeonScopeApp {
   }
 
   _bindExternalSettingsSync() {
+    window.addEventListener('storage', (event) => {
+      if (!event.key || !event.key.startsWith(PLUGIN_SETTINGS_PREFIX) || !event.newValue) return;
+      const id = event.key.slice(PLUGIN_SETTINGS_PREFIX.length);
+      if (this._standaloneSettings) this._renderPluginManager();
+      else this._dispatchPluginSettings(id);
+    });
     if (this._standaloneSettings) return;
     window.addEventListener('storage', (event) => {
       if ((event.key !== STORAGE_KEY && event.key !== SETTINGS_SYNC_KEY) || !event.newValue) return;
@@ -1164,8 +1188,8 @@ class NeonScopeApp {
       let id = typeof raw.id === 'string' && raw.id ? raw.id : uid(raw.type);
       if (seen.has(id)) id = uid(raw.type);
       seen.add(id);
-      let w = clamp(Number(raw.w) || def.w, 150, STAGE_W);
-      let h = clamp(Number(raw.h) || def.h, 100, STAGE_H);
+      let w = clamp(Number(raw.w) || def.w, def.minW || 100, Math.min(def.maxW || STAGE_W, STAGE_W));
+      let h = clamp(Number(raw.h) || def.h, def.minH || 80, Math.min(def.maxH || STAGE_H, STAGE_H));
       let x = clamp(Number(raw.x) || 0, 0, STAGE_W - w);
       let y = clamp(Number(raw.y) || 0, 0, STAGE_H - h);
       const color = typeof raw.color === 'string' && isHexColor(raw.color) ? raw.color.toUpperCase() : null;
@@ -1182,8 +1206,16 @@ class NeonScopeApp {
           if (Number.isFinite(num)) options[option.key] = clamp(num, option.min ?? -99999, option.max ?? 99999);
         } else if (option.type === 'color') {
           if (isHexColor(v)) options[option.key] = normalizeHexInput(v, option.default);
-        } else if (option.type === 'text') {
-          options[option.key] = String(v).slice(0, 80);
+        } else if (option.type === 'text' || option.type === 'password' || option.type === 'textarea') {
+          if (typeof v !== 'string') continue;
+          const maxLength = clamp(Number(option.maxLength) || (option.type === 'textarea' ? 2000 : (option.type === 'password' ? 200 : 80)), 1, 20000);
+          options[option.key] = v.slice(0, maxLength);
+        } else if (option.type === 'image') {
+          if (typeof v === 'string' && /^[a-z0-9_-]{1,48}$/i.test(v)) options[option.key] = v;
+        } else if (option.type === 'button') {
+          continue;
+        } else if (typeof option.options === 'function') {
+          if (typeof v === 'string' && v.length <= 64) options[option.key] = v;
         } else if (option.options?.some(([value]) => String(value) === String(v))) {
           options[option.key] = String(v);
         }
@@ -1328,6 +1360,7 @@ class NeonScopeApp {
       if (this.state.exporting || !this.audio.hasAudio) return;
       const t = (Number(d.seek.value) / 1000) * this.audio.duration;
       this.audio.seek(t);
+      this._emitPluginEvent('transport', this._transportSnapshot());
       this._updateTransport(t);
     });
     d.volume.addEventListener('input', () => {
@@ -1666,7 +1699,10 @@ class NeonScopeApp {
       else if (schema.type === 'range') value = Number(control.value);
       else if (schema.type === 'number') value = clamp(Number(control.value), schema.min ?? -99999, schema.max ?? 99999);
       else if (schema.type === 'color') value = normalizeHexInput(control.dataset.color8 || control.value, schema.default);
-      else value = control.value;
+      else {
+        const maxLength = Number(schema.maxLength) || (schema.type === 'textarea' ? 2000 : (schema.type === 'password' ? 200 : 80));
+        value = String(control.value).slice(0, maxLength);
+      }
       mod.options = { ...(mod.options || {}), [key]: value };
       if (key === 'channel' && mod.type === 'scope' && (value === 'L' || value === 'R' || value === 'BOTH')) {
         const base = String(mod.title || MODULE_DEFS[mod.type].code).toUpperCase().replace(/\s*·\s*(L|R|BOTH)\s*$/, '');
@@ -1679,11 +1715,84 @@ class NeonScopeApp {
           ? `${value > 0 ? '+' : ''}${Math.round(value)} ms`
           : `${this._formatStepValue(value, schema.step)}${schema.unit || ''}`;
       }
+      this._emitPluginEvent('options', { type: mod.type, id: mod.id, key, value, options: { ...(mod.options || {}) } });
       this._persist();
+    });
+    d.moduleOptions.addEventListener('change', async (e) => {
+      const fileInput = e.target.closest('[data-opt-image-file]');
+      if (!fileInput) return;
+      const mod = this._selected();
+      const file = fileInput.files?.[0];
+      if (!mod || !file) return;
+      const key = fileInput.dataset.optImageFile;
+      const pluginId = String(mod.type).includes(':') ? String(mod.type).split(':')[0] : '';
+      try {
+        const dataUrl = await this._imageFileToDataUrl(file);
+        const previous = mod.options?.[key];
+        if (previous) this._pluginAssetsApi(pluginId).remove(previous);
+        const ref = this._pluginAssetPut(pluginId, dataUrl);
+        mod.options = { ...(mod.options || {}), [key]: ref };
+        this._syncModuleOptions(mod);
+        this._emitPluginEvent('options', { type: mod.type, id: mod.id, key, value: ref, options: { ...mod.options } });
+        this._persist();
+        this._toast('图片已更新');
+      } catch (err) {
+        this._toast(`图片读取失败：${err.message}`, 'error', 4200);
+      } finally {
+        fileInput.value = '';
+      }
     });
     d.moduleOptions.addEventListener('click', (e) => {
       const mod = this._selected();
       if (!mod) return;
+      const reveal = e.target.closest('[data-opt-reveal]');
+      if (reveal) {
+        const input = d.moduleOptions.querySelector(`[data-opt-key="${CSS.escape(reveal.dataset.optReveal)}"]`);
+        if (input) {
+          const show = input.type === 'password';
+          input.type = show ? 'text' : 'password';
+          reveal.textContent = show ? '隐藏' : '显示';
+        }
+        return;
+      }
+      const pick = e.target.closest('[data-opt-image-pick]');
+      if (pick) {
+        d.moduleOptions.querySelector(`[data-opt-image-file="${CSS.escape(pick.dataset.optImagePick)}"]`)?.click();
+        return;
+      }
+      const clear = e.target.closest('[data-opt-image-clear]');
+      if (clear) {
+        const key = clear.dataset.optImageClear;
+        const pluginId = String(mod.type).includes(':') ? String(mod.type).split(':')[0] : '';
+        const ref = mod.options?.[key];
+        if (ref) this._pluginAssetsApi(pluginId).remove(ref);
+        const next = { ...(mod.options || {}) };
+        delete next[key];
+        mod.options = next;
+        this._syncModuleOptions(mod);
+        this._emitPluginEvent('options', { type: mod.type, id: mod.id, key, value: '', options: { ...mod.options } });
+        this._persist();
+        return;
+      }
+      const action = e.target.closest('[data-opt-action]');
+      if (action) {
+        const key = action.dataset.optAction;
+        const schema = (MODULE_OPTIONS[mod.type] || []).find((option) => option.key === key);
+        if (typeof schema?.onPress !== 'function') {
+          this._toast('该按钮没有绑定动作', 'error', 3200);
+          return;
+        }
+        const setOption = (optionKey, value) => {
+          mod.options = { ...(mod.options || {}), [optionKey]: value };
+          this._syncModuleOptions(mod);
+          this._emitPluginEvent('options', { type: mod.type, id: mod.id, key: optionKey, value, options: { ...mod.options } });
+          this._persist();
+        };
+        Promise.resolve()
+          .then(() => schema.onPress({ mod, options: { ...(mod.options || {}) }, setOption, toast: (message, tone) => this._toast(String(message), tone || 'info', 3200), app: this }))
+          .catch((err) => this._toast(String(err?.message || err), 'error', 4200));
+        return;
+      }
       const midi = (this.state.midiLayers || []).find((layer) => layer.id === mod.options?.midiId) || this.state.midi;
       const deleteTrack = e.target.closest('[data-midi-delete]');
       if (deleteTrack) {
@@ -1958,9 +2067,40 @@ class NeonScopeApp {
       this.dom.pluginStatus.textContent = '插件已重新加载';
     });
     this.dom.pluginList?.addEventListener('click', (e) => {
+      const reveal = e.target.closest('[data-plugin-reveal]');
+      if (reveal) {
+        const input = this.dom.pluginList.querySelector(`[data-plugin-key="${CSS.escape(reveal.dataset.pluginReveal)}"][data-plugin-id="${CSS.escape(reveal.dataset.pluginId || '')}"]`);
+        if (input) {
+          const show = input.type === 'password';
+          input.type = show ? 'text' : 'password';
+          reveal.textContent = show ? '隐藏' : '显示';
+        }
+        return;
+      }
+      const pick = e.target.closest('[data-plugin-image-pick]');
+      if (pick) {
+        this.dom.pluginList.querySelector(`[data-plugin-image-file="${CSS.escape(pick.dataset.pluginImagePick)}"][data-plugin-id="${CSS.escape(pick.dataset.pluginId || '')}"]`)?.click();
+        return;
+      }
+      const clear = e.target.closest('[data-plugin-image-clear]');
+      if (clear) {
+        const id = clear.dataset.pluginId;
+        const key = clear.dataset.pluginImageClear;
+        const values = this._pluginSettingsValues(id);
+        if (values[key]) this._pluginAssetsApi(id).remove(values[key]);
+        this._pluginSettingsSet(id, key, '');
+        this._pluginNotifySettingsChanged(id, key);
+        this._renderPluginManager();
+        return;
+      }
       const button = e.target.closest('[data-plugin-action]');
       if (!button) return;
       const id = button.dataset.pluginId;
+      if (button.dataset.pluginAction === 'settings') {
+        this._pluginSettingsOpenId = this._pluginSettingsOpenId === id ? null : id;
+        this._renderPluginManager();
+        return;
+      }
       if (button.dataset.pluginAction === 'remove') this._removePlugin(id);
       else if (button.dataset.pluginAction === 'toggle') this._togglePlugin(id);
       else if (button.dataset.pluginAction === 'reload') {
@@ -1969,9 +2109,55 @@ class NeonScopeApp {
           this.dom.pluginStatus.textContent = '已通知主窗口重载插件';
           return;
         }
-        const record = this._pluginRecords().find((p) => p.id === id);
-        if (record) this._activatePlugin(record).then(() => this._renderPluginManager());
+        this._reloadPlugin(id).then(() => this._renderPluginManager());
       }
+    });
+    const savePluginSetting = (input) => {
+      const id = input.dataset.pluginId;
+      const key = input.dataset.pluginKey;
+      const record = this._pluginRecords().find((item) => item.id === id);
+      const schema = this._pluginSettingsSchema(record).find((item) => item.key === key);
+      if (!schema) return;
+      let value;
+      if (schema.type === 'toggle') value = !!input.checked;
+      else if (schema.type === 'number' || schema.type === 'range') value = clamp(Number(input.value), schema.min ?? -99999, schema.max ?? 99999);
+      else if (schema.type === 'color') value = normalizeHexInput(input.dataset.color8 || input.value, schema.default);
+      else value = String(input.value).slice(0, Number(schema.maxLength) || (schema.type === 'textarea' ? 2000 : 200));
+      this._pluginSettingsSet(id, key, value);
+      this._pluginNotifySettingsChanged(id, key);
+      if (schema.type === 'range') {
+        const output = this.dom.pluginList.querySelector(`[data-plugin-output="${CSS.escape(key)}"][data-plugin-id="${CSS.escape(id)}"]`);
+        if (output) output.textContent = `${this._formatStepValue(value, schema.step)}${schema.unit || ''}`;
+      }
+    };
+    this.dom.pluginList?.addEventListener('input', (e) => {
+      const input = e.target.closest('[data-plugin-key]');
+      if (input) savePluginSetting(input);
+    });
+    this.dom.pluginList?.addEventListener('change', async (e) => {
+      const fileInput = e.target.closest('[data-plugin-image-file]');
+      if (fileInput) {
+        const file = fileInput.files?.[0];
+        const id = fileInput.dataset.pluginId;
+        const key = fileInput.dataset.pluginImageFile;
+        if (file) {
+          try {
+            const dataUrl = await this._imageFileToDataUrl(file);
+            const values = this._pluginSettingsValues(id);
+            if (values[key]) this._pluginAssetsApi(id).remove(values[key]);
+            const ref = this._pluginAssetPut(id, dataUrl);
+            this._pluginSettingsSet(id, key, ref);
+            this._pluginNotifySettingsChanged(id, key);
+            this._renderPluginManager();
+          } catch (err) {
+            this._toast(`图片读取失败：${err.message}`, 'error', 4200);
+          }
+        }
+        fileInput.value = '';
+        return;
+      }
+      const input = e.target.closest('[data-plugin-key]');
+      if (input) savePluginSetting(input);
     });
     this._renderPluginManager();
     this.dom.savePathInput.addEventListener('change', () => {
@@ -2836,6 +3022,7 @@ class NeonScopeApp {
     const raw = ratio * (this._tlDuration || 0);
     const t = this._timelineSnap ? Math.round(raw * 10) / 10 : raw;
     this.audio.seek(t);
+    this._emitPluginEvent('transport', this._transportSnapshot());
     this._updateTransport(t);
     this._syncTimelinePlayhead(t);
   }
@@ -3354,6 +3541,363 @@ class NeonScopeApp {
     safeStore(PLUGINS_KEY, JSON.stringify(records));
   }
 
+  _readPluginJson(prefix, id) {
+    try {
+      const parsed = JSON.parse(safeRead(prefix + id) || 'null');
+      return parsed && typeof parsed === 'object' ? parsed : null;
+    } catch {
+      return null;
+    }
+  }
+
+  _writePluginJson(prefix, id, value) {
+    if (value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length === 0) {
+      safeStore(prefix + id, '');
+      return;
+    }
+    safeStore(prefix + id, JSON.stringify(value));
+  }
+
+  _pluginSettingsSchema(record) {
+    return Array.isArray(record?.settingsSchema)
+      ? record.settingsSchema.filter((item) => item && item.key)
+      : [];
+  }
+
+  _pluginSettingsSchemaShape(schema) {
+    const allowed = ['toggle', 'select', 'color', 'number', 'range', 'text', 'textarea', 'password', 'image'];
+    return (Array.isArray(schema) ? schema : [])
+      .filter((item) => item && item.key)
+      .slice(0, 32)
+      .map((item) => {
+        const type = allowed.includes(item.type) ? item.type : 'text';
+        const out = {
+          key: String(item.key).slice(0, 48),
+          label: String(item.label || item.key).slice(0, 64),
+          type,
+          default: item.default ?? '',
+          help: item.help ? String(item.help).slice(0, 200) : '',
+          placeholder: item.placeholder ? String(item.placeholder).slice(0, 120) : '',
+          maxLength: clamp(Number(item.maxLength) || (type === 'textarea' ? 2000 : (type === 'password' ? 200 : 80)), 1, 4000),
+          rows: clamp(Number(item.rows) || 3, 2, 10),
+        };
+        if (Number.isFinite(Number(item.min))) out.min = Number(item.min);
+        if (Number.isFinite(Number(item.max))) out.max = Number(item.max);
+        if (Number.isFinite(Number(item.step))) out.step = Number(item.step);
+        if (Array.isArray(item.options)) {
+          out.options = item.options.slice(0, 64).map(([value, label]) => [String(value), String(label ?? value).slice(0, 80)]);
+        }
+        return out;
+      });
+  }
+
+  _dispatchPluginSettings(pluginId, key = '') {
+    const handlers = this._pluginEventMap?.get(pluginId)?.get('settings');
+    if (!handlers?.size) return;
+    const values = this._pluginSettingsValues(pluginId);
+    for (const handler of handlers) {
+      try { handler({ plugin: pluginId, key, value: key ? values[key] : { ...values } }); }
+      catch (err) { console.warn('[NEON//SCOPE] Plugin settings handler failed:', err); }
+    }
+  }
+
+  _pluginNotifySettingsChanged(pluginId, key) {
+    if (!this._isNative) return;
+    try {
+      window.chrome.webview.postMessage({ action: 'plugin-settings-changed', id: pluginId, key: String(key || '') });
+    } catch { /* bridge is optional */ }
+  }
+
+  _pluginSettingsValues(id) {
+    return this._readPluginJson(PLUGIN_SETTINGS_PREFIX, id) || {};
+  }
+
+  _pluginSettingsSet(id, key, value) {
+    const values = this._pluginSettingsValues(id);
+    if (value === undefined || value === null || value === '') delete values[key];
+    else values[key] = value;
+    this._writePluginJson(PLUGIN_SETTINGS_PREFIX, id, values);
+    return values;
+  }
+
+  _pluginDataApi(id) {
+    const read = () => this._readPluginJson(PLUGIN_DATA_PREFIX, id) || {};
+    const write = (data) => this._writePluginJson(PLUGIN_DATA_PREFIX, id, data);
+    return {
+      get: (key, fallback = null) => {
+        const data = read();
+        return Object.prototype.hasOwnProperty.call(data, key) ? data[key] : fallback;
+      },
+      set: (key, value) => {
+        if (typeof key !== 'string' || !key) throw new Error('storage.set 需要字符串 key');
+        const text = JSON.stringify(value);
+        if (text && text.length > PLUGIN_DATA_MAX_CHARS) throw new Error('storage 值过大（上限 128 KB）');
+        const data = read();
+        data[key] = value === undefined ? null : value;
+        write(data);
+      },
+      delete: (key) => {
+        const data = read();
+        delete data[key];
+        write(data);
+      },
+      clear: () => write({}),
+      keys: () => Object.keys(read()),
+    };
+  }
+
+  _pluginAssetStore(id) {
+    return this._readPluginJson(PLUGIN_ASSET_PREFIX, id) || {};
+  }
+
+  _pluginAssetDataUrl(id, ref) {
+    if (typeof ref !== 'string' || !ref) return '';
+    const asset = this._pluginAssetStore(id)[ref];
+    return typeof asset === 'string' && asset.startsWith('data:') ? asset : '';
+  }
+
+  _imageFileToDataUrl(file, { max = 512, quality = 0.84 } = {}) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error('无法读取文件'));
+      reader.onload = () => {
+        const img = new Image();
+        img.onerror = () => reject(new Error('不是有效的图片'));
+        img.onload = () => {
+          const iw = img.naturalWidth || img.width;
+          const ih = img.naturalHeight || img.height;
+          const scale = Math.min(1, max / Math.max(iw, ih));
+          const w = Math.max(1, Math.round(iw * scale));
+          const h = Math.max(1, Math.round(ih * scale));
+          const canvas = document.createElement('canvas');
+          canvas.width = w;
+          canvas.height = h;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, w, h);
+          const png = /^image\/(png|webp)$/i.test(String(file.type || ''));
+          resolve(canvas.toDataURL(png ? 'image/png' : 'image/jpeg', quality));
+        };
+        img.src = String(reader.result);
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  _pluginAssetPut(id, dataUrl, meta = {}) {
+    const text = String(dataUrl || '');
+    if (!/^data:image\/(png|jpeg|webp);base64,/i.test(text)) throw new Error('只支持 PNG / JPEG / WebP 图片');
+    if (text.length > PLUGIN_ASSET_MAX_BYTES) throw new Error('图片过大（上限约 2 MB）');
+    const assets = this._pluginAssetStore(id);
+    const ref = meta.id && /^[a-z0-9_-]{1,48}$/i.test(meta.id)
+      ? meta.id
+      : `img_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+    assets[ref] = text;
+    this._writePluginJson(PLUGIN_ASSET_PREFIX, id, assets);
+    this._pluginAssetImages?.delete(`${id}:${ref}`);
+    return ref;
+  }
+
+  _pluginAssetImage(id, ref) {
+    this._pluginAssetImages = this._pluginAssetImages || new Map();
+    const cacheKey = `${id}:${ref}`;
+    const cached = this._pluginAssetImages.get(cacheKey);
+    if (cached) return cached.complete && cached.naturalWidth ? cached : null;
+    const dataUrl = this._pluginAssetDataUrl(id, ref);
+    if (!dataUrl) return null;
+    const img = new Image();
+    img.onload = () => this.visualizer?.syncOverlay();
+    img.src = dataUrl;
+    this._pluginAssetImages.set(cacheKey, img);
+    return null;
+  }
+
+  _pluginAssetsApi(id) {
+    return {
+      put: (dataUrl, meta) => this._pluginAssetPut(id, dataUrl, meta || {}),
+      get: (ref) => this._pluginAssetDataUrl(id, ref) || null,
+      image: (ref) => this._pluginAssetImage(id, ref),
+      remove: (ref) => {
+        const assets = this._pluginAssetStore(id);
+        if (!Object.prototype.hasOwnProperty.call(assets, ref)) return false;
+        delete assets[ref];
+        this._writePluginJson(PLUGIN_ASSET_PREFIX, id, assets);
+        this._pluginAssetImages?.delete(`${id}:${ref}`);
+        return true;
+      },
+    };
+  }
+
+  _pluginPermissions(record) {
+    const declared = record?.manifest?.permissions;
+    return Array.isArray(declared) ? declared.map((item) => String(item)) : null;
+  }
+
+  _pluginCan(record, permission) {
+    const declared = this._pluginPermissions(record);
+    return Array.isArray(declared) && declared.includes(permission);
+  }
+
+  _requirePluginPermission(record, permission, apiName) {
+    if (this._pluginCan(record, permission)) return;
+    throw new Error(`${apiName} 需要在 plugin.json 的 permissions 中声明 "${permission}"`);
+  }
+
+  _pluginEvents(pluginId) {
+    this._pluginEventMap = this._pluginEventMap || new Map();
+    let events = this._pluginEventMap.get(pluginId);
+    if (!events) {
+      events = new Map();
+      this._pluginEventMap.set(pluginId, events);
+    }
+    return events;
+  }
+
+  _pluginOn(pluginId, event, handler) {
+    if (typeof handler !== 'function') throw new Error('on() 需要回调函数');
+    const events = this._pluginEvents(pluginId);
+    if (!events.has(event)) events.set(event, new Set());
+    events.get(event).add(handler);
+    return () => events.get(event)?.delete(handler);
+  }
+
+  _emitPluginEvent(event, payload) {
+    if (!this._pluginEventMap) return;
+    for (const events of this._pluginEventMap.values()) {
+      const handlers = events.get(event);
+      if (!handlers?.size) continue;
+      for (const handler of handlers) {
+        try { handler(payload); } catch (err) { console.warn('[NEON//SCOPE] Plugin event handler failed:', err); }
+      }
+    }
+  }
+
+  _transportSnapshot() {
+    return {
+      playing: Boolean(this.audio?.playing),
+      time: Number(this.audio?.getTime?.()) || 0,
+      duration: Number(this.audio?.duration) || 0,
+      bpm: Number(this.state?.bpm) || Number(this.state?.basicInfo?.bpm) || 0,
+      loop: Boolean(this.state?.settings?.loop),
+    };
+  }
+
+  _pluginImageFromUrl(src) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      if (/^https?:/i.test(src)) img.crossOrigin = 'anonymous';
+      img.onload = () => resolve(img);
+      img.onerror = () => reject(new Error('图片加载失败'));
+      img.src = src;
+    });
+  }
+
+  async _pluginLoadImage(record, src, { timeout = 15000 } = {}) {
+    const url = String(src || '');
+    if (!url) throw new Error('loadImage 需要 url 或 data URL');
+    if (/^https?:/i.test(url)) this._requirePluginPermission(record, 'network', 'loadImage');
+    this._pluginImageCache = this._pluginImageCache || new Map();
+    if (this._pluginImageCache.has(url)) return this._pluginImageCache.get(url);
+    try {
+      const img = await this._pluginImageFromUrl(url);
+      this._pluginImageCache.set(url, img);
+      return img;
+    } catch (err) {
+      if (!/^https?:/i.test(url)) throw err;
+      const res = await this._pluginProxyFetch(url, { timeout, binary: true });
+      const blob = await res.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      try {
+        const img = await this._pluginImageFromUrl(objectUrl);
+        this._pluginImageCache.set(url, img);
+        return img;
+      } finally {
+        setTimeout(() => URL.revokeObjectURL(objectUrl), 30000);
+      }
+    }
+  }
+
+  _normalizeProxyHeaders(headers) {
+    const out = {};
+    if (!headers) return out;
+    const entries = headers instanceof Headers
+      ? Array.from(headers.entries())
+      : (Array.isArray(headers) ? headers : Object.entries(headers));
+    for (const [key, value] of entries) {
+      if (key === undefined || value === undefined) continue;
+      out[String(key)] = String(value);
+    }
+    return out;
+  }
+
+  async _pluginProxyFetch(url, { method = 'GET', headers = null, body = null, timeout = 15000, binary = false } = {}) {
+    if (typeof body === 'string' || body === undefined || body === null) {
+      // plain payloads only
+    } else {
+      throw new Error('代理回退只支持字符串 body');
+    }
+    const payload = {
+      url: String(url),
+      method: String(method || 'GET').toUpperCase(),
+      headers: this._normalizeProxyHeaders(headers),
+      body: typeof body === 'string' ? body : null,
+      timeoutMs: clamp(Number(timeout) || 15000, 1000, 60000),
+      binary: Boolean(binary),
+    };
+    const res = await fetch('/api/net-proxy', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) throw new Error(`代理请求失败 HTTP ${res.status}`);
+    const data = await res.json().catch(() => null);
+    if (!data || data.error) throw new Error(data?.error || '代理返回无效数据');
+    let responseBody = data.text ?? '';
+    if (data.base64) {
+      const raw = atob(data.base64);
+      const bytes = new Uint8Array(raw.length);
+      for (let i = 0; i < raw.length; i += 1) bytes[i] = raw.charCodeAt(i);
+      responseBody = bytes;
+    }
+    const status = clamp(Number(data.status) || 200, 200, 599);
+    return new Response(responseBody, {
+      status,
+      statusText: data.statusText || '',
+      headers: data.headers || {},
+    });
+  }
+
+  async _pluginNetFetch(record, url, options = {}) {
+    this._requirePluginPermission(record, 'network', 'net.fetch');
+    const timeout = clamp(Number(options.timeout) || 15000, 1000, 60000);
+    const { timeout: _ignored, proxy, ...init } = options;
+    const target = String(url || '');
+    if (!/^https?:\/\//i.test(target) && !target.startsWith('/')) throw new Error('net.fetch 只支持 http(s) 或同源路径');
+    if (!proxy) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeout);
+      try {
+        return await fetch(target, { ...init, cache: 'no-store', signal: controller.signal });
+      } catch (err) {
+        // fall through to the host proxy
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+    return this._pluginProxyFetch(target, { ...init, timeout, binary: Boolean(options.binary) });
+  }
+
+  _clearPluginScopedData(id) {
+    safeStore(PLUGIN_SETTINGS_PREFIX + id, '');
+    safeStore(PLUGIN_DATA_PREFIX + id, '');
+    safeStore(PLUGIN_ASSET_PREFIX + id, '');
+    this._pluginEventMap?.delete(id);
+    if (this._pluginAssetImages) {
+      for (const key of [...this._pluginAssetImages.keys()]) {
+        if (key.startsWith(`${id}:`)) this._pluginAssetImages.delete(key);
+      }
+    }
+  }
+
   _validPluginName(name) {
     const id = String(name || '').trim().toLowerCase();
     return id.startsWith(PLUGIN_PREFIX) && id.length > PLUGIN_PREFIX.length;
@@ -3370,19 +3914,63 @@ class NeonScopeApp {
       this.dom.pluginList.innerHTML = '<div class="plugin-empty">还没有安装插件 · 从 GitHub 或 PNPM 安装</div>';
       return;
     }
-    this.dom.pluginList.innerHTML = records.map((plugin) => `
+    this.dom.pluginList.innerHTML = records.map((plugin) => {
+      const settings = this._pluginSettingsSchema(plugin);
+      const open = this._pluginSettingsOpenId === plugin.id;
+      return `
       <div class="plugin-card">
         <div class="plugin-card-main">
           <div class="plugin-card-name">${this._esc(plugin.name)} <em>v${this._esc(plugin.version)}</em> <em>${plugin.enabled ? 'ENABLED' : 'DISABLED'}</em></div>
           <div class="plugin-card-meta" title="${this._esc(plugin.source)}">${this._esc(plugin.source)}</div>
-          <div class="plugin-card-meta">${this._esc(plugin.lastError || `${plugin.moduleCount || 0} 个模块`)}</div>
+          <div class="plugin-card-meta">${this._esc(plugin.lastError || `${plugin.moduleCount || 0} 个模块${plugin.codeHash ? ` · CODE ${plugin.codeHash.slice(0, 8)}` : ''}`)}</div>
         </div>
         <div class="plugin-card-actions">
+          ${settings.length ? `<button class="mini-action" data-plugin-action="settings" data-plugin-id="${this._esc(plugin.id)}">${open ? '收起' : '设置'}</button>` : ''}
           <button class="mini-action" data-plugin-action="toggle" data-plugin-id="${this._esc(plugin.id)}">${plugin.enabled ? '停用' : '启用'}</button>
           <button class="mini-action" data-plugin-action="reload" data-plugin-id="${this._esc(plugin.id)}">重载</button>
           <button class="mini-action" data-plugin-action="remove" data-plugin-id="${this._esc(plugin.id)}">卸载</button>
         </div>
-      </div>`).join('');
+      </div>${open ? this._renderPluginSettingsPanel(plugin, settings) : ''}`;
+    }).join('');
+  }
+
+  _renderPluginSettingsPanel(plugin, schema) {
+    const values = this._pluginSettingsValues(plugin.id);
+    const fields = schema.map((option) => {
+      const raw = Object.prototype.hasOwnProperty.call(values, option.key) ? values[option.key] : option.default;
+      const help = option.help ? `<small class="plugin-setting-help">${this._esc(option.help)}</small>` : '';
+      if (option.type === 'toggle') {
+        return `<label class="check-row compact"><input type="checkbox" data-plugin-id="${this._esc(plugin.id)}" data-plugin-key="${option.key}" ${raw ? 'checked' : ''}/><span>${this._esc(option.label)}</span></label>${help}`;
+      }
+      if (option.type === 'select') {
+        const opts = (option.options || []).map(([value, label]) => `<option value="${this._esc(value)}" ${String(raw) === String(value) ? 'selected' : ''}>${this._esc(label)}</option>`).join('');
+        return `<label class="module-option-field"><span>${this._esc(option.label)}</span><select data-plugin-id="${this._esc(plugin.id)}" data-plugin-key="${option.key}">${opts}</select></label>${help}`;
+      }
+      if (option.type === 'color') {
+        return `<label class="module-option-field module-option-color"><span>${this._esc(option.label)}</span><input type="color" data-plugin-id="${this._esc(plugin.id)}" data-plugin-key="${option.key}" ${this._colorInputAttrs(raw, option.default)} /></label>${help}`;
+      }
+      if (option.type === 'number' || option.type === 'range') {
+        if (option.type === 'range') {
+          const output = `${this._formatStepValue(Number(raw) || 0, option.step)}${option.unit || ''}`;
+          return `<div class="field-row module-option-range"><label class="field-label">${this._esc(option.label)} <output data-plugin-output="${option.key}" data-plugin-id="${this._esc(plugin.id)}">${output}</output></label><input type="range" data-plugin-id="${this._esc(plugin.id)}" data-plugin-key="${option.key}" min="${option.min ?? 0}" max="${option.max ?? 100}" step="${option.step ?? 1}" value="${Number(raw) || 0}" /></div>${help}`;
+        }
+        return `<label class="module-option-field"><span>${this._esc(option.label)}</span><input type="number" data-plugin-id="${this._esc(plugin.id)}" data-plugin-key="${option.key}" min="${option.min ?? ''}" max="${option.max ?? ''}" step="${option.step ?? 'any'}" value="${Number(raw)}" /></label>${help}`;
+      }
+      if (option.type === 'textarea') {
+        return `<label class="module-option-field module-option-textarea"><span>${this._esc(option.label)}</span><textarea data-plugin-id="${this._esc(plugin.id)}" data-plugin-key="${option.key}" rows="${option.rows || 3}" maxlength="${option.maxLength || 2000}" placeholder="${this._esc(option.placeholder || '')}">${this._esc(String(raw ?? ''))}</textarea></label>${help}`;
+      }
+      if (option.type === 'image') {
+        const dataUrl = this._pluginAssetDataUrl(plugin.id, String(raw ?? ''));
+        return `<div class="module-option-field module-option-image"><span>${this._esc(option.label)}</span><div class="opt-image-row">${dataUrl ? `<img src="${dataUrl}" alt="" />` : '<span class="opt-image-empty">未选择图片</span>'}<button type="button" class="mini-action" data-plugin-image-pick="${option.key}" data-plugin-id="${this._esc(plugin.id)}">选择图片…</button>${dataUrl ? `<button type="button" class="mini-action" data-plugin-image-clear="${option.key}" data-plugin-id="${this._esc(plugin.id)}">清除</button>` : ''}<input type="file" accept="image/png,image/jpeg,image/webp" data-plugin-image-file="${option.key}" data-plugin-id="${this._esc(plugin.id)}" hidden /></div></div>${help}`;
+      }
+      const type = option.type === 'password' ? 'password' : 'text';
+      return `<label class="module-option-field${type === 'password' ? ' module-option-password' : ''}"><span>${this._esc(option.label)}</span><span class="opt-secret"><input type="${type}" data-plugin-id="${this._esc(plugin.id)}" data-plugin-key="${option.key}" value="${this._esc(String(raw ?? ''))}" maxlength="${option.maxLength || 80}" placeholder="${this._esc(option.placeholder || '')}" autocomplete="off" />${type === 'password' ? `<button type="button" class="mini-action" data-plugin-reveal="${option.key}" data-plugin-id="${this._esc(plugin.id)}">显示</button>` : ''}</span></label>${help}`;
+    }).join('');
+    return `<div class="plugin-settings-panel">
+      <div class="plugin-settings-title">插件设置 · ${this._esc(plugin.name)}</div>
+      ${fields}
+      <p class="plugin-settings-note">这些值只保存在本机，不写入 .NEON 工程；卸载插件时会一并清除。</p>
+    </div>`;
   }
 
   async _fetchPluginText(url) {
@@ -3398,7 +3986,69 @@ class NeonScopeApp {
     if (!this._validPluginName(name)) throw new Error(`插件名必须以 ${PLUGIN_PREFIX} 开头`);
     const entry = String(manifest.entry || 'index.js');
     if (entry.includes('..') || entry.startsWith('/') || entry.startsWith('\\')) throw new Error('entry 必须位于插件根目录');
-    return { ...manifest, name, entry };
+    const declared = Array.isArray(manifest.permissions) ? manifest.permissions.map((item) => String(item)) : [];
+    const permissions = declared.filter((item) => PLUGIN_ALLOWED_PERMISSIONS.includes(item));
+    const unknownPermissions = declared.filter((item) => !PLUGIN_ALLOWED_PERMISSIONS.includes(item));
+    return { ...manifest, name, entry, permissions, unknownPermissions };
+  }
+
+  async _confirmPluginPermissions(manifest) {
+    const perms = (manifest.permissions || []).filter((item) => item !== 'modules');
+    if (!perms.length) return true;
+    const labels = {
+      network: '访问网络（net.fetch / loadImage）',
+      storage: '在本机保存插件数据',
+      assets: '在本机保存图片资源',
+      clipboard: '写入剪贴板',
+      openExternal: '打开外部链接',
+    };
+    const text = `插件「${manifest.name}」请求：${perms.map((item) => labels[item] || item).join('；')}。只安装可信插件，继续吗？`;
+    return this._showConfirm(text, { title: '插件权限', confirmText: '安装', cancelText: '取消' });
+  }
+
+  async _fetchGithubRef(owner, repo, branch) {
+    try {
+      const res = await fetch(
+        `https://api.github.com/repos/${owner}/${repo}/git/ref/heads/${encodeURIComponent(branch)}?t=${Date.now()}`,
+        { cache: 'no-store', headers: { Accept: 'application/vnd.github+json' } });
+      if (!res.ok) return '';
+      const data = await res.json().catch(() => null);
+      return data?.object?.sha || '';
+    } catch {
+      return '';
+    }
+  }
+
+  async _fetchGithubFile(owner, repo, ref, filePath) {
+    const clean = String(filePath || '').replace(/^\.?\//, '');
+    const encoded = clean.split('/').map((part) => encodeURIComponent(part)).join('/');
+    // A commit SHA is immutable and raw serves it without CDN staleness, so
+    // pinned reads skip the API entirely (the 60/hr unauthenticated quota is
+    // shared by every Contents request).
+    if (/^[0-9a-f]{40}$/i.test(String(ref || ''))) {
+      const pinned = await fetch(`https://raw.githubusercontent.com/${owner}/${repo}/${ref}/${encoded}`, { cache: 'force-cache', headers: { Accept: 'text/plain, */*' } });
+      if (!pinned.ok) throw new Error(`下载失败 HTTP ${pinned.status}`);
+      return pinned.text();
+    }
+    const apiUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${encoded}?ref=${encodeURIComponent(ref)}&t=${Date.now()}`;
+    try {
+      const res = await fetch(apiUrl, {
+        cache: 'no-store',
+        headers: { Accept: 'application/vnd.github.raw' },
+      });
+      if (res.ok) return await res.text();
+      // 403 / 429 is the unauthenticated rate limit; fall back to raw.
+      if (res.status !== 403 && res.status !== 429) throw new Error(`下载失败 HTTP ${res.status}`);
+      this._githubApiLimited = true;
+    } catch (err) {
+      if (err?.message?.startsWith('下载失败')) throw err;
+    }
+    // raw.githubusercontent ignores query strings for caching, so only use it
+    // as a best-effort fallback when the Contents API is rate limited.
+    const rawUrl = `https://raw.githubusercontent.com/${owner}/${repo}/${ref}/${encoded}?t=${Date.now()}`;
+    const res = await fetch(rawUrl, { cache: 'reload', headers: { Accept: 'text/plain, */*' } });
+    if (!res.ok) throw new Error(`下载失败 HTTP ${res.status}`);
+    return res.text();
   }
 
   async _fetchGithubPlugin(raw) {
@@ -3409,18 +4059,38 @@ class NeonScopeApp {
     if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(text)) throw new Error('请输入 owner/repo 或 GitHub 仓库地址');
     const [owner, repo] = text.split('/');
     if (!this._validPluginName(repo)) throw new Error(`仓库名必须以 ${PLUGIN_PREFIX} 开头`);
-    const info = await fetch(`https://api.github.com/repos/${owner}/${repo}`, { cache: 'no-store' }).then(async (res) => {
-      if (!res.ok) throw new Error(`GitHub 仓库不存在或不可访问 HTTP ${res.status}`);
-      return res.json();
-    });
-    if (!this._validPluginName(info.name)) throw new Error(`仓库名必须以 ${PLUGIN_PREFIX} 开头`);
-    const branch = info.default_branch || 'main';
-    const base = `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/`;
-    const stamp = Date.now();
-    const manifest = this._validatePluginManifest(JSON.parse(await this._fetchPluginText(`${base}plugin.json?t=${stamp}`)), info.name);
-    if (!manifest.repository) manifest.repository = info.html_url;
-    const code = await this._fetchPluginText(`${base}${manifest.entry}?t=${stamp}`);
-    return { manifest, code, source: `github:${owner}/${repo}`, version: manifest.version || info.default_branch || '0.0.0' };
+    let ref = '';
+    for (const branch of ['main', 'master']) {
+      ref = await this._fetchGithubRef(owner, repo, branch);
+      if (ref) break;
+    }
+    const candidates = ref ? [ref] : ['main', 'master'];
+    let manifest = null;
+    let code = '';
+    let lastError = null;
+    for (const candidate of candidates) {
+      try {
+        manifest = this._validatePluginManifest(
+          JSON.parse(await this._fetchGithubFile(owner, repo, candidate, 'plugin.json')), repo);
+        code = await this._fetchGithubFile(owner, repo, candidate, manifest.entry);
+        lastError = null;
+        break;
+      } catch (err) {
+        manifest = null;
+        lastError = err;
+      }
+    }
+    if (!manifest) {
+      throw lastError || new Error(`无法读取 ${owner}/${repo} 的插件清单`);
+    }
+    if (!manifest.repository) manifest.repository = `https://github.com/${owner}/${repo}`;
+    return {
+      manifest,
+      code,
+      source: `github:${owner}/${repo}`,
+      version: manifest.version || '0.0.0',
+      pinned: Boolean(ref),
+    };
   }
 
   async _fetchPnpmPlugin(raw) {
@@ -3444,6 +4114,13 @@ class NeonScopeApp {
     try {
       this.dom.pluginStatus.textContent = '正在下载并校验插件…';
       const data = kind === 'github' ? await this._fetchGithubPlugin(raw) : await this._fetchPnpmPlugin(raw);
+      if (!(await this._confirmPluginPermissions(data.manifest))) {
+        this.dom.pluginStatus.textContent = '已取消安装';
+        return;
+      }
+      if (data.manifest.unknownPermissions?.length) {
+        this._toast(`已忽略未知权限：${data.manifest.unknownPermissions.join('、')}`, 'info', 4200);
+      }
       const records = this._pluginRecords().filter((p) => p.id !== (data.manifest.id || data.manifest.name.toLowerCase()));
       const record = {
         id: String(data.manifest.id || data.manifest.name.toLowerCase()),
@@ -3489,6 +4166,13 @@ class NeonScopeApp {
       const root = manifestPath.split('/').slice(0, -1).join('/');
       const folderName = root.split('/').filter(Boolean).pop() || '';
       const manifest = this._validatePluginManifest(JSON.parse(await manifestFile.text()), folderName);
+      if (!(await this._confirmPluginPermissions(manifest))) {
+        this.dom.pluginStatus.textContent = '已取消安装';
+        return;
+      }
+      if (manifest.unknownPermissions?.length) {
+        this._toast(`已忽略未知权限：${manifest.unknownPermissions.join('、')}`, 'info', 4200);
+      }
       const entryPath = (root ? `${root}/` : '') + manifest.entry.replace(/^\.\//, '');
       const entryFile = files.find((file) => normalized(file) === entryPath);
       if (!entryFile) throw new Error(`文件夹中缺少入口文件：${manifest.entry}`);
@@ -3538,29 +4222,40 @@ class NeonScopeApp {
       return;
     }
     this.dom.pluginStatus.textContent = '正在检查插件更新…';
+    this._githubApiLimited = false;
     const updates = [];
+    const failures = [];
     let checked = 0;
     for (const record of remote) {
       try {
         const data = await this._fetchPluginUpdate(record);
         checked += 1;
-        if (data && this._versionNewer(data.version, record.version)) {
+        if (!data) continue;
+        const newer = this._versionNewer(data.version, record.version);
+        const remoteHash = await this._pluginCodeHash(data.code);
+        const drifted = record.codeHash
+          ? Boolean(remoteHash) && remoteHash !== record.codeHash
+          : typeof record.code === 'string' && record.code !== data.code;
+        if (newer || drifted) {
           updates.push({
             id: record.id,
             name: record.name,
             currentVersion: record.version || '0.0.0',
             latestVersion: data.version,
+            note: !newer && drifted ? '代码已变化' : '',
             source: record.source,
           });
         }
       } catch (err) {
+        failures.push(`${record.name}: ${err.message}`);
         console.warn(`[NEON//SCOPE] Update check failed for ${record.id}:`, err);
       }
     }
+    const fallbackNote = this._githubApiLimited ? '（GitHub API 限流，已用 CDN 回退）' : '';
     if (!updates.length) {
       this.dom.pluginStatus.textContent = checked
-        ? `已检查 ${checked} 个插件，均为最新版本`
-        : '更新检查失败，请检查网络后重试';
+        ? `已检查 ${checked} 个插件，均为最新版本${fallbackNote}`
+        : `更新检查失败：${failures[0] || '请检查网络后重试'}`;
       if (checked) this._toast('所有插件均为最新版本', 'success', 2600);
       return;
     }
@@ -3642,7 +4337,44 @@ class NeonScopeApp {
     }
     this._toast(failures.length ? `插件更新完成，${failures.length} 个失败` : `插件已更新 · ${updated} 个`,
       failures.length ? 'error' : 'success', 4200);
-    if (this._standaloneSettings) this._notifyPluginsChanged();
+    if (this._isNative) this._notifyPluginsChanged();
+  }
+
+  async _reloadPlugin(id) {
+    const record = this._pluginRecords().find((item) => item.id === id);
+    if (!record) return;
+    const remote = String(record.source || '').startsWith('github:') || String(record.source || '').startsWith('pnpm:');
+    if (!remote) {
+      await this._activatePlugin(record);
+      return;
+    }
+    try {
+      const data = await this._fetchPluginUpdate(record);
+      if (!data) throw new Error('更新源没有返回数据');
+      const next = {
+        ...record,
+        name: data.manifest.name,
+        version: data.version,
+        entry: data.manifest.entry,
+        manifest: data.manifest,
+        code: data.code,
+        enabled: true,
+        installedAt: new Date().toISOString(),
+        lastError: '',
+      };
+      const records = this._pluginRecords().filter((item) => item.id !== id);
+      records.push(this._pluginPersistRecord(next));
+      this._savePluginRecords(records);
+      const ok = await this._activatePlugin(next);
+      if (this.dom.pluginStatus) {
+        this.dom.pluginStatus.textContent = ok
+          ? `已重新下载并加载 ${record.name}`
+          : `重载 ${record.name} 失败：${next.lastError || '激活失败'}`;
+      }
+    } catch (err) {
+      if (this.dom.pluginStatus) this.dom.pluginStatus.textContent = `重载 ${record.name} 失败：${err.message}`;
+      this._toast(`插件重载失败：${err.message}`, 'error', 4200);
+    }
   }
 
   _pluginPersistRecord(record) {
@@ -3650,8 +4382,18 @@ class NeonScopeApp {
     return rest;
   }
 
+  async _pluginCodeHash(code) {
+    try {
+      const bytes = new TextEncoder().encode(String(code || ''));
+      const digest = await crypto.subtle.digest('SHA-256', bytes);
+      return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+    } catch {
+      return '';
+    }
+  }
+
   _notifyPluginsChanged() {
-    if (!this._isNative || !this._standaloneSettings) return;
+    if (!this._isNative) return;
     try { window.chrome.webview.postMessage({ action: 'plugins-changed' }); } catch { /* bridge is optional */ }
   }
 
@@ -3665,13 +4407,52 @@ class NeonScopeApp {
       try { module = await import(url); } finally { URL.revokeObjectURL(url); }
       if (typeof module.activate !== 'function') throw new Error('插件必须导出 activate(context)');
       const pending = [];
+      const pluginId = record.id;
+      const runtime = { deactivate: null, types: [], settingsSchema: [] };
+      const emitSettings = (key, value) => {
+        const handlers = this._pluginEventMap?.get(pluginId)?.get('settings');
+        if (!handlers?.size) return;
+        for (const handler of handlers) {
+          try { handler({ plugin: pluginId, key, value }); } catch (err) { console.warn('[NEON//SCOPE] Plugin settings handler failed:', err); }
+        }
+      };
       const context = {
         apiVersion: 1,
         app: 'NEON//SCOPE',
-        plugin: { id: record.id, name: record.name, version: record.version },
+        plugin: { id: pluginId, name: record.name, version: record.version },
         registerModule: (spec) => pending.push(spec),
-        log: (...args) => console.log(`[plugin:${record.id}]`, ...args),
+        log: (...args) => console.log(`[plugin:${pluginId}]`, ...args),
         toast: (message, tone = 'info') => this._toast(String(message), tone, 3000),
+        settings: {
+          define: (schema) => { runtime.settingsSchema = this._pluginSettingsSchemaShape(schema); },
+          get: (key, fallback = null) => {
+            const values = this._pluginSettingsValues(pluginId);
+            return Object.prototype.hasOwnProperty.call(values, key) ? values[key] : fallback;
+          },
+          all: () => ({ ...this._pluginSettingsValues(pluginId) }),
+          set: (key, value) => {
+            if (typeof key !== 'string' || !key) throw new Error('settings.set 需要字符串 key');
+            this._pluginSettingsSet(pluginId, key, value);
+            emitSettings(key, value);
+            this._pluginNotifySettingsChanged(pluginId, key);
+          },
+          onChange: (handler) => this._pluginOn(pluginId, 'settings', handler),
+        },
+        storage: this._pluginDataApi(pluginId),
+        assets: this._pluginAssetsApi(pluginId),
+        net: { fetch: (url, options) => this._pluginNetFetch(record, url, options) },
+        loadImage: (src, options) => this._pluginLoadImage(record, src, options),
+        on: (event, handler) => this._pluginOn(pluginId, String(event), handler),
+        openExternal: (url) => {
+          this._requirePluginPermission(record, 'openExternal', 'openExternal');
+          this._openExternal(String(url));
+        },
+        clipboard: {
+          writeText: async (text) => {
+            this._requirePluginPermission(record, 'clipboard', 'clipboard.writeText');
+            await navigator.clipboard.writeText(String(text ?? ''));
+          },
+        },
       };
       await module.activate(context);
 
@@ -3698,20 +4479,29 @@ class NeonScopeApp {
         registered.push(item.type);
       }
 
-      this._pluginRuntimes.set(record.id, {
-        deactivate: typeof module.deactivate === 'function' ? module.deactivate : null,
-        types: registered,
-      });
-      record._deactivate = typeof module.deactivate === 'function' ? module.deactivate : null;
+      runtime.deactivate = typeof module.deactivate === 'function' ? module.deactivate : null;
+      runtime.types = registered;
+      this._pluginRuntimes.set(record.id, runtime);
+      record._deactivate = runtime.deactivate;
       record._modules = registered;
       record.moduleCount = registered.length;
+      record.settingsSchema = runtime.settingsSchema;
+      record.codeHash = await this._pluginCodeHash(record.code);
       record.lastError = '';
       record.enabled = true;
       const records = this._pluginRecords();
       const index = records.findIndex((p) => p.id === record.id);
       const persistable = this._pluginPersistRecord(record);
-      if (index >= 0) records[index] = { ...records[index], enabled: true, moduleCount: registered.length, lastError: '' };
-      else records.push(persistable);
+      if (index >= 0) {
+        records[index] = {
+          ...records[index],
+          enabled: true,
+          moduleCount: registered.length,
+          settingsSchema: runtime.settingsSchema,
+          codeHash: record.codeHash,
+          lastError: '',
+        };
+      } else records.push(persistable);
       this._savePluginRecords(records);
       this._renderLibrary();
       this.visualizer?.syncOverlay();
@@ -3719,6 +4509,7 @@ class NeonScopeApp {
     } catch (err) {
       record.lastError = err.message;
       record.enabled = Boolean(previous);
+      this._pluginEventMap?.delete(record.id);
       const records = this._pluginRecords();
       const index = records.findIndex((p) => p.id === record.id);
       if (index >= 0) records[index] = { ...records[index], enabled: record.enabled, lastError: err.message };
@@ -3734,19 +4525,31 @@ class NeonScopeApp {
     const localId = String(spec.id || '').replace(/[^a-z0-9_-]/gi, '-').toLowerCase();
     if (!localId) throw new Error('模块缺少 id');
     const type = `${plugin.id}:${localId}`;
+    const def = {
+      name: String(spec.name || localId),
+      code: String(spec.code || 'PLUGIN MODULE'),
+      glyph: String(spec.glyph || '◆').slice(0, 2),
+      about: String(spec.about || `Plugin module from ${plugin.name}`),
+      w: clamp(Number(spec.w) || 360, 100, 1200),
+      h: clamp(Number(spec.h) || 220, 80, 800),
+      category: String(spec.category || 'PLUGIN'),
+      plugin: plugin.id,
+    };
+    if (spec.hiddenByDefault) def.defaultHidden = true;
+    for (const [key, limit] of [['minW', 1200], ['maxW', 1200], ['minH', 800], ['maxH', 800]]) {
+      const value = Number(spec[key]);
+      if (Number.isFinite(value) && value > 0) def[key] = Math.min(value, limit);
+    }
+    if (def.minW && def.maxW && def.minW > def.maxW) [def.minW, def.maxW] = [def.maxW, def.minW];
+    if (def.minH && def.maxH && def.minH > def.maxH) [def.minH, def.maxH] = [def.maxH, def.minH];
+    if (typeof spec.onPointer === 'function') def.onPointer = spec.onPointer;
+    if (typeof spec.icon === 'string' && /^data:image\/(png|jpeg|webp|svg\+xml);base64,/i.test(spec.icon) && spec.icon.length < 96 * 1024) {
+      def.icon = spec.icon;
+    }
     return {
       type,
-      def: {
-        name: String(spec.name || localId),
-        code: String(spec.code || 'PLUGIN MODULE'),
-        glyph: String(spec.glyph || '◆').slice(0, 2),
-        about: String(spec.about || `Plugin module from ${plugin.name}`),
-        w: clamp(Number(spec.w) || 360, 180, 1200),
-        h: clamp(Number(spec.h) || 220, 120, 800),
-        category: String(spec.category || 'PLUGIN'),
-        plugin: plugin.id,
-      },
-      options: Array.isArray(spec.options) ? spec.options.filter((o) => o && o.key) : [],
+      def,
+      options: Array.isArray(spec.options) ? spec.options.filter((o) => o && o.key).slice(0, 40) : [],
       draw: spec.draw,
     };
   }
@@ -3805,6 +4608,7 @@ class NeonScopeApp {
       if (index >= 0) MODULE_ORDER.splice(index, 1);
     }
     this._pluginRuntimes.delete(record.id);
+    this._pluginEventMap?.delete(record.id);
     const removed = (this.state.modules || []).filter((m) => String(m.type).startsWith(`${record.id}:`));
     for (const mod of removed) {
       this.visualizer?.states?.delete(mod.id);
@@ -3839,6 +4643,7 @@ class NeonScopeApp {
     if (!record) return;
     if (this._standaloneSettings) {
       this._savePluginRecords(records.filter((p) => p.id !== id));
+      this._clearPluginScopedData(id);
       this._renderPluginManager();
       this._notifyPluginsChanged();
       this._toast(`插件已卸载 · ${record.name}`, 'info', 2400);
@@ -3846,6 +4651,7 @@ class NeonScopeApp {
     }
     if (record._deactivate) { try { await record._deactivate(); } catch { /* ignore */ } }
     this._removePluginModules(record);
+    this._clearPluginScopedData(id);
     this._savePluginRecords(records.filter((p) => p.id !== id));
     this._renderPluginManager();
     this._renderLibrary();
@@ -4075,6 +4881,7 @@ class NeonScopeApp {
       if (archive.backgroundImage) safeStore(BG_IMAGE_KEY, archive.backgroundImage);
       else localStorage.removeItem(BG_IMAGE_KEY);
     } catch { /* optional */ }
+    this._emitPluginEvent('project', { action: 'load' });
     this._toast('存档已恢复，正在重新载入…', 'success', 1200);
     setTimeout(() => location.reload(), 420);
   }
@@ -6118,6 +6925,7 @@ class NeonScopeApp {
   }
 
   _onTrackEnded() {
+    this._emitPluginEvent('transport', this._transportSnapshot());
     this.dom.playBtn.classList.remove('playing');
     const use = this.dom.playBtn.querySelector('use');
     if (use) use.setAttribute('href', '#i-play');
@@ -6133,12 +6941,14 @@ class NeonScopeApp {
     }
     if (this.audio.playing) {
       this.audio.pause();
+      this._emitPluginEvent('transport', this._transportSnapshot());
       return;
     }
     const offset = this.audio.getTime() >= this.audio.duration - 0.05 ? 0 : this.audio.getTime();
     const ok = await this.audio.play(offset);
     if (!ok) this._toast('音频引擎尚未就绪，请再点一次', 'error');
     this.dom.startOverlay.classList.add('dismissed');
+    this._emitPluginEvent('transport', this._transportSnapshot());
   }
 
   _toggleLoop() {
@@ -6886,9 +7696,12 @@ class NeonScopeApp {
       const matches = this.state.modules.filter((m) => m.type === type);
       const visible = matches.some((m) => !m.hidden);
       const count = matches.length;
+      const glyph = def.icon
+        ? `<img class="lib-glyph-img" src="${def.icon}" alt="" />`
+        : this._esc(def.glyph);
       parts.push(`
         <div class="lib-item ${count ? 'active' : ''} ${count && !visible ? 'hidden-type' : ''}" data-type="${type}" role="button" tabindex="0" aria-label="添加 ${def.name}">
-          <span class="lib-glyph">${def.glyph}</span>
+          <span class="lib-glyph">${glyph}</span>
           <span class="lib-text"><strong>${def.name}</strong><small>${def.category}</small></span>
           <span class="lib-count">${count ? `×${count}` : ''}</span>
           ${count ? `<button class="lib-eye" title="${visible ? '隐藏该类模块' : '显示该类模块'}" aria-label="显隐"><svg class="icon"><use href="#${visible ? 'i-eye' : 'i-eye-off'}"/></svg></button>` : '<span class="lib-eye-spacer" aria-hidden="true"></span>'}
@@ -6929,6 +7742,7 @@ class NeonScopeApp {
     if (this.state.modules.some((m) => m.type === type && m.title === def.code)) {
       mod.title = `${def.code} ${this.state.modules.filter((m) => m.type === type).length + 1}`;
     }
+    if (def.defaultHidden && !preset) mod.hidden = true;
     if (type === 'drumStep') {
       mod.hidden = true;
       const detected = this._ensureDrumBoard();
@@ -7069,28 +7883,43 @@ class NeonScopeApp {
             : schema.length
               ? '这类模块的独立参数；与布局一起自动保存。'
               : '这个模块暂时没有额外参数。';
+    const pluginId = String(mod.type).includes(':') ? String(mod.type).split(':')[0] : '';
     d.moduleOptions.innerHTML = schema.map((option) => {
       const value = this._moduleOptionValue(mod, option);
       if (option.type === 'toggle') {
-        return `<label class="check-row compact"><input type="checkbox" data-opt-key="${option.key}" ${value ? 'checked' : ''}/><span>${option.label}</span></label>`;
+        return `<label class="check-row compact"><input type="checkbox" data-opt-key="${option.key}" ${value ? 'checked' : ''}/><span>${this._esc(option.label)}</span></label>`;
       }
       if (option.type === 'select') {
-        const opts = option.options.map(([val, label]) => `<option value="${val}" ${String(value) === String(val) ? 'selected' : ''}>${label}</option>`).join('');
-        return `<label class="module-option-field"><span>${option.label}</span><select data-opt-key="${option.key}">${opts}</select></label>`;
+        const list = typeof option.options === 'function' ? (option.options(mod, this) || []) : (option.options || []);
+        const opts = list.map(([val, label]) => `<option value="${this._esc(val)}" ${String(value) === String(val) ? 'selected' : ''}>${this._esc(label)}</option>`).join('');
+        return `<label class="module-option-field"><span>${this._esc(option.label)}</span><select data-opt-key="${option.key}">${opts}</select></label>`;
       }
       if (option.type === 'color') {
-        return `<label class="module-option-field module-option-color"><span>${option.label}</span><input type="color" data-opt-key="${option.key}" ${this._colorInputAttrs(value, option.default)} /></label>`;
+        return `<label class="module-option-field module-option-color"><span>${this._esc(option.label)}</span><input type="color" data-opt-key="${option.key}" ${this._colorInputAttrs(value, option.default)} /></label>`;
       }
       if (option.type === 'number') {
-        return `<label class="module-option-field"><span>${option.label}</span><input type="number" data-opt-key="${option.key}" min="${option.min ?? ''}" max="${option.max ?? ''}" step="${option.step ?? 'any'}" value="${Number(value)}" /></label>`;
+        return `<label class="module-option-field"><span>${this._esc(option.label)}</span><input type="number" data-opt-key="${option.key}" min="${option.min ?? ''}" max="${option.max ?? ''}" step="${option.step ?? 'any'}" value="${Number(value)}" /></label>`;
       }
-      if (option.type === 'text') {
-        return `<label class="module-option-field"><span>${option.label}</span><input type="text" data-opt-key="${option.key}" value="${String(value).replace(/"/g, '&quot;')}" maxlength="80" /></label>`;
+      if (option.type === 'text' || option.type === 'password') {
+        const maxLength = clamp(Number(option.maxLength) || 80, 1, 4000);
+        const type = option.type === 'password' ? 'password' : 'text';
+        return `<label class="module-option-field${option.type === 'password' ? ' module-option-password' : ''}"><span>${this._esc(option.label)}</span><span class="opt-secret"><input type="${type}" data-opt-key="${option.key}" value="${this._esc(String(value ?? ''))}" maxlength="${maxLength}" placeholder="${this._esc(option.placeholder || '')}" autocomplete="off" />${option.type === 'password' ? `<button type="button" class="mini-action" data-opt-reveal="${option.key}">显示</button>` : ''}</span></label>`;
+      }
+      if (option.type === 'textarea') {
+        const maxLength = clamp(Number(option.maxLength) || 2000, 1, 20000);
+        return `<label class="module-option-field module-option-textarea"><span>${this._esc(option.label)}</span><textarea data-opt-key="${option.key}" rows="${clamp(Number(option.rows) || 3, 2, 10)}" maxlength="${maxLength}" placeholder="${this._esc(option.placeholder || '')}">${this._esc(String(value ?? ''))}</textarea></label>`;
+      }
+      if (option.type === 'image') {
+        const dataUrl = this._pluginAssetDataUrl(pluginId, String(value ?? ''));
+        return `<div class="module-option-field module-option-image"><span>${this._esc(option.label)}</span><div class="opt-image-row">${dataUrl ? `<img data-opt-preview="${option.key}" src="${dataUrl}" alt="" />` : '<span class="opt-image-empty">未选择图片</span>'}<button type="button" class="mini-action" data-opt-image-pick="${option.key}">选择图片…</button>${dataUrl ? `<button type="button" class="mini-action" data-opt-image-clear="${option.key}">清除</button>` : ''}<input type="file" accept="image/png,image/jpeg,image/webp" data-opt-image-file="${option.key}" hidden /></div></div>`;
+      }
+      if (option.type === 'button') {
+        return `<div class="module-option-field module-option-button"><span>${this._esc(option.label)}</span><button type="button" class="mini-action" data-opt-action="${option.key}">${this._esc(option.text || option.label || '执行')}</button></div>`;
       }
       const output = option.key === 'midiOffset'
         ? `${Number(value) > 0 ? '+' : ''}${Math.round(Number(value))} ms`
         : `${this._formatStepValue(value, option.step)}${option.unit || ''}`;
-      return `<div class="field-row module-option-range"><label class="field-label">${option.label} <output data-opt-output="${option.key}">${output}</output></label><input type="range" data-opt-key="${option.key}" min="${option.min}" max="${option.max}" step="${option.step}" value="${value}" /></div>`;
+      return `<div class="field-row module-option-range"><label class="field-label">${this._esc(option.label)} <output data-opt-output="${option.key}">${output}</output></label><input type="range" data-opt-key="${option.key}" min="${option.min}" max="${option.max}" step="${option.step}" value="${value}" /></div>`;
     }).join('') + (mod.type === 'pianoRoll' ? this._midiTrackOptions(mod) : '');
     if (this.subpanelState.midiBus && !this.subpanelState.midiBus.hidden) this._renderMidiBus();
   }
@@ -8139,6 +8968,10 @@ class NeonScopeApp {
     if (this.dom.themeChartFollow) this.dom.themeChartFollow.value = s.themeChartFollow;
     this._syncRangeTrackColor(colors.bg);
     this.visualizer?.applyBackgroundSettings();
+    this._emitPluginEvent('theme', {
+      accent: s.accent,
+      palette: { bg: colors.bg, window: colors.window, text: colors.text, chart: colors.chart },
+    });
     if (!noPersist) this._persist();
     if (!silent) this._toast('界面四色已更新', 'info', 1600);
   }

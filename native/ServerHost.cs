@@ -32,6 +32,21 @@ internal sealed class ServerHost : IAsyncDisposable
     private readonly ConcurrentDictionary<string, ConvertLogJob> _convertJobs = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, Process> _convertProcs = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, (string Path, DateTime At)> _audioSources = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly HttpClient NetProxyClient = new(new HttpClientHandler
+    {
+        AllowAutoRedirect = false,
+        UseCookies = false,
+    })
+    {
+        Timeout = Timeout.InfiniteTimeSpan,
+    };
+    private const int NetProxyMaxBody = 256 * 1024;
+    private const int NetProxyMaxResponse = 5 * 1024 * 1024;
+    private static readonly HashSet<string> NetProxyHopHeaders = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "host", "connection", "content-length", "transfer-encoding", "keep-alive", "upgrade",
+        "proxy-connection", "accept-encoding",
+    };
 
     private sealed class ConvertLogJob
     {
@@ -253,6 +268,9 @@ internal sealed class ServerHost : IAsyncDisposable
                 error = job?.Error,
             });
         });
+
+        app.MapPost("/api/net-proxy", (Delegate)HandleNetProxyAsync)
+            .DisableAntiforgery();
 
         app.MapPost("/api/convert", (Delegate)HandleConvertAsync)
             .DisableAntiforgery();
@@ -1185,6 +1203,154 @@ internal sealed class ServerHost : IAsyncDisposable
     {
         if (string.IsNullOrWhiteSpace(text)) return string.Empty;
         return text.Length <= max ? text : text[^max..];
+    }
+
+    private sealed class NetProxyRequest
+    {
+        public string? Url { get; set; }
+        public string? Method { get; set; }
+        public Dictionary<string, string>? Headers { get; set; }
+        public string? Body { get; set; }
+        public int? TimeoutMs { get; set; }
+        public bool? Binary { get; set; }
+    }
+
+    private async Task<IResult> HandleNetProxyAsync(HttpContext context)
+    {
+        NetProxyRequest? payload;
+        try
+        {
+            payload = await context.Request.ReadFromJsonAsync<NetProxyRequest>(context.RequestAborted);
+        }
+        catch
+        {
+            return Results.Json(new { error = "请求体必须是 JSON" }, statusCode: 400);
+        }
+        if (payload == null || string.IsNullOrWhiteSpace(payload.Url))
+            return Results.Json(new { error = "缺少 url" }, statusCode: 400);
+
+        var method = (payload.Method ?? "GET").ToUpperInvariant();
+        if (method is not ("GET" or "HEAD" or "POST" or "PUT" or "PATCH" or "DELETE"))
+            return Results.Json(new { error = "不支持的请求方法" }, statusCode: 400);
+        var timeoutMs = Math.Clamp(payload.TimeoutMs ?? 15000, 1000, 60000);
+
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted);
+        cts.CancelAfter(timeoutMs);
+        try
+        {
+            var target = await AssertPublicUrlAsync(payload.Url, cts.Token);
+            HttpResponseMessage? response = null;
+            for (var hop = 0; hop <= 3; hop += 1)
+            {
+                using var request = new HttpRequestMessage(new HttpMethod(method), target);
+                if (!method.Equals("GET", StringComparison.OrdinalIgnoreCase) &&
+                    !method.Equals("HEAD", StringComparison.OrdinalIgnoreCase) &&
+                    payload.Body != null)
+                {
+                    request.Content = new StringContent(payload.Body);
+                }
+                if (payload.Headers != null)
+                {
+                    foreach (var pair in payload.Headers)
+                    {
+                        if (string.IsNullOrWhiteSpace(pair.Key) || NetProxyHopHeaders.Contains(pair.Key)) continue;
+                        if (!request.Headers.TryAddWithoutValidation(pair.Key, pair.Value))
+                            request.Content?.Headers.TryAddWithoutValidation(pair.Key, pair.Value);
+                    }
+                }
+
+                response = await NetProxyClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cts.Token);
+                var status = (int)response.StatusCode;
+                var isRedirect = status is 301 or 302 or 303 or 307 or 308;
+                if (!isRedirect) break;
+                var location = response.Headers.Location;
+                if (location == null || method is not ("GET" or "HEAD")) break;
+                target = await AssertPublicUrlAsync(new Uri(target, location).AbsoluteUri, cts.Token);
+                response.Dispose();
+                response = null;
+            }
+            if (response == null) throw new InvalidOperationException("重定向次数过多");
+
+            var length = response.Content.Headers.ContentLength ?? 0;
+            if (length > NetProxyMaxResponse) throw new InvalidOperationException("响应过大");
+            byte[] buffer;
+            await using (var stream = await response.Content.ReadAsStreamAsync(cts.Token))
+            {
+                using var ms = new MemoryStream();
+                var chunk = new byte[81920];
+                int read;
+                while ((read = await stream.ReadAsync(chunk, cts.Token)) > 0)
+                {
+                    if (ms.Length + read > NetProxyMaxResponse) throw new InvalidOperationException("响应过大");
+                    ms.Write(chunk, 0, read);
+                }
+                buffer = ms.ToArray();
+            }
+
+            var contentType = response.Content.Headers.ContentType?.ToString() ?? string.Empty;
+            var isText = Regex.IsMatch(contentType,
+                "^(text/|application/(json|xml|javascript|x-www-form-urlencoded)|image/svg)",
+                RegexOptions.IgnoreCase);
+            var headers = new Dictionary<string, string>();
+            foreach (var name in new[] { "Content-Type", "Cache-Control", "ETag", "Last-Modified" })
+            {
+                if (response.Content.Headers.TryGetValues(name, out var values))
+                    headers[name.ToLowerInvariant()] = string.Join(", ", values);
+                else if (response.Headers.TryGetValues(name, out var rawValues))
+                    headers[name.ToLowerInvariant()] = string.Join(", ", rawValues);
+            }
+
+            var statusText = response.ReasonPhrase ?? string.Empty;
+            var wantsBase64 = payload.Binary == true || !isText;
+            var payloadJson = wantsBase64
+                ? (object)new { status = (int)response.StatusCode, statusText, headers, base64 = Convert.ToBase64String(buffer) }
+                : new { status = (int)response.StatusCode, statusText, headers, text = Encoding.UTF8.GetString(buffer) };
+            return Results.Json(payloadJson);
+        }
+        catch (Exception ex)
+        {
+            return Results.Json(new { error = "代理请求失败：" + ex.Message }, statusCode: 502);
+        }
+    }
+
+    private static async Task<Uri> AssertPublicUrlAsync(string raw, CancellationToken token)
+    {
+        if (!Uri.TryCreate(raw, UriKind.Absolute, out var uri))
+            throw new InvalidOperationException("URL 无效");
+        if (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps)
+            throw new InvalidOperationException("只允许 http(s) URL");
+        var host = uri.Host.Trim('[', ']').ToLowerInvariant();
+        if (host is "localhost" || host.EndsWith(".localhost") || host.EndsWith(".local") || host.EndsWith(".internal"))
+            throw new InvalidOperationException("不允许访问本机或内网地址");
+        if (IPAddress.TryParse(host, out var direct))
+        {
+            if (IsPrivateAddress(direct)) throw new InvalidOperationException("不允许访问内网地址");
+            return uri;
+        }
+        var addresses = await Dns.GetHostAddressesAsync(host, token);
+        if (addresses.Length == 0) throw new InvalidOperationException("域名解析失败");
+        if (addresses.Any(IsPrivateAddress)) throw new InvalidOperationException("不允许访问内网地址");
+        return uri;
+    }
+
+    private static bool IsPrivateAddress(IPAddress address)
+    {
+        if (address.IsIPv4MappedToIPv6) address = address.MapToIPv4();
+        if (IPAddress.IsLoopback(address)) return true;
+        if (address.AddressFamily == AddressFamily.InterNetworkV6)
+        {
+            if (address.IsIPv6LinkLocal || address.IsIPv6SiteLocal) return true;
+            var bytes = address.GetAddressBytes();
+            if ((bytes[0] & 0xFE) == 0xFC) return true;
+            return false;
+        }
+        var v4 = address.GetAddressBytes();
+        if (v4[0] == 0 || v4[0] == 10 || v4[0] == 127) return true;
+        if (v4[0] == 169 && v4[1] == 254) return true;
+        if (v4[0] == 172 && v4[1] >= 16 && v4[1] <= 31) return true;
+        if (v4[0] == 192 && v4[1] == 168) return true;
+        if (v4[0] == 100 && v4[1] >= 64 && v4[1] <= 127) return true;
+        return false;
     }
 
     private static void TryDeleteDirectory(string path)

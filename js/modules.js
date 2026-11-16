@@ -3431,7 +3431,8 @@ export function drawVisualModule(ctx, mod, accent, env) {
   ctx.save();
   if (!frameless) clipRect(ctx, body.x, body.y, body.w, body.h);
   const originalFillText = ctx.fillText;
-  if (!['basicInfo', 'midiOC', 'flPlaylist', 'harmony', 'drumStep'].includes(mod.type) && palette.text) {
+  const pluginModule = Boolean(MODULE_DEFS[mod.type]?.plugin);
+  if (!pluginModule && !['basicInfo', 'midiOC', 'flPlaylist', 'harmony', 'drumStep'].includes(mod.type) && palette.text) {
     ctx.fillText = function (text, x, y, maxWidth) {
       ctx.fillStyle = palette.text;
       return originalFillText.call(ctx, text, x, y, maxWidth);

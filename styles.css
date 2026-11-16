@@ -3012,3 +3012,27 @@ body[data-ui-mode="light"] .shortcut-search input { color: #3a304f; }
   body.settings-standalone #settingsWindow .settings-nav { padding-top: 10px; padding-left: 6px; padding-right: 6px; }
   body.settings-standalone #ui-root.ui-ultra #settingsWindow .settings-nav { padding-left: 6px; padding-right: 6px; }
 }
+
+/* ── Plugin settings / extended option controls ───────── */
+.lib-glyph-img { width: 100%; height: 100%; object-fit: contain; border-radius: 4px; }
+.plugin-settings-panel {
+  display: grid; gap: 8px; padding: 10px;
+  border: 1px solid rgba(255,255,255,.09); border-radius: 5px;
+  background: rgba(255,255,255,.012);
+}
+.plugin-settings-title { font: 7px var(--mono); letter-spacing: .08em; color: var(--dim); }
+.plugin-settings-note { margin: 2px 0 0; font: 6px var(--mono); color: var(--dim); line-height: 1.5; }
+.plugin-setting-help { font: 6px var(--mono); color: var(--dim); margin-top: -4px; }
+.opt-secret { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.opt-secret input { flex: 1; min-width: 0; }
+.module-option-textarea { align-items: stretch; }
+.module-option-textarea textarea { width: 100%; resize: vertical; min-height: 54px; box-sizing: border-box; }
+.opt-image-row { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+.opt-image-row img { width: 44px; height: 44px; object-fit: cover; border-radius: 4px; border: 1px solid rgba(255,255,255,.14); }
+.opt-image-empty { font: 6px var(--mono); color: var(--dim); }
+.module-option-button { align-items: center; }
+.module-option-textarea textarea {
+  background: #15101c; border: 1px solid rgba(255,255,255,.12); color: var(--text);
+  font: 9px var(--mono); padding: 6px 8px; border-radius: 4px;
+}
+.module-option-textarea textarea:focus { border-color: rgba(var(--accent-rgb), .4); outline: none; }

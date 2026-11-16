@@ -1,5 +1,6 @@
 // Copyright (C) 2026 Tatsukini
 import http from 'node:http';
+import dns from 'node:dns/promises';
 import { createReadStream, createWriteStream } from 'node:fs';
 import { mkdir, mkdtemp, rm, stat, statfs, readdir, rename } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
@@ -709,7 +710,158 @@ async function handleStatic(req, res) {
   }
 }
 
+const NET_PROXY_MAX_BODY = 256 * 1024;
+const NET_PROXY_MAX_RESPONSE = 5 * 1024 * 1024;
+
+function readRequestJson(req, limit = NET_PROXY_MAX_BODY) {
+  return new Promise((resolve, reject) => {
+    let size = 0;
+    const chunks = [];
+    req.on('data', (chunk) => {
+      size += chunk.length;
+      if (size > limit) {
+        reject(new Error('请求体过大'));
+        req.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on('end', () => {
+      try { resolve(JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}')); }
+      catch { reject(new Error('请求体必须是 JSON')); }
+    });
+    req.on('error', reject);
+  });
+}
+
+function isPrivateIPv4(ip) {
+  const parts = ip.split('.').map(Number);
+  if (parts.length !== 4 || parts.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return true;
+  const [a, b] = parts;
+  if (a === 0 || a === 10 || a === 127) return true;
+  if (a === 169 && b === 254) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  if (a === 192 && b === 168) return true;
+  if (a === 100 && b >= 64 && b <= 127) return true;
+  return false;
+}
+
+function isPrivateAddress(address) {
+  const ip = String(address || '').replace(/^\[|\]$/g, '').toLowerCase();
+  if (!ip) return true;
+  if (ip.includes(':')) {
+    if (ip === '::1' || ip === '::') return true;
+    if (ip.startsWith('fe80') || ip.startsWith('fc') || ip.startsWith('fd')) return true;
+    const mapped = ip.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
+    if (mapped) return isPrivateIPv4(mapped[1]);
+    return false;
+  }
+  return isPrivateIPv4(ip);
+}
+
+async function assertPublicUrl(raw) {
+  let url;
+  try { url = new URL(String(raw)); } catch { throw new Error('URL 无效'); }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new Error('只允许 http(s) URL');
+  const host = url.hostname.replace(/^\[|\]$/g, '');
+  if (!host) throw new Error('URL 缺少主机名');
+  const lower = host.toLowerCase();
+  if (lower === 'localhost' || lower.endsWith('.localhost') || lower.endsWith('.local') || lower.endsWith('.internal')) {
+    throw new Error('不允许访问本机或内网地址');
+  }
+  if (/^\d+\.\d+\.\d+\.\d+$/.test(host)) {
+    if (isPrivateIPv4(host)) throw new Error('不允许访问内网地址');
+    return url;
+  }
+  if (host.includes(':')) {
+    if (isPrivateAddress(host)) throw new Error('不允许访问内网地址');
+    return url;
+  }
+  const addresses = await dns.lookup(host, { all: true }).catch(() => []);
+  if (!addresses.length) throw new Error('域名解析失败');
+  if (addresses.some((item) => isPrivateAddress(item.address))) throw new Error('不允许访问内网地址');
+  return url;
+}
+
+const HOP_HEADERS = new Set(['host', 'connection', 'content-length', 'transfer-encoding', 'keep-alive', 'upgrade', 'proxy-connection', 'accept-encoding']);
+
+async function handleNetProxy(req, res) {
+  if (req.method !== 'POST') { sendJson(res, 405, { error: 'Method not allowed' }); return; }
+  let payload;
+  try { payload = await readRequestJson(req); }
+  catch (err) { sendJson(res, 400, { error: err.message }); return; }
+  const timeoutMs = Math.min(60000, Math.max(1000, Number(payload.timeoutMs) || 15000));
+  const method = String(payload.method || 'GET').toUpperCase();
+  if (!['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
+    sendJson(res, 400, { error: '不支持的请求方法' });
+    return;
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    let target = await assertPublicUrl(payload.url);
+    let response = null;
+    for (let hop = 0; hop <= 3; hop += 1) {
+      const headers = {};
+      for (const [key, value] of Object.entries(payload.headers || {})) {
+        if (!key || HOP_HEADERS.has(String(key).toLowerCase())) continue;
+        headers[String(key)] = String(value);
+      }
+      const init = { method, headers, redirect: 'manual', signal: controller.signal };
+      if (!['GET', 'HEAD'].includes(method) && typeof payload.body === 'string') init.body = payload.body;
+      response = await fetch(target, init);
+      if (![301, 302, 303, 307, 308].includes(response.status)) break;
+      const location = response.headers.get('location');
+      if (!location || !['GET', 'HEAD'].includes(method)) break;
+      target = await assertPublicUrl(new URL(location, target).href);
+    }
+    const lengthHeader = Number(response.headers.get('content-length') || 0);
+    if (lengthHeader > NET_PROXY_MAX_RESPONSE) throw new Error('响应过大');
+    const reader = response.body?.getReader();
+    let total = 0;
+    const chunks = [];
+    if (reader) {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        total += value.length;
+        if (total > NET_PROXY_MAX_RESPONSE) {
+          controller.abort();
+          throw new Error('响应过大');
+        }
+        chunks.push(Buffer.from(value));
+      }
+    }
+    const buffer = Buffer.concat(chunks);
+    const contentType = response.headers.get('content-type') || '';
+    const isText = /^(text\/|application\/(json|xml|javascript|x-www-form-urlencoded)|image\/svg)/i.test(contentType);
+    const outHeaders = {};
+    for (const name of ['content-type', 'cache-control', 'etag', 'last-modified']) {
+      const value = response.headers.get(name);
+      if (value) outHeaders[name] = value;
+    }
+    sendJson(res, 200, {
+      status: response.status,
+      statusText: response.statusText || '',
+      headers: outHeaders,
+      ...(payload.binary || !isText
+        ? { base64: buffer.toString('base64') }
+        : { text: buffer.toString('utf8') }),
+    });
+  } catch (err) {
+    sendJson(res, 502, { error: `代理请求失败：${err?.message || err}` });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 const server = http.createServer((req, res) => {
+  if (req.url?.startsWith('/api/net-proxy')) {
+    handleNetProxy(req, res).catch((err) => {
+      if (!res.headersSent) sendJson(res, 500, { error: err?.message || '代理异常' });
+    });
+    return;
+  }
   if (req.url?.startsWith('/api/health')) {
     getFfmpegInfo().then(async (info) => sendJson(res, 200, {
       ffmpeg: info.ok,

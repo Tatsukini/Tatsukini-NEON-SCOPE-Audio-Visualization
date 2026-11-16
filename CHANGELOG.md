@@ -2,6 +2,32 @@
 
 本文件自 `V0.1.3_1110_alpha_canary` 起维护。
 
+## V0.1.4_Alpha_Canary_1117_2 — 2026-11-17
+
+### 新增
+
+- **插件级设置 `context.settings`**：插件可声明自己的配置字段（文本 / 密码 / 多行文本 / 开关 / 下拉 / 颜色 / 数值 / 滑块 / 图片），插件管理器出现「设置」按钮。值只保存在本机，不写入 `.NEON` 工程存档，卸载时清除；原生双窗口与浏览器多标签都会同步变更。
+- **插件私有存储与图片资源**：`context.storage`（128 KB/值）与 `context.assets`（PNG/JPEG/WebP，最长边压缩、约 2 MB 上限）按插件 id 隔离，卸载时一并清理。
+- **网络与图片接口**：`context.net.fetch` 在直连失败（CORS）时自动回退本机代理 `/api/net-proxy`，代理仅允许公网 http(s)，拒绝 localhost / 内网，超时 1–60 秒、响应上限 5 MB；`context.loadImage` 处理 `crossOrigin` 并用代理兜底，避免跨域图片污染画布导致导出失败。
+- **插件事件**：`context.on('transport' | 'theme' | 'settings' | 'options' | 'project', ...)`，返回取消订阅函数。
+- **新增模块类型与选项类型**：模块支持 `hiddenByDefault`、`minW/maxW/minH/maxH`、模块库图标 `icon`、鼠标回调 `onPointer`；选项新增 `password`、`textarea`、`image`、`button`（`onPress`），`select` 的 `options` 可传函数动态生成，`text` 的 `maxLength` 可配置（默认 80）。
+- **权限声明**：`plugin.json` 的 `permissions` 正式生效，支持 `modules` / `network` / `storage` / `assets` / `clipboard` / `openExternal`；安装时向用户确认，未声明的能力在运行时拒绝。
+
+### 修复
+
+- **插件文字颜色被主题强制覆盖（「版本更新了但仍显示旧样式」的真因）**：渲染层此前会把所有非内置模块的 `ctx.fillText` 包一层，强制使用主题文字色（通常为白色），导致插件自己设置的 `fillStyle` 全部失效——梁文挂件 V1.0.1 的灰/蓝文字因此仍显示为白色，而头像圈等描边元素颜色正常。现在插件模块不再被强制改色，由插件的 `draw` 自行决定文字颜色（内置模块行为不变）。
+- **GitHub 插件更新源改为 Contents API + commit SH**：`raw.githubusercontent.com` 会按路径缓存且实际忽略 `?t=` 查询参数，导致推送新版后仍可能拿到旧 `plugin.json` / `index.js`，甚至出现“版本 1.0.1 + 代码 1.0.2”的混合状态。现在先取分支最新 commit SHA，再用 GitHub Contents API 按该 SHA 拉取清单与入口（两者严格同版本）；API 限流时回退 raw。
+- **版本号相同但代码陈旧的插件无法刷新**：旧记录可能“版本号来自新 manifest、实际 code 仍是旧版”（历史安装的缓存副本）。现在：
+  - 激活后记录插件代码的 SHA-256；「检查更新」同时比较版本号与代码哈希，版本相同但代码不同也会列为更新（标注「代码已变化」），不再被版本号骗过。
+  - 「重载」对 GitHub / PNPM 插件改为重新下载清单与入口脚本后再激活；本地插件仍按已存代码重载。
+  - 插件卡片显示代码哈希前 8 位（`CODE xxxxxxxx`），便于核对实际执行的版本。
+- **设置窗口「检查更新」不弹窗、更新后列表不回显**：设置窗口发出的 `plugin-update-prompt` 此前只会落到主页面被忽略，表现是只有一行「发现 N 个可用更新」。现在主窗口识别该消息并弹出原生选择窗口；更新完成后主窗口广播 `plugins-changed`，设置窗口的插件列表立即显示新版本（不再停留在 1.0.1）。
+- **原生更新窗口条目显示为类型名**：`CheckedListBox` 默认模式不会触发 `Format` 事件，条目曾直接显示 `PluginUpdateItem { Id = ... }`。现在由记录自身提供「名称 v当前 → v最新（备注）」文本。
+- **「更新检查失败」不再由 GitHub API 限流触发**：此前每次检查都先请求仓库信息（`api.github.com/repos/...`），未登录额度只有 60 次/小时，额度耗尽时第一步就 403 且无回退，表现是“明明有网却检查失败”。现在：
+  - 不再请求仓库信息；先按 `main` / `master` 各尝试一次解析分支 HEAD 提交，只消耗 1 次 API 调用。
+  - 清单与入口改用 `raw.githubusercontent.com/<sha>/...` 读取：提交 SHA 不可变，raw 不会返回旧版本，也不再占用 Contents API 额度。
+  - 额度不足时自动回退到 raw 分支路径（可能仍是 CDN 旧缓存），状态栏标注「GitHub API 限流，已用 CDN 回退」；检查失败时直接显示首个错误原因。
+
 ## V0.1.4_Alpha_Canary_1117_1 — 2026-11-17
 
 ### 新增
