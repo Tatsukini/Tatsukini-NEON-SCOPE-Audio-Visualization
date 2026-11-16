@@ -29,6 +29,9 @@ internal sealed class MainForm : Form
     private NotifyIcon? _tray;
     private bool _trayHintShown;
     private TaskCompletionSource<bool>? _autosaveFlush;
+    private Panel? _content;
+    private TableLayoutPanel? _shell;
+    private MenuStrip? _menuStrip;
 
     public MainForm()
     {
@@ -45,10 +48,70 @@ internal sealed class MainForm : Form
         Height = Math.Min(1000, Math.Max(700, work.Height - 48));
 
         LoadPathSettings();
+        CreateShell();
         CreateSplash();
         Shown += async (_, _) => await StartAsync();
         FormClosing += OnFormClosing;
         HandleCreated += OnHandleCreated;
+    }
+
+    private void CreateShell()
+    {
+        _shell = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 1,
+            RowCount = 2,
+            BackColor = Color.FromArgb(7, 5, 10),
+            Margin = Padding.Empty,
+            Padding = Padding.Empty,
+        };
+        _shell.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+        _shell.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        _shell.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
+        Controls.Add(_shell);
+
+        _menuStrip = new MenuStrip
+        {
+            Dock = DockStyle.Fill,
+            BackColor = Color.FromArgb(12, 8, 18),
+            ForeColor = Color.FromArgb(226, 214, 230),
+            Font = new Font("Microsoft YaHei UI", 9f, FontStyle.Regular),
+            Renderer = new DarkMenuRenderer(),
+            GripStyle = ToolStripGripStyle.Hidden,
+            Padding = new Padding(8, 2, 0, 2),
+            Margin = Padding.Empty,
+            CanOverflow = false,
+            AllowItemReorder = false,
+            TabStop = false,
+        };
+
+        var fileMenu = new ToolStripMenuItem("文件");
+        fileMenu.DropDown.Renderer = new DarkMenuRenderer();
+        var settingsItem = new ToolStripMenuItem("设置…")
+        {
+            ShortcutKeyDisplayString = "设置 → 文件",
+            Padding = new Padding(6, 4, 6, 4),
+        };
+        settingsItem.Click += (_, _) => OpenSettingsWindow("files");
+        var newArchiveItem = new ToolStripMenuItem("新建存档…")
+        {
+            ShortcutKeyDisplayString = "保存当前工程后新建",
+            Padding = new Padding(6, 4, 6, 4),
+        };
+        newArchiveItem.Click += (_, _) => PostToMain("{\"action\":\"new-archive-request\"}");
+        fileMenu.DropDownItems.AddRange(new ToolStripItem[] { settingsItem, newArchiveItem });
+        _menuStrip.Items.Add(fileMenu);
+        MainMenuStrip = _menuStrip;
+        _shell.Controls.Add(_menuStrip, 0, 0);
+
+        _content = new Panel
+        {
+            Dock = DockStyle.Fill,
+            Margin = Padding.Empty,
+            BackColor = Color.FromArgb(7, 5, 10),
+        };
+        _shell.Controls.Add(_content, 0, 1);
     }
 
     private void CreateSplash()
@@ -62,7 +125,7 @@ internal sealed class MainForm : Form
             Font = new Font("Segoe UI", 12f, FontStyle.Regular),
             Text = "NEON//SCOPE\r\n\r\n正在启动音频可视化引擎…",
         };
-        Controls.Add(_splash);
+        _content!.Controls.Add(_splash);
     }
 
     private async Task StartAsync()
@@ -84,9 +147,9 @@ internal sealed class MainForm : Form
                 Dock = DockStyle.Fill,
                 DefaultBackgroundColor = Color.FromArgb(7, 5, 10),
             };
-            Controls.Add(_webView);
+            _content!.Controls.Add(_webView);
             _webView.BringToFront();
-            _splash.BringToFront();
+            _splash?.BringToFront();
 
             await _webView.EnsureCoreWebView2Async(_environment);
             var core = _webView.CoreWebView2;
@@ -135,7 +198,7 @@ internal sealed class MainForm : Form
         {
             if (_splash != null)
             {
-                Controls.Remove(_splash);
+                _content!.Controls.Remove(_splash);
                 _splash.Dispose();
                 _splash = null;
             }
@@ -229,7 +292,7 @@ internal sealed class MainForm : Form
             switch (actionElement.GetString())
             {
                 case "open-settings":
-                    OpenSettingsWindow();
+                    OpenSettingsWindow(doc.RootElement.TryGetProperty("tab", out var tabElement) ? tabElement.GetString() : null);
                     break;
                 case "open-stage-window":
                     OpenStageWindow();
@@ -316,7 +379,7 @@ internal sealed class MainForm : Form
         catch (Exception ex) { AppPaths.Log("Open folder failed: " + ex.Message); }
     }
 
-    private void OpenSettingsWindow()
+    private void OpenSettingsWindow(string? tab = null)
     {
         try
         {
@@ -326,9 +389,10 @@ internal sealed class MainForm : Form
                 if (!_settingsForm.Visible) _settingsForm.Show();
                 _settingsForm.Activate();
                 _settingsForm.BringToFront();
+                if (!string.IsNullOrWhiteSpace(tab)) _settingsForm.OpenTab(tab!);
                 return;
             }
-            var form = new SettingsForm(_environment, _server.BaseUrl);
+            var form = new SettingsForm(_environment, _server.BaseUrl, tab);
             form.SettingsChanged += OnSettingsChanged;
             form.FormClosed += (_, _) => _settingsForm = null;
             _settingsForm = form;
@@ -537,6 +601,40 @@ internal sealed class MainForm : Form
         AppPaths.Log("WebView2 process failed: " + e.ProcessFailedKind);
     }
 
+    private sealed class DarkMenuColorTable : ProfessionalColorTable
+    {
+        public override Color MenuBorder => Color.FromArgb(58, 43, 72);
+        public override Color MenuItemBorder => Color.FromArgb(58, 43, 72);
+        public override Color MenuItemSelected => Color.FromArgb(52, 28, 64);
+        public override Color MenuItemSelectedGradientBegin => Color.FromArgb(52, 28, 64);
+        public override Color MenuItemSelectedGradientEnd => Color.FromArgb(52, 28, 64);
+        public override Color ToolStripDropDownBackground => Color.FromArgb(18, 12, 26);
+        public override Color ImageMarginGradientBegin => Color.FromArgb(18, 12, 26);
+        public override Color ImageMarginGradientMiddle => Color.FromArgb(18, 12, 26);
+        public override Color ImageMarginGradientEnd => Color.FromArgb(18, 12, 26);
+        public override Color MenuStripGradientBegin => Color.FromArgb(12, 8, 18);
+        public override Color MenuStripGradientEnd => Color.FromArgb(12, 8, 18);
+        public override Color MenuItemPressedGradientBegin => Color.FromArgb(44, 26, 56);
+        public override Color MenuItemPressedGradientEnd => Color.FromArgb(44, 26, 56);
+        public override Color ToolStripGradientBegin => Color.FromArgb(12, 8, 18);
+        public override Color ToolStripGradientMiddle => Color.FromArgb(12, 8, 18);
+        public override Color ToolStripGradientEnd => Color.FromArgb(12, 8, 18);
+    }
+
+    private sealed class DarkMenuRenderer : ToolStripProfessionalRenderer
+    {
+        public DarkMenuRenderer() : base(new DarkMenuColorTable())
+        {
+            RoundedEdges = false;
+        }
+
+        protected override void OnRenderItemText(ToolStripItemTextRenderEventArgs e)
+        {
+            e.TextColor = e.Item.Selected ? Color.White : Color.FromArgb(232, 219, 233);
+            base.OnRenderItemText(e);
+        }
+    }
+
     private void OnHandleCreated(object? sender, EventArgs e)
     {
         TryEnableDarkTitleBar();
@@ -587,16 +685,40 @@ internal sealed class MainForm : Form
             e.Cancel = true;
             return;
         }
+        e.Cancel = true;
 
         if (e.CloseReason == CloseReason.WindowsShutDown || e.CloseReason == CloseReason.TaskManagerClosing)
         {
-            e.Cancel = true;
             _closing = true;
             await ShutdownAsync();
             return;
         }
 
-        e.Cancel = true;
+        // The page owns the project state; ask it whether anything changed since
+        // launch. A clean session closes immediately without the tray prompt.
+        var hasChanges = true;
+        try
+        {
+            var core = _webView?.CoreWebView2;
+            if (core != null)
+            {
+                var json = await core.ExecuteScriptAsync(
+                    "window.neonScope && window.neonScope._sessionHasChanges ? (window.neonScope._sessionHasChanges() ? '1' : '0') : '1'");
+                hasChanges = (json ?? "1").Replace("\"", "").Trim() != "0";
+            }
+        }
+        catch (Exception ex)
+        {
+            AppPaths.Log("Session change check failed: " + ex.Message);
+        }
+        if (!hasChanges)
+        {
+            AppPaths.Log("No project changes since launch; closing without prompt.");
+            _closing = true;
+            await ShutdownAsync();
+            return;
+        }
+
         var behavior = LoadCloseBehavior();
         CloseChoice choice;
         var remember = false;

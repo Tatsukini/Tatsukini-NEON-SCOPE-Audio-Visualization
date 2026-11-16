@@ -2,7 +2,7 @@
 
 **前沿测试频道 · 功能最先落地 · 不保证稳定**
 
-[![Canary build](https://img.shields.io/badge/canary-V0.1.4__Alpha__Canary__1116__1-e5397f)](https://github.com/Tatsukini/Tatsukini-NEON-SCOPE-Audio-Visualization-Canary/releases/tag/V0.1.4_Alpha_Canary_1116_1)
+[![Canary build](https://img.shields.io/badge/canary-V0.1.4__Alpha__Canary__1116__5-e5397f)](https://github.com/Tatsukini/Tatsukini-NEON-SCOPE-Audio-Visualization-Canary/releases/tag/V0.1.4_Alpha_Canary_1116_5)
 [![License](https://img.shields.io/badge/license-AGPL--3.0--or--later-1f6feb)](LICENSE)
 [![Stable channel](https://img.shields.io/badge/stable-V0.1.1_1104_alpha_Num.2-6e7681)](https://github.com/Tatsukini/Tatsukini-NEON-SCOPE-Audio-Visualization)
 
@@ -30,7 +30,7 @@ Canary 与稳定版共享同一套前端资源与桌面外壳，代码同源；�
 
 ## 界面测试图
 
-以下截图全部取自当前构建 `V0.1.4_Alpha_Canary_1116_1`，1920×1080，示例工程 `WHEN RAIN`。
+以下截图全部取自当前构建 `V0.1.4_Alpha_Canary_1116_5`，1920×1080，示例工程 `WHEN RAIN`。
 
 | 工作台 · 编辑与吸附 | 专注预览 · 无侧栏 |
 | --- | --- |
@@ -50,15 +50,18 @@ Canary 与稳定版共享同一套前端资源与桌面外壳，代码同源；�
 
 | 项目 | 值 |
 | --- | --- |
-| 构建号 | `V0.1.4_Alpha_Canary_1116_1` |
+| 构建号 | `V0.1.4_Alpha_Canary_1116_5` |
 | 通道 | Canary / Alpha |
-| 基于 | `V0.1.4_Alpha_Canary_1115_1` |
-| 构建日期 | 2026-11-15 |
+| 基于 | `V0.1.4_Alpha_Canary_1116_4` |
+| 构建日期 | 2026-11-16 |
 | 许可 | AGPL-3.0-or-later（见 [LICENSE](LICENSE)、[NOTICE](NOTICE)） |
 | 可执行文件 | `dist\NEON-SCOPE.exe`、`NEON-SCOPE-win64.zip` |
 
 ### 本轮改动
 
+- **原生窗口菜单栏「文件」**：使用 Windows 系统标题栏与原生菜单栏（位于标题栏正下方），包含「设置…」（直达设置 → 文件）与「新建存档…」（确认后把当前工程保存为 `[基础信息名称]-MMDD-Num`.NEON，再清空舞台并开始新工程；同日编号自动递增）。菜单栏与下拉菜单为深色配色，支持 Alt 键访问；页面内容始终完整显示在菜单栏下方。
+- **无改动直接退出**：启动到关闭期间工程没有任何改动时，跳过关闭确认与自动存档遮罩直接退出；有改动时保持原有保存 / 托盘流程。
+- **关于界面新增打赏通道**：设置 → 关于新增「支持项目开发」区块，提供爱发电（https://afdian.com/a/tatsukini2333）与 Unifans（https://app.unifans.io/c/tatsukini2333）两个入口；文案为「支持项目开发，并且 Buy Me a Coffee！选择其中一个通道即可」，点击任一按钮在系统浏览器打开对应页面。
 - **修复「导入的 MIDI / 轨道列表 / 总线」三者对不上**：导入此前只做追加，旧工程（120 BPM）与本次分轨（170 BPM）静默混排；逐轨删除留下的空层仍写进存档；和弦模块用位置下标记录轨道，锁定到旧曲目的 Vox 轨，0:44 恰好落在空档，显示 N.C.。
   - 导入与现有 MIDI 的 BPM 不一致时弹出选择：「替换现有 MIDI」只保留本次导入，「追加导入」合并两批轨道；内置 DEMO MIDI 在导入真实 MIDI 时自动替换。
   - 解析、合并、读取存档三处剔除 0 音符的空层，删轨残留不再累积。
@@ -69,7 +72,10 @@ Canary 与稳定版共享同一套前端资源与桌面外壳，代码同源；�
 
 ### 测试重点
 
-1. **MIDI 导入**：先导入一批 120 BPM 的 MIDI，再导入 170 BPM 的另一批，确认弹出「替换 / 追加」选择；选替换后总线与模块库只剩新文件，选追加后两批轨道都在。导入真实 MIDI 时内置 DEMO MIDI 自动让位。
+1. **文件菜单**：窗口菜单栏「文件」→「设置…」应打开设置的文件页；「新建存档…」取消不应产生文件，确认后当前工程保存为 `名称-MMDD-N.NEON` 并清空舞台，同日再次新建编号递增。页面内容不应被菜单栏遮挡，标题栏为系统原生样式。
+2. **无改动退出**：打开应用后不做任何操作直接关闭，应跳过关闭确认与存档动画；改动模块位置 / 信息 / MIDI 后再关闭，应恢复原有确认与自动存档流程。
+3. **关于界面**：设置 → 关于，确认「支持项目开发」区块显示两个通道，点击爱发电 / Unifans 在浏览器打开对应页面。
+2. **MIDI 导入**：先导入一批 120 BPM 的 MIDI，再导入 170 BPM 的另一批，确认弹出「替换 / 追加」选择；选替换后总线与模块库只剩新文件，选追加后两批轨道都在。导入真实 MIDI 时内置 DEMO MIDI 自动让位。
 2. **和弦显示**：默认「自动」应基于全部轨道给出和弦；切换到某条单轨后显示该轨自身和弦；删除该轨后自动回落，不显示其它轨道的和弦。
 3. **MIDI 总线**：删除 MIDI 3D 模块后，总线仍列出全部文件与轨道，每行 × 可移除单个文件；「清空全部 MIDI」会同时清空 FL 播放流、和弦与鼓组步进的数据。
 4. **既有模块**：FL 播放流、鼓组步进与拍号在导入 / 清空 / 重新导入后仍同步，无控制台报错。

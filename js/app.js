@@ -9,7 +9,7 @@ import {
 } from './core.js';
 import { AudioEngine } from './audio.js';
 import { createZip, readZip } from './neonzip.js';
-import { putPendingArchive, takePendingArchive, clearLastAudio, clearPendingArchive, putAutosaveArchive, getAutosaveArchive } from './archive-store.js';
+import { putPendingArchive, takePendingArchive, clearLastAudio, clearPendingArchive, putAutosaveArchive, getAutosaveArchive, clearAutosaveArchive } from './archive-store.js';
 import { parseMidi } from './midi.js';
 import { resolveTimeSignature, formatTimeSignature, parseTimeSignature, parseKey, suggestDrumTracks, resolveMidiTrackIndex, midiTrackKey, drumStepRows, stepCountFor, emptyPattern, STEPS_PER_BEAT, DRUM_TRACK_LIMIT, GM_DRUMS } from './music.js';
 import { Visualizer } from './visualizer.js';
@@ -26,6 +26,7 @@ const PLUGINS_KEY = 'neon-scope.plugins.v1';
 const PLUGIN_PREFIX = 'tatsukini-neon-';
 const SETTINGS_SYNC_KEY = 'neon-scope.settings-sync.v1';
 const FORCE_RESTORE_KEY = 'neon-scope.force-restore';
+const NEW_PROJECT_KEY = 'neon-scope.new-project-once';
 const BG_PREVIEW_KEY = 'neon-scope.bg-preview.v1';
 const BG_IMAGE_KEY = 'neon-scope.bg-image.v1';
 const DEMO_META = { name: 'When Rain In My Mind Vol.2', kind: 'demo', bpm: 140, artist: 'NEON//SCOPE' };
@@ -441,7 +442,10 @@ class NeonScopeApp {
     this._frame = null;
     this._activeModal = null;
     this._modalStack = [];
-    this._settingsTab = 'appearance';
+    const params = new URLSearchParams(location.search);
+    this._settingsTab = params.get('tab') || 'appearance';
+    this._sessionBaseline = '';
+    this._sessionBaselineTimer = 0;
     this._keyCapture = null;
     this._moduleMenuId = null;
     this._colorTarget = null;
@@ -581,6 +585,8 @@ class NeonScopeApp {
       } else if (data?.action === 'archive-restore-request') {
         this._skipUnloadSave = true;
         location.reload();
+      } else if (data?.action === 'new-archive-request') {
+        this._newArchiveFlow();
       } else if (data?.action === 'flush-autosave') {
         // The host tears the WebView down as soon as this returns, so the
         // save must complete before answering.
@@ -892,6 +898,7 @@ class NeonScopeApp {
       drumBoardAddBtn: $('#drumBoardAddBtn'), drumBoardAutoBtn: $('#drumBoardAutoBtn'), drumBoardClearBtn: $('#drumBoardClearBtn'),
       drumBoardSampleBtn: $('#drumBoardSampleBtn'),
       aboutDeveloperBtn: $('#aboutDeveloperBtn'), aboutLicensesBtn: $('#aboutLicensesBtn'), aboutRepositoryBtn: $('#aboutRepositoryBtn'),
+      aboutAfdianBtn: $('#aboutAfdianBtn'), aboutUnifansBtn: $('#aboutUnifansBtn'),
       licenseModal: $('#licenseModal'), licenseList: $('#licenseList'),
       developerModal: $('#developerModal'), developerSiteBtn: $('#developerSiteBtn'),
       confirmModal: $('#confirmModal'), confirmMessage: $('#confirmMessage'),
@@ -2052,6 +2059,12 @@ class NeonScopeApp {
     this.dom.aboutRepositoryBtn?.addEventListener('click', () => {
       this._openExternal('https://github.com/Tatsukini/Tatsukini-NEON-SCOPE-Audio-Visualization-Canary');
     });
+    this.dom.aboutAfdianBtn?.addEventListener('click', () => {
+      this._openExternal('https://afdian.com/a/tatsukini2333');
+    });
+    this.dom.aboutUnifansBtn?.addEventListener('click', () => {
+      this._openExternal('https://app.unifans.io/c/tatsukini2333');
+    });
     this.dom.developerSiteBtn?.addEventListener('click', () => {
       this._openExternal('https://space.bilibili.com/3546631108561311');
     });
@@ -3180,7 +3193,7 @@ class NeonScopeApp {
     };
   }
 
-  async _buildArchivePackage() {
+  async _buildArchivePackage({ filename = null } = {}) {
     const archive = this._buildArchive();
     const files = [];
     const encoder = new TextEncoder();
@@ -3219,11 +3232,11 @@ class NeonScopeApp {
     const bytes = await createZip(files);
     return {
       bytes,
-      filename: `${sanitizeFilename(this.audio.track?.name || 'neon-scope')}-${new Date().toISOString().slice(0, 10)}.NEON`,
+      filename: filename || `${sanitizeFilename(this.audio.track?.name || 'neon-scope')}-${new Date().toISOString().slice(0, 10)}.NEON`,
     };
   }
 
-  async _saveArchive({ as = false } = {}) {
+  async _saveArchive({ as = false, filename = null } = {}) {
     try {
       if (this._standaloneSettings) {
         if (this._isNative) {
@@ -3232,16 +3245,18 @@ class NeonScopeApp {
         } else {
           this._toast('请在主窗口保存工程存档', '', 3000);
         }
-        return;
+        return false;
       }
       if (!this.audioAsset?.bytes?.byteLength) {
         this._toast('当前没有载入音频，本次存档不会包含音频轨道', '', 4200);
       }
       this._toast('正在打包 .NEON 工程…', 'info', 2200);
-      const { bytes, filename } = await this._buildArchivePackage();
+      const pack = await this._buildArchivePackage({ filename });
+      const bytes = pack.bytes;
+      const targetName = pack.filename;
       if (this._isNative) {
         try {
-          const params = new URLSearchParams({ filename, folder: this.state.settings.savePath || '' });
+          const params = new URLSearchParams({ filename: targetName, folder: this.state.settings.savePath || '' });
           const response = await fetch(`/api/save-archive?${params.toString()}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/zip' },
@@ -3249,33 +3264,38 @@ class NeonScopeApp {
           });
           const result = await response.json().catch(() => ({}));
           if (!response.ok || !result.ok) throw new Error(result.message || `HTTP ${response.status}`);
-          this._toast(`存档已保存 · ${result.path || filename}`, 'success', 4200);
-          return;
+          this._toast(`存档已保存 · ${result.path || targetName}`, 'success', 4200);
+          return true;
         } catch (err) {
           console.warn('Native archive save failed:', err);
+          // A named archive is part of a destructive flow: never fall back to a
+          // download that the caller cannot verify.
+          if (filename) throw err;
         }
       }
       try {
         if (window.showSaveFilePicker) {
           const handle = await window.showSaveFilePicker({
-            suggestedName: filename,
+            suggestedName: targetName,
             types: [{ description: 'NEON//SCOPE 工程存档', accept: { 'application/zip': ['.NEON'] } }],
           });
           const writable = await handle.createWritable();
           await writable.write(bytes);
           await writable.close();
           this._toast(`存档已保存 · ${handle.name}`, 'success', 3600);
-          return;
+          return true;
         }
       } catch (err) {
         if (err?.name !== 'AbortError') console.warn('Archive save failed:', err);
-        if (err?.name === 'AbortError') return;
+        if (err?.name === 'AbortError') return false;
       }
-      downloadBlob(new Blob([bytes], { type: 'application/zip' }), filename);
+      downloadBlob(new Blob([bytes], { type: 'application/zip' }), targetName);
       this._toast('存档已下载', 'success');
+      return true;
     } catch (err) {
       console.error(err);
       this._toast(`存档保存失败：${err.message}`, 'error', 5200);
+      return false;
     }
   }
 
@@ -6052,6 +6072,11 @@ class NeonScopeApp {
 
   async _boot() {
     try {
+      if (this._consumeNewProject()) {
+        this._updateStartOverlay('empty');
+        this._setEngineStatus('等待信号', '');
+        return;
+      }
       if (!this._standaloneSettings) await this._loadEnabledPlugins();
       const forced = this._consumeForceRestore();
       if (!forced && !this.state.settings.restoreAutosave) await this._clearSessionResidue();
@@ -6066,7 +6091,29 @@ class NeonScopeApp {
       await this._loadDemo(false);
     } finally {
       this._scheduleAutoSave();
+      this._armSessionBaseline();
     }
+  }
+
+  _consumeNewProject() {
+    try {
+      if (sessionStorage.getItem(NEW_PROJECT_KEY) !== '1') return false;
+      sessionStorage.removeItem(NEW_PROJECT_KEY);
+      return true;
+    } catch { return false; }
+  }
+
+  _armSessionBaseline() {
+    clearTimeout(this._sessionBaselineTimer);
+    this._sessionBaselineTimer = setTimeout(() => {
+      if (!this._sessionBaseline) this._sessionBaseline = this._projectSignature();
+    }, 1200);
+  }
+
+  /** True when the project differs from the state captured after boot. */
+  _sessionHasChanges() {
+    if (!this._sessionBaseline) return true;
+    try { return this._projectSignature() !== this._sessionBaseline; } catch { return true; }
   }
 
   _consumeForceRestore() {
@@ -6241,6 +6288,8 @@ class NeonScopeApp {
   }
 
   async _flushExitAutosave() {
+    // Launch → close with no project edits: nothing to persist, exit immediately.
+    if (!this._sessionHasChanges()) return true;
     const willSave = !this._standaloneSettings && this.state.settings.autoSave && this._isNative;
     if (!willSave) return this._flushAutoSave();
     const overlay = this._showAutosaveOverlay();
@@ -9063,6 +9112,74 @@ class NeonScopeApp {
     }
     this._openModal('settings');
     this._syncSettingsUI();
+  }
+
+  async _listSaveNames() {
+    if (!this._isNative) return [];
+    try {
+      const params = new URLSearchParams({ folder: this.state.settings.savePath || '' });
+      const response = await fetch(`/api/saves?${params.toString()}`, { cache: 'no-store' });
+      if (!response.ok) return [];
+      const data = await response.json().catch(() => ({}));
+      return Array.isArray(data.files) ? data.files : [];
+    } catch { return []; }
+  }
+
+  async _nextArchiveName(base) {
+    const now = new Date();
+    const mmdd = `${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
+    let stem = sanitizeFilename(String(base || '').trim() || 'Untitled')
+      .replace(/-{2,}/g, '-')
+      .replace(/^[-.]+|[-.]+$/g, '')
+      .slice(0, 60) || 'Untitled';
+    if (/^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i.test(stem)) stem = `${stem}_`;
+    const escaped = stem.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const pattern = new RegExp(`^${escaped}-${mmdd}-(\\d+)\\.NEON$`, 'i');
+    let max = 0;
+    for (const name of await this._listSaveNames()) {
+      const match = String(name).match(pattern);
+      if (match) max = Math.max(max, Number(match[1]) || 0);
+    }
+    return `${stem}-${mmdd}-${max + 1}.NEON`;
+  }
+
+  async _newArchiveFlow() {
+    if (this.state.exporting) {
+      this._toast('正在导出视频，完成后再新建存档', '', 3200);
+      return;
+    }
+    const confirmed = await this._showConfirm(
+      '新建存档会先把当前工程保存为 .NEON 文件，然后清空舞台并开始新工程。继续吗？',
+      { title: '新建存档', confirmText: '保存并新建', cancelText: '取消' }
+    );
+    if (!confirmed) return;
+    const base = this.state.info.title || this.audio.track?.name || 'Untitled';
+    try {
+      const filename = await this._nextArchiveName(base);
+      const saved = await this._saveArchive({ filename });
+      if (!saved) {
+        this._toast('当前工程未保存成功，已取消新建', 'error', 4200);
+        return;
+      }
+      await this._beginFreshProject(filename);
+    } catch (err) {
+      this._toast(`新建存档失败：${err.message || '未知错误'}`, 'error', 5200);
+    }
+  }
+
+  async _beginFreshProject(filename) {
+    this._skipUnloadSave = true;
+    try {
+      if (this._isNative) {
+        await fetch('/api/autosave', { method: 'DELETE' });
+      } else {
+        await clearAutosaveArchive();
+      }
+    } catch { /* stale autosave is non-fatal */ }
+    try { await this._clearSessionResidue(); } catch { /* non-fatal */ }
+    try { sessionStorage.setItem(NEW_PROJECT_KEY, '1'); } catch { /* optional */ }
+    this._toast(`已保存 ${filename}，正在新建工程…`, 'success', 2200);
+    setTimeout(() => location.reload(), 320);
   }
 
   async _checkHealth() {

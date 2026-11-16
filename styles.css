@@ -1455,8 +1455,15 @@ body[data-ui-mode="light"] .theme-follow-row select, body[data-ui-theme="catbot"
 /* ── About / licenses ──────────────────────────────────── */
 .about-actions { display: flex; flex-direction: column; gap: 7px; margin: 8px 0 12px; }
 .about-btn { display: flex; align-items: center; justify-content: space-between; height: 34px; padding: 0 10px; }
-.about-btn b { font-size: 9px; font-weight: 500; }
-.about-btn span { font: 6px var(--mono); color: var(--dim); letter-spacing: .08em; }
+.about-btn b { font-size: 9px; font-weight: 500; flex-shrink: 0; }
+.about-btn span { font: 6px var(--mono); color: var(--dim); letter-spacing: .08em; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-left: 10px; }
+.about-support { margin-top: 16px; padding-top: 13px; border-top: 1px solid rgba(255,255,255,.09); }
+.about-support-head { display: flex; flex-direction: column; gap: 3px; }
+.about-support-head .eyebrow { font: 6px var(--mono); letter-spacing: .16em; color: var(--dim); }
+.about-support-head h4 { font-size: 11px; font-weight: 600; color: var(--text); }
+.about-support-desc { margin: 7px 0 9px; font-size: 8.5px; line-height: 1.7; color: var(--dim); }
+.about-support-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+.about-support-actions .about-btn { height: 32px; }
 .confirm-layer { z-index: 120; }
 .confirm-window { width: min(460px, calc(100vw - 28px)); }
 .confirm-body { padding: 22px 24px; }

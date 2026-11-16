@@ -21,10 +21,11 @@ internal sealed class SettingsForm : Form
 
     public event EventHandler<string>? SettingsChanged;
 
-    public SettingsForm(CoreWebView2Environment environment, string baseUrl)
+    public SettingsForm(CoreWebView2Environment environment, string baseUrl, string? tab = null)
     {
         _environment = environment;
-        _url = baseUrl.TrimEnd('/') + "/?settings=1";
+        _url = baseUrl.TrimEnd('/') + "/?settings=1"
+            + (string.IsNullOrWhiteSpace(tab) ? string.Empty : "&tab=" + Uri.EscapeDataString(tab));
 
         Text = "NEON//SCOPE — 设置";
         StartPosition = FormStartPosition.CenterScreen;
@@ -47,8 +48,7 @@ internal sealed class SettingsForm : Form
     }
 
     private void CreateSplash()
-    {
-        _splash = new Label
+    {        _splash = new Label
         {
             Dock = DockStyle.Fill,
             BackColor = Color.FromArgb(8, 5, 13),
@@ -58,6 +58,23 @@ internal sealed class SettingsForm : Form
             Text = "NEON//SCOPE\r\n\r\n正在打开设置…",
         };
         Controls.Add(_splash);
+    }
+
+    public void OpenTab(string tab)
+    {
+        if (string.IsNullOrWhiteSpace(tab)) return;
+        var core = _webView?.CoreWebView2;
+        if (core == null) return;
+        var safe = tab.Replace("\\", string.Empty).Replace("'", string.Empty);
+        try
+        {
+            core.ExecuteScriptAsync(
+                $"window.neonScope && window.neonScope._switchSettingsTab && window.neonScope._switchSettingsTab('{safe}')");
+        }
+        catch (Exception ex)
+        {
+            AppPaths.Log("Settings tab switch failed: " + ex.Message);
+        }
     }
 
     private async Task StartAsync()

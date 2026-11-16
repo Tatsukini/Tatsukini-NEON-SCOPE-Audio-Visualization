@@ -349,6 +349,20 @@ async function handleAutosave(req, res) {
   sendJson(res, 200, { ok: true, path: AUTOSAVE_FILE });
 }
 
+async function handleListSaves(req, res) {
+  if (req.method !== 'GET') {
+    sendJson(res, 405, { error: 'Method not allowed' });
+    return;
+  }
+  const params = new URL(req.url, 'http://localhost').searchParams;
+  const folder = (params.get('folder') || '').trim() || path.join(ROOT, 'Saves');
+  let files = [];
+  try {
+    files = (await readdir(folder)).filter((name) => /\.neon$/i.test(name));
+  } catch { /* folder may not exist yet */ }
+  sendJson(res, 200, { ok: true, files });
+}
+
 async function handleSaveArchive(req, res) {
   if (req.method !== 'POST') {
     sendJson(res, 405, { error: 'Method not allowed' });
@@ -713,6 +727,13 @@ const server = http.createServer((req, res) => {
     handleAutosave(req, res).catch((err) => {
       console.error(err);
       if (!res.headersSent) sendJson(res, 500, { ok: false, message: err?.message || '自动存档失败' });
+    });
+    return;
+  }
+  if (req.url?.startsWith('/api/saves')) {
+    handleListSaves(req, res).catch((err) => {
+      console.error(err);
+      if (!res.headersSent) sendJson(res, 500, { ok: false, files: [], message: err?.message || '读取存档目录失败' });
     });
     return;
   }

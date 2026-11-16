@@ -263,6 +263,27 @@ internal sealed class ServerHost : IAsyncDisposable
         app.MapGet("/api/recent-audio", (HttpContext context, string? folder) =>
             ServeRecentFileAsync(context, folder, archive: false));
 
+        app.MapGet("/api/saves", (string? folder) =>
+        {
+            try
+            {
+                var targetFolder = string.IsNullOrWhiteSpace(folder)
+                    ? Path.Combine(AppPaths.Root, "Saves")
+                    : folder;
+                var files = Directory.Exists(targetFolder)
+                    ? Directory.GetFiles(targetFolder, "*.NEON")
+                        .Select(Path.GetFileName)
+                        .Where(name => !string.IsNullOrWhiteSpace(name))
+                        .ToArray()
+                    : Array.Empty<string>();
+                return Results.Json(new { ok = true, files });
+            }
+            catch (Exception ex)
+            {
+                return Results.Json(new { ok = false, files = Array.Empty<string>(), message = ex.Message });
+            }
+        });
+
         app.MapPost("/api/save-archive", async (HttpRequest request, string? filename, string? folder) =>
         {
             try
