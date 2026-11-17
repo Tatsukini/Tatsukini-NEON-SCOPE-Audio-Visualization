@@ -6,6 +6,7 @@ import {
   isHexColor, hexAlpha, withAlpha, SCHEME_COLORS,
   AUTOMATION_PROPERTIES, automationValueAt,
   formatShortTime, humanBytes, safeRead, safeStore, safeParse, debounce,
+  APP_VERSION, APP_CHANNEL, APP_BUILD, APP_VERSION_TAG, APP_RELEASE_REPO,
 } from './core.js';
 import { AudioEngine } from './audio.js';
 import { createZip, readZip } from './neonzip.js';
@@ -618,6 +619,12 @@ class NeonScopeApp {
         } else {
           this._dispatchPluginSettings(data.id, String(data.key || ''));
         }
+      } else if (data?.action === 'app-update-progress') {
+        this._onAppUpdateProgress(data);
+      } else if (data?.action === 'app-update-downloaded') {
+        this._onAppUpdateDownloaded(data).catch(() => {});
+      } else if (data?.action === 'app-update-error') {
+        this._onAppUpdateError(data);
       } else if (data?.action === 'flush-autosave') {
         // The host tears the WebView down as soon as this returns, so the
         // save must complete before answering.
@@ -794,6 +801,7 @@ class NeonScopeApp {
       s.renderArchitecture = ['adaptive', 'performance', 'direct'].includes(s.renderArchitecture) ? s.renderArchitecture : 'adaptive';
       s.autoSaveInterval = clamp(Number(s.autoSaveInterval) || 360, 10, 86400);
       s.restoreAutosave = s.restoreAutosave === true;
+      s.autoUpdate = s.autoUpdate === true;
       s.sfx = s.sfx !== false;
       s.sfxVolume = clamp(Number.isFinite(Number(s.sfxVolume)) ? Number(s.sfxVolume) : 55, 0, 100);
       this.state.settings = s;
@@ -937,6 +945,8 @@ class NeonScopeApp {
       drumBoardSampleBtn: $('#drumBoardSampleBtn'),
       aboutDeveloperBtn: $('#aboutDeveloperBtn'), aboutLicensesBtn: $('#aboutLicensesBtn'), aboutRepositoryBtn: $('#aboutRepositoryBtn'),
       aboutAfdianBtn: $('#aboutAfdianBtn'), aboutUnifansBtn: $('#aboutUnifansBtn'),
+      appVersionText: $('#appVersionText'), appBuildText: $('#appBuildText'), appRuntimeText: $('#appRuntimeText'),
+      autoUpdateToggle: $('#autoUpdateToggle'), checkUpdateBtn: $('#checkUpdateBtn'), updateStatusText: $('#updateStatusText'),
       licenseModal: $('#licenseModal'), licenseList: $('#licenseList'),
       developerModal: $('#developerModal'), developerSiteBtn: $('#developerSiteBtn'),
       confirmModal: $('#confirmModal'), confirmMessage: $('#confirmMessage'),
@@ -1037,6 +1047,7 @@ class NeonScopeApp {
       s.previewVsync = s.previewVsync !== false;
       s.autoSaveInterval = clamp(Number(s.autoSaveInterval) || 360, 10, 86400);
       s.restoreAutosave = s.restoreAutosave === true;
+      s.autoUpdate = s.autoUpdate === true;
       s.sfx = s.sfx !== false;
       s.sfxVolume = clamp(Number.isFinite(Number(s.sfxVolume)) ? Number(s.sfxVolume) : 55, 0, 100);
       this.state.settings = s;
@@ -2261,6 +2272,22 @@ class NeonScopeApp {
   }
 
   _bindAboutUI() {
+    if (this.dom.appVersionText) this.dom.appVersionText.textContent = APP_VERSION_TAG;
+    if (this.dom.appBuildText) this.dom.appBuildText.textContent = `${APP_CHANNEL.replace(/_/g, ' ')} · ${APP_BUILD}`;
+    if (this.dom.appRuntimeText) this.dom.appRuntimeText.textContent = this._isNative ? '桌面应用 (WebView2)' : '浏览器预览';
+    if (this.dom.autoUpdateToggle) {
+      this.dom.autoUpdateToggle.checked = this.state.settings.autoUpdate === true;
+      this.dom.autoUpdateToggle.addEventListener('change', () => {
+        this.state.settings.autoUpdate = this.dom.autoUpdateToggle.checked;
+        this._persist();
+        if (this._isNative && this._standaloneSettings) {
+          try {
+            window.chrome.webview.postMessage({ action: 'settings-updated', settings: this.state.settings, keybinds: this.keybinds });
+          } catch { /* bridge is optional */ }
+        }
+      });
+    }
+    this.dom.checkUpdateBtn?.addEventListener('click', () => { this._checkAppUpdate().catch(() => {}); });
     this.dom.aboutDeveloperBtn?.addEventListener('click', () => this._openModal('developer'));
     this.dom.aboutRepositoryBtn?.addEventListener('click', () => {
       this._openExternal('https://github.com/Tatsukini/Tatsukini-NEON-SCOPE-Audio-Visualization-Canary');
@@ -2339,6 +2366,151 @@ class NeonScopeApp {
           </div>
         </div>
       </div>`).join('');
+  }
+
+  _appVersionTuple(tag) {
+    const match = /^v?(\d+)\.(\d+)\.(\d+)(?:_[a-z]+)*?_(\d+)(?:_(\d+))?$/i.exec(String(tag || '').trim());
+    if (!match) return null;
+    return [1, 2, 3, 4, 5].map((index) => Number(match[index] || 0));
+  }
+
+  _compareAppVersions(a, b) {
+    const left = this._appVersionTuple(a);
+    const right = this._appVersionTuple(b);
+    if (left && right) {
+      for (let i = 0; i < left.length; i += 1) {
+        if (left[i] !== right[i]) return left[i] < right[i] ? -1 : 1;
+      }
+      return 0;
+    }
+    return String(a || '').localeCompare(String(b || ''), 'en', { numeric: true, sensitivity: 'base' });
+  }
+
+  async _appReleaseFeed() {
+    const url = `https://api.github.com/repos/${APP_RELEASE_REPO}/releases?per_page=20`;
+    const headers = { Accept: 'application/vnd.github+json' };
+    let response = null;
+    try { response = await fetch(url, { cache: 'no-store', headers }); } catch { response = null; }
+    if (!response || !response.ok) {
+      response = await this._pluginProxyFetch(url, { headers, timeout: 20000 });
+    }
+    if (!response.ok) {
+      throw new Error(response.status === 403 || response.status === 429
+        ? `GitHub API 限流 (HTTP ${response.status})，请稍后再试`
+        : `GitHub API 请求失败 (HTTP ${response.status})`);
+    }
+    const list = await response.json().catch(() => null);
+    if (!Array.isArray(list)) throw new Error('GitHub 返回了无法识别的数据');
+    const releases = list.filter((release) => release && typeof release.tag_name === 'string' && !release.draft);
+    if (!releases.length) throw new Error('仓库里还没有可用的发布版本');
+    return releases;
+  }
+
+  async _checkAppUpdate({ auto = false } = {}) {
+    if (this._appUpdateBusy) return;
+    this._appUpdateBusy = true;
+    const status = (text) => {
+      if (this.dom.updateStatusText) this.dom.updateStatusText.textContent = text;
+    };
+    if (this.dom.checkUpdateBtn) this.dom.checkUpdateBtn.disabled = true;
+    status('正在检查更新…');
+    try {
+      const releases = await this._appReleaseFeed();
+      const latest = releases[0];
+      const latestTag = latest.tag_name;
+      if (this._compareAppVersions(latestTag, APP_VERSION_TAG) <= 0) {
+        status(`已是最新版本 · ${APP_VERSION_TAG}`);
+        this._pendingAppUpdate = null;
+        this._appUpdateNotifiedTag = null;
+        if (!auto) this._toast('当前已是最新版本', 'success', 2600);
+        return;
+      }
+      const asset = (latest.assets || []).find((item) => /\.exe$/i.test(String(item.name || '')));
+      const pageUrl = latest.html_url ||
+        `https://github.com/${APP_RELEASE_REPO}/releases/tag/${encodeURIComponent(latestTag)}`;
+      this._pendingAppUpdate = {
+        tag: latestTag,
+        name: asset?.name || '',
+        url: asset?.browser_download_url || '',
+        size: Number(asset?.size) || 0,
+        pageUrl,
+      };
+      status(`发现新版本 ${latestTag}`);
+      if (auto) {
+        if (this._appUpdateNotifiedTag === latestTag) return;
+        this._appUpdateNotifiedTag = latestTag;
+        this._toast(`发现新版本 ${latestTag}，正在后台下载…`, 'info', 4200);
+        await this._downloadAppUpdate();
+        return;
+      }
+      const accepted = await this._showConfirm(
+        `发现新版本 ${latestTag}（当前 ${APP_VERSION_TAG}）。现在下载并安装吗？`,
+        { title: '软件更新', confirmText: '下载更新', cancelText: '稍后' },
+      );
+      if (accepted) await this._downloadAppUpdate();
+      else status('已取消更新');
+    } catch (err) {
+      status(`检查失败：${err.message}`);
+      if (!auto) this._toast(`检查更新失败：${err.message}`, 'error', 5200);
+    } finally {
+      this._appUpdateBusy = false;
+      if (this.dom.checkUpdateBtn) this.dom.checkUpdateBtn.disabled = false;
+    }
+  }
+
+  async _downloadAppUpdate() {
+    const pending = this._pendingAppUpdate;
+    if (!pending) return;
+    if (!this._isNative || !pending.url) {
+      this._openExternal(pending.pageUrl);
+      if (this.dom.updateStatusText) {
+        this.dom.updateStatusText.textContent = pending.url ? '请在发布页下载新版本' : '该版本没有可下载的 EXE，已打开发布页';
+      }
+      return;
+    }
+    this._appUpdateDownloadingTag = pending.tag;
+    if (this.dom.updateStatusText) this.dom.updateStatusText.textContent = `正在下载 ${pending.tag}…`;
+    try {
+      window.chrome.webview.postMessage({
+        action: 'app-update-download',
+        url: pending.url,
+        tag: pending.tag,
+        name: pending.name,
+        size: pending.size,
+      });
+    } catch { /* bridge is optional */ }
+  }
+
+  _onAppUpdateProgress(data) {
+    if (!this.dom.updateStatusText) return;
+    const percent = Number(data?.percent);
+    const tag = data?.tag || this._appUpdateDownloadingTag || '';
+    this.dom.updateStatusText.textContent = Number.isFinite(percent)
+      ? `正在下载 ${tag} ${Math.round(clamp(percent, 0, 100))}%`
+      : `正在下载 ${tag}…`;
+  }
+
+  async _onAppUpdateDownloaded(data) {
+    const tag = data?.tag || this._pendingAppUpdate?.tag || '';
+    this._appUpdateDownloadingTag = '';
+    if (this.dom.updateStatusText) this.dom.updateStatusText.textContent = `更新已下载 · ${tag}`;
+    this._toast(`更新已下载 · ${tag}`, 'success', 4200);
+    const restart = await this._showConfirm(
+      `新版本 ${tag} 已下载完成。立即重启并安装吗？应用会关闭，替换为新版本后自动重新启动。`,
+      { title: '安装更新', confirmText: '立即重启安装', cancelText: '稍后手动重启' },
+    );
+    if (!restart) {
+      if (this.dom.updateStatusText) this.dom.updateStatusText.textContent = '更新已下载，再次检查更新即可安装';
+      return;
+    }
+    try { window.chrome.webview.postMessage({ action: 'app-update-apply', tag }); } catch { /* bridge is optional */ }
+  }
+
+  _onAppUpdateError(data) {
+    const message = data?.message || '下载更新失败';
+    this._appUpdateDownloadingTag = '';
+    if (this.dom.updateStatusText) this.dom.updateStatusText.textContent = `更新失败：${message}`;
+    this._toast(`更新失败：${message}`, 'error', 5200);
   }
 
   _openStageWindow() {
@@ -4575,19 +4747,34 @@ class NeonScopeApp {
       if (!record.enabled) continue;
       await this._activatePlugin(record);
     }
-    this._restorePluginModulesFromStorage();
+    this._restorePluginModulesFromStorage({ allowWithoutRestore: true });
     this._renderPluginManager();
     this._renderLibrary();
     this.visualizer?.syncOverlay();
     this._persist();
   }
 
-  _restorePluginModulesFromStorage() {
+  _restorePluginModulesFromStorage({ allowWithoutRestore = false } = {}) {
     try {
+      // The persisted project is only authoritative when the user asked for it.
+      // Running this on a fresh boot re-appended the previous session's whole
+      // module list (with fresh timestamp IDs) on top of the default project,
+      // which duplicated modules on every launch.
+      if (!allowWithoutRestore && !this._forceRestore && !this.state.settings.restoreAutosave) return;
+      const pluginTypes = new Set();
+      for (const runtime of this._pluginRuntimes.values()) {
+        for (const type of runtime.types || []) pluginTypes.add(type);
+      }
+      if (!pluginTypes.size) return;
       const raw = JSON.parse(safeRead(STORAGE_KEY) || '{}');
       if (!Array.isArray(raw.modules)) return;
       const existing = new Set((this.state.modules || []).map((m) => m.id));
-      const missing = raw.modules.filter((m) => m && MODULE_DEFS[m.type] && !existing.has(m.id));
+      const missing = [];
+      for (const mod of raw.modules) {
+        if (!mod || !pluginTypes.has(mod.type) || existing.has(mod.id)) continue;
+        existing.add(mod.id);
+        missing.push(mod);
+      }
       if (!missing.length) return;
       const restored = this._sanitizeModules(missing);
       this.state.modules = [...(this.state.modules || []), ...restored];
@@ -7156,6 +7343,9 @@ class NeonScopeApp {
     } finally {
       this._scheduleAutoSave();
       this._armSessionBaseline();
+      if (!this._standaloneSettings && this._isNative && this.state.settings.autoUpdate) {
+        setTimeout(() => this._checkAppUpdate({ auto: true }).catch(() => {}), 6000);
+      }
     }
   }
 

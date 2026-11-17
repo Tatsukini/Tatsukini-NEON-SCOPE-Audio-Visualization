@@ -186,7 +186,8 @@ internal sealed class SettingsForm : Form
                 action == "save-archive" || action == "archive-import" ||
                 action == "save-archive-request" || action == "archive-restore-request" ||
                 action == "plugins-changed" || action == "plugin-update-prompt" ||
-                action == "plugin-settings-changed")
+                action == "plugin-settings-changed" || action == "app-update-download" ||
+                action == "app-update-apply")
             {
                 SettingsChanged?.Invoke(this, e.WebMessageAsJson);
             }

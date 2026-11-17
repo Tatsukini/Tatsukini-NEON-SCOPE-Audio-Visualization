@@ -1185,6 +1185,20 @@
               <h3>关于</h3>
               <p>NEON//SCOPE · realtime audio visualization workstation.</p>
             </div>
+            <div class="setting-block app-update-block">
+              <div class="setting-block-head"><span>软件信息</span><em>SOFTWARE</em></div>
+              <div class="app-info-grid">
+                <div class="app-info-item"><span>版本</span><b id="appVersionText">—</b></div>
+                <div class="app-info-item"><span>构建</span><b id="appBuildText">—</b></div>
+                <div class="app-info-item"><span>运行方式</span><b id="appRuntimeText">—</b></div>
+              </div>
+              <label class="check-row"><input type="checkbox" id="autoUpdateToggle" /><span>自动更新：启动时检查，发现新版本自动下载</span></label>
+              <div class="app-update-row">
+                <button class="btn ghost" id="checkUpdateBtn">检查更新</button>
+                <span class="app-update-status" id="updateStatusText">尚未检查</span>
+              </div>
+              <p class="section-help">更新来自 GitHub Releases 的 Canary 通道。下载完成后可选择立即重启安装；安装会替换当前 EXE 并重新启动。</p>
+            </div>
             <div class="about-actions">
               <button class="btn ghost about-btn" id="aboutDeveloperBtn"><b>开发者</b><span>Developer</span></button>
               <button class="btn ghost about-btn" id="aboutLicensesBtn"><b>许可与版权声明</b><span>Licenses</span></button>
@@ -1469,7 +1483,7 @@
     <div class="alpha-card">
       <div class="alpha-mark" aria-hidden="true">!</div>
       <div class="alpha-body">
-        <div class="alpha-kicker">ALPHA BUILD / V0.1.4_Alpha_Canary_1117_3</div>
+        <div class="alpha-kicker">ALPHA BUILD / V0.1.4_Alpha_Canary_1117_4</div>
         <h2 id="alphaNoticeTitle">注意！这是 NEON//SCOPE 的 Alpha 测试版本。</h2>
         <p>Alpha 测试版本不代表最终产品的最终质量。感谢您的理解和支持，祝你好运！</p>
         <div class="alpha-foot">

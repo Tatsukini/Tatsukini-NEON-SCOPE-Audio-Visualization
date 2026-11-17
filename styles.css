@@ -1465,6 +1465,21 @@ body[data-ui-mode="light"] .theme-follow-row select, body[data-ui-theme="catbot"
 .about-support-desc { margin: 7px 0 9px; font-size: 8.5px; line-height: 1.7; color: var(--dim); }
 .about-support-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
 .about-support-actions .about-btn { height: 32px; }
+.app-update-block { margin-bottom: 14px; }
+.app-info-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; margin: 9px 0 11px; }
+.app-info-item {
+  display: flex; flex-direction: column; gap: 4px; min-width: 0;
+  padding: 8px 9px; border-radius: 5px;
+  border: 1px solid rgba(var(--accent-rgb), .16);
+  background: rgba(var(--accent-rgb), .04);
+}
+.app-info-item span { font: 6.5px var(--mono); letter-spacing: .12em; color: var(--dim); text-transform: uppercase; }
+.app-info-item b { font-size: 9px; font-weight: 500; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.app-update-row { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+.app-update-row .btn { flex: 0 0 auto; }
+.app-update-status { min-width: 0; flex: 1 1 auto; font: 8px/1.5 var(--mono); color: var(--dim); overflow-wrap: anywhere; }
+body[data-ui-theme="catbot"] .app-info-item { background: #fbf9fe; border-color: #d1c8de; border-radius: 0; }
+body[data-ui-mode="light"] .app-info-item { background: var(--paper-card); border-color: var(--paper-line); }
 .confirm-layer { z-index: 120; }
 .confirm-window { width: min(460px, calc(100vw - 28px)); }
 .confirm-body { padding: 22px 24px; }

@@ -4,7 +4,9 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
 using System.IO;
+using System.Net.Http;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -33,6 +35,9 @@ internal sealed class MainForm : Form
     private Panel? _content;
     private TableLayoutPanel? _shell;
     private MenuStrip? _menuStrip;
+    private static readonly HttpClient UpdateClient = new() { Timeout = TimeSpan.FromMinutes(15) };
+    private string _pendingUpdatePath = string.Empty;
+    private bool _updateApplying;
 
     public MainForm()
     {
@@ -330,6 +335,12 @@ internal sealed class MainForm : Form
                 case "plugin-settings-changed":
                     _settingsForm?.PostJson(e.WebMessageAsJson);
                     break;
+                case "app-update-download":
+                    DownloadAppUpdate(doc.RootElement);
+                    break;
+                case "app-update-apply":
+                    ApplyAppUpdate();
+                    break;
             }
         }
         catch (Exception ex)
@@ -586,6 +597,172 @@ internal sealed class MainForm : Form
         }
     }
 
+    private void BroadcastToWindows(string json)
+    {
+        PostToMain(json);
+        _settingsForm?.PostJson(json);
+    }
+
+    private static string SafeFileToken(string value)
+    {
+        var chars = value.ToCharArray();
+        for (var i = 0; i < chars.Length; i += 1)
+        {
+            if (!char.IsLetterOrDigit(chars[i]) && chars[i] != '.' && chars[i] != '-' && chars[i] != '_') chars[i] = '_';
+        }
+        var token = new string(chars);
+        return string.IsNullOrWhiteSpace(token) ? "latest" : token;
+    }
+
+    private async void DownloadAppUpdate(JsonElement element)
+    {
+        var url = element.TryGetProperty("url", out var urlElement) ? urlElement.GetString() : null;
+        var tag = element.TryGetProperty("tag", out var tagElement) ? (tagElement.GetString() ?? string.Empty) : string.Empty;
+        var expectedSize = element.TryGetProperty("size", out var sizeElement) && sizeElement.TryGetInt64(out var parsedSize) ? parsedSize : 0;
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps)
+        {
+            BroadcastToWindows(JsonSerializer.Serialize(new { action = "app-update-error", tag, message = "无效的下载地址" }));
+            return;
+        }
+        var currentExe = Environment.ProcessPath;
+        if (string.IsNullOrWhiteSpace(currentExe) ||
+            !string.Equals(Path.GetExtension(currentExe), ".exe", StringComparison.OrdinalIgnoreCase) ||
+            !Path.GetFileName(currentExe).StartsWith("NEON-SCOPE", StringComparison.OrdinalIgnoreCase))
+        {
+            BroadcastToWindows(JsonSerializer.Serialize(new { action = "app-update-error", tag, message = "当前不是独立安装版，请从发布页手动下载" }));
+            return;
+        }
+        try
+        {
+            var updateDir = Path.Combine(AppPaths.TempRoot, "update");
+            Directory.CreateDirectory(updateDir);
+            var target = Path.Combine(updateDir, $"NEON-SCOPE-{SafeFileToken(tag)}.exe");
+            _pendingUpdatePath = target;
+            if (File.Exists(target) && new FileInfo(target).Length > 1_000_000)
+            {
+                AppPaths.Log("Reusing previously downloaded update: " + target);
+                BroadcastToWindows(JsonSerializer.Serialize(new { action = "app-update-downloaded", tag }));
+                return;
+            }
+
+            using var request = new HttpRequestMessage(HttpMethod.Get, uri);
+            request.Headers.UserAgent.ParseAdd("NEON-SCOPE-Updater/1.0");
+            using var response = await UpdateClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
+            response.EnsureSuccessStatusCode();
+            var total = response.Content.Headers.ContentLength ?? -1;
+            if (total > 0 && total < 20_000_000) throw new InvalidDataException("下载内容异常（文件过小）");
+
+            var tempPath = target + ".part";
+            try { if (File.Exists(tempPath)) File.Delete(tempPath); } catch { /* overwritten below */ }
+            long received = 0;
+            var lastPercent = -10;
+            await using (var source = await response.Content.ReadAsStreamAsync())
+            await using (var file = File.Create(tempPath))
+            {
+                var buffer = new byte[81920];
+                int read;
+                while ((read = await source.ReadAsync(buffer)) > 0)
+                {
+                    await file.WriteAsync(buffer.AsMemory(0, read));
+                    received += read;
+                    if (total > 0)
+                    {
+                        var percent = (int)(received * 100 / total);
+                        if (percent >= lastPercent + 5)
+                        {
+                            lastPercent = percent;
+                            BroadcastToWindows(JsonSerializer.Serialize(new { action = "app-update-progress", tag, percent }));
+                        }
+                    }
+                }
+            }
+
+            try
+            {
+                using var probe = File.OpenRead(tempPath);
+                var header = new byte[2];
+                if (probe.Read(header, 0, 2) < 2 || header[0] != (byte)'M' || header[1] != (byte)'Z')
+                    throw new InvalidDataException("下载的文件不是可执行程序");
+            }
+            catch (InvalidDataException) { throw; }
+            catch (Exception) { throw new InvalidDataException("无法校验下载的文件"); }
+
+            if (expectedSize > 0 && received != expectedSize)
+                throw new InvalidDataException($"文件大小不一致（{received} / {expectedSize} 字节）");
+
+            if (File.Exists(target)) File.Delete(target);
+            File.Move(tempPath, target);
+            AppPaths.Log($"Update downloaded: {tag} -> {target} ({received} bytes)");
+            BroadcastToWindows(JsonSerializer.Serialize(new { action = "app-update-downloaded", tag }));
+        }
+        catch (Exception ex)
+        {
+            AppPaths.Log("Update download failed: " + ex.Message);
+            BroadcastToWindows(JsonSerializer.Serialize(new { action = "app-update-error", tag, message = ex.Message }));
+        }
+    }
+
+    private async void ApplyAppUpdate()
+    {
+        if (_updateApplying) return;
+        var currentExe = Environment.ProcessPath;
+        if (string.IsNullOrWhiteSpace(currentExe) || !File.Exists(_pendingUpdatePath))
+        {
+            BroadcastToWindows(JsonSerializer.Serialize(new { action = "app-update-error", message = "没有可安装的更新文件，请重新检查更新" }));
+            return;
+        }
+        _updateApplying = true;
+        try
+        {
+            var script = Path.Combine(AppPaths.TempRoot, "apply-update.ps1");
+            var lines = new[]
+            {
+                "param([int]$ProcessId, [string]$Target, [string]$New)",
+                "$deadline = (Get-Date).AddMinutes(3)",
+                "while ((Get-Date) -lt $deadline) {",
+                "  if (-not (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue)) { break }",
+                "  Start-Sleep -Milliseconds 400",
+                "}",
+                "Start-Sleep -Milliseconds 600",
+                "$backup = \"$Target.old\"",
+                "for ($i = 0; $i -lt 40; $i++) {",
+                "  try {",
+                "    if (Test-Path -LiteralPath $backup) { Remove-Item -LiteralPath $backup -Force -ErrorAction SilentlyContinue }",
+                "    Move-Item -LiteralPath $Target -Destination $backup -Force -ErrorAction Stop",
+                "    Move-Item -LiteralPath $New -Destination $Target -Force -ErrorAction Stop",
+                "    Start-Process -FilePath $Target -WorkingDirectory (Split-Path -LiteralPath $Target)",
+                "    Remove-Item -LiteralPath $backup -Force -ErrorAction SilentlyContinue",
+                "    Remove-Item -LiteralPath $MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyContinue",
+                "    break",
+                "  } catch {",
+                "    if ((Test-Path -LiteralPath $backup) -and -not (Test-Path -LiteralPath $Target)) {",
+                "      Move-Item -LiteralPath $backup -Destination $Target -Force -ErrorAction SilentlyContinue",
+                "    }",
+                "    Start-Sleep -Milliseconds 500",
+                "  }",
+                "}",
+            };
+            File.WriteAllText(script, string.Join("\r\n", lines), new UTF8Encoding(true));
+            var psi = new ProcessStartInfo("powershell.exe",
+                $"-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File \"{script}\" -ProcessId {Environment.ProcessId} -Target \"{currentExe}\" -New \"{_pendingUpdatePath}\"")
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                WindowStyle = ProcessWindowStyle.Hidden,
+            };
+            Process.Start(psi);
+            AppPaths.Log("Applying update; restarting via helper script.");
+            _closing = true;
+            await ShutdownAsync();
+        }
+        catch (Exception ex)
+        {
+            _updateApplying = false;
+            AppPaths.Log("Apply update failed: " + ex.Message);
+            BroadcastToWindows(JsonSerializer.Serialize(new { action = "app-update-error", message = ex.Message }));
+        }
+    }
+
     private void OpenStageWindow()
     {
         try
@@ -637,6 +814,16 @@ internal sealed class MainForm : Form
                 if (action == "plugin-settings-changed")
                 {
                     PostToMain(json);
+                    return;
+                }
+                if (action == "app-update-download")
+                {
+                    DownloadAppUpdate(doc.RootElement);
+                    return;
+                }
+                if (action == "app-update-apply")
+                {
+                    ApplyAppUpdate();
                     return;
                 }
             }
