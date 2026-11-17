@@ -1,8 +1,8 @@
 # NEON//SCOPE
 
-[![Release](https://img.shields.io/badge/release-V0.1.3__1110__alpha__GPLver-orange)](https://github.com/Tatsukini/Tatsukini-NEON-SCOPE-Audio-Visualization/releases/tag/V0.1.3_1110_alpha_GPLver)
+[![Release](https://img.shields.io/badge/release-V0.1.3__1110__alpha__GPLver__hotfix1-orange)](https://github.com/Tatsukini/Tatsukini-NEON-SCOPE-Audio-Visualization/releases/tag/V0.1.3_1110_alpha_GPLver_hotfix1)
 
-> 当前为 **Alpha 测试版本 V0.1.3_1110_alpha_GPLver**。启动时会显示 Alpha 提示，确认后进入工作台。
+> 当前为 **Alpha 测试版本 V0.1.3_1110_alpha_GPLver_hotfix1**。启动时会显示 Alpha 提示，确认后进入工作台。
 
 实时音频 / MIDI 可视化工作台。导入音频或 MIDI，在仪表盘上自由编排模块，实时渲染并导出带音频的视频；支持第三方插件扩展模块。
 

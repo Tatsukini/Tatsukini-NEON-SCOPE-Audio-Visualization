@@ -4,6 +4,7 @@ import {
   createModule, uid, hexToRgb, rgbToHex, mixHex, resolveThemeColors, luminance, normalizeHexInput, clamp, formatTime, formatTC,
   AUTOMATION_PROPERTIES, automationValueAt,
   formatShortTime, humanBytes, safeRead, safeStore, safeParse, debounce,
+  APP_VERSION, APP_CHANNEL, APP_BUILD, APP_CHANNEL_KIND, APP_VERSION_TAG, APP_RELEASE_REPO,
 } from './core.js';
 import { AudioEngine } from './audio.js';
 import { createZip, readZip } from './neonzip.js';
@@ -21,6 +22,21 @@ const HW_STATS_KEY = 'neon-scope.hw-stats.v1';
 const PLUGINS_KEY = 'neon-scope.plugins.v1';
 const PLUGIN_PREFIX = 'tatsukini-neon-';
 const SETTINGS_SYNC_KEY = 'neon-scope.settings-sync.v1';
+const CHANNEL_SWITCH_KEY = 'neon-scope.channel-switch.v1';
+const APP_CHANNELS = {
+  canary: {
+    id: 'canary',
+    label: 'Canary',
+    repo: 'Tatsukini/Tatsukini-NEON-SCOPE-Audio-Visualization-Canary',
+    summary: '最新功能先行，可能包含未完成的改动，稳定性最低。',
+  },
+  stable: {
+    id: 'stable',
+    label: '正式版',
+    repo: APP_RELEASE_REPO,
+    summary: '功能经过回归后发布，更新频率较低但更稳定。',
+  },
+};
 const BG_PREVIEW_KEY = 'neon-scope.bg-preview.v1';
 const BG_IMAGE_KEY = 'neon-scope.bg-image.v1';
 const DEMO_META = { name: 'When Rain In My Mind Vol.2', kind: 'demo', bpm: 140, artist: 'NEON//SCOPE' };
@@ -475,6 +491,7 @@ class NeonScopeApp {
       if (typeof data === 'string') {
         try { data = JSON.parse(data); } catch { return; }
       }
+      if (this._resolveNativeRequest(data)) return;
       if (data?.action === 'apply-settings' || data?.action === 'settings-updated') this._applyExternalSettings(data);
       else if (data?.action === 'background-image' && data.dataUrl) this._applyIncomingBackgroundImage(data.dataUrl, data.name);
       else if (data?.action === 'folder-chosen' && data.path) {
@@ -490,6 +507,12 @@ class NeonScopeApp {
         this._toast(`存档保存失败：${data.message || '未知错误'}`, 'error', 5000);
       } else if (data?.action === 'archive-import' && data.archive) {
         this._applyArchive(data.archive);
+      } else if (data?.action === 'app-update-progress') {
+        this._onAppUpdateProgress(data);
+      } else if (data?.action === 'app-update-downloaded') {
+        this._onAppUpdateDownloaded(data).catch(() => {});
+      } else if (data?.action === 'app-update-error') {
+        this._onAppUpdateError(data);
       }
     });
   }
@@ -630,6 +653,8 @@ class NeonScopeApp {
       s.uiScale = clamp(Number(s.uiScale) || 100, 70, 150);
       s.previewFps = [0, 10, 15, 20, 24, 30, 45, 60, 90, 120, 144, 165, 240].includes(Number(s.previewFps)) ? Number(s.previewFps) : 60;
       s.previewVsync = s.previewVsync !== false;
+      s.autoUpdate = s.autoUpdate === true;
+      s.updateChannel = ['canary', 'stable'].includes(s.updateChannel) ? s.updateChannel : 'stable';
       s.volume = clamp(s.volume, 0, 100);
       s.glow = clamp(s.glow, 0, 100);
       s.bgDim = clamp(s.bgDim, 0, 90);
@@ -787,6 +812,12 @@ class NeonScopeApp {
       timelineMenu: $('#timelineMenu'), keyframeMenu: $('#keyframeMenu'), keyframePanel: $('#keyframePanel'), keyframeList: $('#keyframeList'),
       midiBusPanel: $('#midiBusPanel'), midiBusList: $('#midiBusList'), midiBusCount: $('#midiBusCount'), midiBusImportBtn: $('#midiBusImportBtn'),
       aboutDeveloperBtn: $('#aboutDeveloperBtn'), aboutLicensesBtn: $('#aboutLicensesBtn'), aboutRepositoryBtn: $('#aboutRepositoryBtn'),
+      appVersionText: $('#appVersionText'), appBuildText: $('#appBuildText'), appRuntimeText: $('#appRuntimeText'),
+      autoUpdateToggle: $('#autoUpdateToggle'), checkUpdateBtn: $('#checkUpdateBtn'), updateStatusText: $('#updateStatusText'),
+      updateChannelSwitch: $('#updateChannelSwitch'), updateChannelHint: $('#updateChannelHint'),
+      channelSwitchModal: $('#channelSwitchModal'), channelSwitchTitle: $('#channelSwitchTitle'),
+      channelSwitchIntro: $('#channelSwitchIntro'), channelRiskList: $('#channelRiskList'),
+      channelSwitchConfirm: $('#channelSwitchConfirm'),
       licenseModal: $('#licenseModal'), licenseList: $('#licenseList'),
       developerModal: $('#developerModal'), developerSiteBtn: $('#developerSiteBtn'),
       confirmModal: $('#confirmModal'), confirmMessage: $('#confirmMessage'),
@@ -882,6 +913,8 @@ class NeonScopeApp {
       s.uiScale = clamp(Number(s.uiScale) || 100, 70, 150);
       s.previewFps = [0, 10, 15, 20, 24, 30, 45, 60, 90, 120, 144, 165, 240].includes(Number(s.previewFps)) ? Number(s.previewFps) : 60;
       s.previewVsync = s.previewVsync !== false;
+      s.autoUpdate = s.autoUpdate === true;
+      s.updateChannel = ['canary', 'stable'].includes(s.updateChannel) ? s.updateChannel : 'stable';
       this.state.settings = s;
     }
     if (data.keybinds && typeof data.keybinds === 'object') {
@@ -1859,6 +1892,29 @@ class NeonScopeApp {
   }
 
   _bindAboutUI() {
+    if (this.dom.appVersionText) this.dom.appVersionText.textContent = APP_VERSION_TAG;
+    if (this.dom.appBuildText) this.dom.appBuildText.textContent = `${APP_CHANNEL.replace(/_/g, ' ')} · ${APP_BUILD}`;
+    if (this.dom.appRuntimeText) this.dom.appRuntimeText.textContent = this._isNative ? '桌面应用 (WebView2)' : '浏览器预览';
+    if (this.dom.autoUpdateToggle) {
+      this.dom.autoUpdateToggle.checked = this.state.settings.autoUpdate === true;
+      this.dom.autoUpdateToggle.addEventListener('change', () => {
+        this.state.settings.autoUpdate = this.dom.autoUpdateToggle.checked;
+        this._persist();
+        if (this._isNative && this._standaloneSettings) {
+          try {
+            window.chrome.webview.postMessage({ action: 'settings-updated', settings: this.state.settings, keybinds: this.keybinds });
+          } catch { /* bridge is optional */ }
+        }
+      });
+    }
+    this.dom.checkUpdateBtn?.addEventListener('click', () => { this._checkAppUpdate().catch(() => {}); });
+    this.dom.updateChannelSwitch?.addEventListener('click', (e) => {
+      const button = e.target.closest('[data-channel]');
+      if (!button) return;
+      this._requestChannelSwitch(button.dataset.channel);
+    });
+    this.dom.channelSwitchConfirm?.addEventListener('click', () => { this._confirmChannelSwitch().catch(() => {}); });
+    this._syncUpdateUI();
     this.dom.aboutDeveloperBtn?.addEventListener('click', () => this._openModal('developer'));
     this.dom.aboutRepositoryBtn?.addEventListener('click', () => {
       this._openExternal('https://github.com/Tatsukini/Tatsukini-NEON-SCOPE-Audio-Visualization');
@@ -1931,6 +1987,369 @@ class NeonScopeApp {
           </div>
         </div>
       </div>`).join('');
+  }
+
+  _appVersionTuple(tag) {
+    const text = String(tag || '').trim();
+    const base = /^v?(\d+)\.(\d+)\.(\d+)/i.exec(text);
+    if (!base) return null;
+    const date = /_(\d{3,4})(?=_|$)/.exec(text.slice(base[0].length));
+    const num = /_num\.(\d+)/i.exec(text);
+    const hotfix = /_hotfix(\d+)/i.exec(text);
+    const tail = /_(\d+)$/.exec(text);
+    return [
+      Number(base[1]), Number(base[2]), Number(base[3]),
+      Number(date?.[1] || 0),
+      Number(num?.[1] || 0),
+      Number(hotfix?.[1] || 0),
+      Number(tail?.[1] || 0),
+    ];
+  }
+
+  _compareAppVersions(a, b) {
+    const left = this._appVersionTuple(a);
+    const right = this._appVersionTuple(b);
+    if (left && right) {
+      for (let i = 0; i < left.length; i += 1) {
+        if (left[i] !== right[i]) return left[i] < right[i] ? -1 : 1;
+      }
+      return 0;
+    }
+    return String(a || '').localeCompare(String(b || ''), 'en', { numeric: true, sensitivity: 'base' });
+  }
+
+  _currentChannel() {
+    return APP_CHANNELS[this.state.settings.updateChannel] || APP_CHANNELS.stable;
+  }
+
+  _channelRisks(target) {
+    const items = [];
+    if (target === 'stable') {
+      items.push({ tone: 'fatal', text: '正式版可能无法识别 Canary 新增的模块类型、选项和设置项；未备份的工程内容会在打开或保存时被丢弃。' });
+      items.push({ tone: 'fatal', text: '依赖 Canary 新 API 的插件在正式版中会加载失败并被停用。' });
+      items.push({ tone: 'fatal', text: '切换会替换当前 EXE 并重启应用；请先保存正在编辑的工程。' });
+      items.push({ tone: 'warn', text: '正式版更新频率更低，你正在使用的 Canary 新功能可能暂时缺失。' });
+    } else {
+      items.push({ tone: 'fatal', text: 'Canary 可能随时调整存档结构，在 Canary 保存的工程可能无法再被正式版正确打开。' });
+      items.push({ tone: 'fatal', text: 'Canary 包含测试中的功能，可能崩溃或影响正在进行的导出。' });
+      items.push({ tone: 'warn', text: '插件可能依赖即将变化的 API，升级前建议确认插件兼容性。' });
+    }
+    items.push({ tone: 'warn', text: '切换会下载约 90 MB 的安装包并重启应用；自动更新与其它本机设置会保留。' });
+    items.push({ tone: 'warn', text: 'GitHub 下载可能受网络或接口限流影响；失败时可用发布页手动下载。' });
+    return items;
+  }
+
+  async _githubJson(url) {
+    const headers = { Accept: 'application/vnd.github+json' };
+    let response = null;
+    try { response = await fetch(url, { cache: 'no-store', headers }); } catch { response = null; }
+    if (!response) throw new Error('无法连接 GitHub，请检查网络或系统代理');
+    if (!response.ok) {
+      if (response.status === 404) throw new Error('目标通道还没有发布版本');
+      throw new Error(response.status === 403 || response.status === 429
+        ? `GitHub API 限流 (HTTP ${response.status})，请稍后再试`
+        : `GitHub API 请求失败 (HTTP ${response.status})`);
+    }
+    const data = await response.json().catch(() => null);
+    if (!data || typeof data !== 'object') throw new Error('GitHub 返回了无法识别的数据');
+    return data;
+  }
+
+  async _channelLatestRelease(channelId) {
+    const channel = APP_CHANNELS[channelId] || APP_CHANNELS.stable;
+    const release = await this._githubJson(`https://api.github.com/repos/${channel.repo}/releases/latest`);
+    if (typeof release.tag_name !== 'string') throw new Error('目标通道还没有发布版本');
+    return release;
+  }
+
+  _syncUpdateUI() {
+    const channel = this._currentChannel();
+    if (this.dom.autoUpdateToggle) this.dom.autoUpdateToggle.checked = this.state.settings.autoUpdate === true;
+    if (this.dom.updateChannelSwitch) {
+      for (const button of this.dom.updateChannelSwitch.querySelectorAll('[data-channel]')) {
+        button.classList.toggle('active', button.dataset.channel === channel.id);
+        button.setAttribute('aria-pressed', button.dataset.channel === channel.id ? 'true' : 'false');
+      }
+    }
+    if (this.dom.updateChannelHint) this.dom.updateChannelHint.textContent = `${channel.label}：${channel.summary}`;
+  }
+
+  _requestChannelSwitch(target) {
+    const next = APP_CHANNELS[target];
+    const current = this._currentChannel();
+    if (!next || next.id === current.id) return;
+    this._pendingChannelTarget = next.id;
+    if (this.dom.channelSwitchTitle) this.dom.channelSwitchTitle.textContent = `切换到${next.label}通道`;
+    if (this.dom.channelSwitchIntro) {
+      this.dom.channelSwitchIntro.textContent = `当前通道：${current.label}。${next.summary}切换前会自动把当前工程与设置备份为 JSON。`;
+    }
+    if (this.dom.channelRiskList) {
+      this.dom.channelRiskList.innerHTML = this._channelRisks(next.id).map((item) => (
+        `<li class="${item.tone === 'fatal' ? 'risk-fatal' : 'risk-warn'}"><b>${item.tone === 'fatal' ? '致命风险' : '注意'}</b><span>${item.text}</span></li>`
+      )).join('');
+    }
+    this._openModal('channelSwitch');
+  }
+
+  async _confirmChannelSwitch() {
+    const target = this._pendingChannelTarget;
+    const next = APP_CHANNELS[target];
+    if (!next) return;
+    this._closeModal('channelSwitch');
+    this._pendingChannelTarget = null;
+    const from = this._currentChannel();
+    const status = (text) => {
+      if (this.dom.updateStatusText) this.dom.updateStatusText.textContent = text;
+    };
+    status(`正在准备切换到${next.label}…`);
+    const backupPath = await this._backupProjectForChannelSwitch(from.id, next.id);
+    this.state.settings.updateChannel = next.id;
+    this._persist();
+    this._syncUpdateUI();
+    if (this._isNative) {
+      try {
+        window.chrome.webview.postMessage({ action: 'settings-updated', settings: this.state.settings, keybinds: this.keybinds });
+      } catch { /* bridge is optional */ }
+    }
+    try {
+      const release = await this._channelLatestRelease(next.id);
+      const latestTag = release.tag_name;
+      const asset = (release.assets || []).find((item) => /\.exe$/i.test(String(item.name || '')));
+      const pageUrl = release.html_url ||
+        `https://github.com/${next.repo}/releases/tag/${encodeURIComponent(latestTag)}`;
+      this._pendingAppUpdate = {
+        tag: latestTag,
+        name: asset?.name || '',
+        url: asset?.browser_download_url || '',
+        size: Number(asset?.size) || 0,
+        pageUrl,
+        channel: next.id,
+      };
+      safeStore(CHANNEL_SWITCH_KEY, JSON.stringify({
+        from: from.id,
+        to: next.id,
+        at: Date.now(),
+        version: APP_VERSION_TAG,
+        targetTag: latestTag,
+        backupPath,
+        notified: false,
+      }));
+      status(`正在下载${next.label} ${latestTag}…`);
+      await this._downloadAppUpdate();
+    } catch (err) {
+      status(`切换失败：${err.message}`);
+      this._toast(`切换通道失败：${err.message}`, 'error', 5200);
+    }
+  }
+
+  async _backupProjectForChannelSwitch(from, to) {
+    let project = {};
+    try { project = JSON.parse(safeRead(STORAGE_KEY) || '{}'); } catch { project = {}; }
+    const snapshot = {
+      app: 'NEON//SCOPE',
+      createdAt: new Date().toISOString(),
+      from,
+      to,
+      version: APP_VERSION_TAG,
+      settings: this.state.settings,
+      keybinds: this.keybinds,
+      exportSettings: this.exportSettings,
+      project,
+    };
+    const json = JSON.stringify(snapshot);
+    if (this._isNative) {
+      try {
+        const reply = await this._nativeRequest(
+          { action: 'app-channel-backup', from, to, payload: json },
+          'channel-backup-done',
+          'channel-backup-error',
+          8000,
+        );
+        if (reply?.path) return reply.path;
+      } catch (err) {
+        this._toast(`工程备份失败：${err.message}`, 'error', 5200);
+      }
+      return '';
+    }
+    try {
+      const blob = new Blob([json], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = `neon-scope-${from}-to-${to}-${Date.now()}.json`;
+      anchor.click();
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+      return anchor.download;
+    } catch {
+      return '';
+    }
+  }
+
+  _nativeRequest(payload, okAction, errorAction, timeout = 6000) {
+    if (!this._isNative || !window.chrome?.webview) return Promise.reject(new Error('桌面桥不可用'));
+    this._nativeReplies = this._nativeReplies || new Map();
+    return new Promise((resolve, reject) => {
+      const entry = { resolve, reject };
+      entry.timer = setTimeout(() => {
+        this._nativeReplies.delete(okAction);
+        if (errorAction) this._nativeReplies.delete(errorAction);
+        reject(new Error('等待桌面响应超时'));
+      }, timeout);
+      this._nativeReplies.set(okAction, { ...entry, ok: true });
+      if (errorAction) this._nativeReplies.set(errorAction, { ...entry, ok: false });
+      try {
+        window.chrome.webview.postMessage(payload);
+      } catch (err) {
+        clearTimeout(entry.timer);
+        this._nativeReplies.delete(okAction);
+        if (errorAction) this._nativeReplies.delete(errorAction);
+        reject(err);
+      }
+    });
+  }
+
+  _resolveNativeRequest(data) {
+    const waiter = this._nativeReplies?.get(data?.action);
+    if (!waiter) return false;
+    clearTimeout(waiter.timer);
+    this._nativeReplies.delete(data.action);
+    const other = data.action === 'channel-backup-done' ? 'channel-backup-error' : 'channel-backup-done';
+    this._nativeReplies.delete(other);
+    if (waiter.ok) waiter.resolve(data);
+    else waiter.reject(new Error(data?.message || '桌面操作失败'));
+    return true;
+  }
+
+  async _checkAppUpdate({ auto = false } = {}) {
+    if (this._appUpdateBusy) return;
+    this._appUpdateBusy = true;
+    const status = (text) => {
+      if (this.dom.updateStatusText) this.dom.updateStatusText.textContent = text;
+    };
+    if (this.dom.checkUpdateBtn) this.dom.checkUpdateBtn.disabled = true;
+    const channel = this._currentChannel();
+    status(`正在检查${channel.label}更新…`);
+    try {
+      const latest = await this._channelLatestRelease(channel.id);
+      const latestTag = latest.tag_name;
+      const sameBuildChannel = channel.id === APP_CHANNEL_KIND;
+      const newer = this._compareAppVersions(latestTag, APP_VERSION_TAG) > 0;
+      if (latestTag === APP_VERSION_TAG || (sameBuildChannel && !newer)) {
+        status(`已是最新版本 · ${APP_VERSION_TAG}`);
+        this._pendingAppUpdate = null;
+        this._appUpdateNotifiedTag = null;
+        if (!auto) this._toast('当前已是最新版本', 'success', 2600);
+        return;
+      }
+      if (auto && !sameBuildChannel) {
+        status(`已选择${channel.label}通道，请手动检查更新完成切换`);
+        return;
+      }
+      const asset = (latest.assets || []).find((item) => /\.exe$/i.test(String(item.name || '')));
+      const pageUrl = latest.html_url ||
+        `https://github.com/${channel.repo}/releases/tag/${encodeURIComponent(latestTag)}`;
+      this._pendingAppUpdate = {
+        tag: latestTag,
+        name: asset?.name || '',
+        url: asset?.browser_download_url || '',
+        size: Number(asset?.size) || 0,
+        pageUrl,
+        channel: channel.id,
+      };
+      status(`发现${channel.label}新版本 ${latestTag}`);
+      if (auto) {
+        if (this._appUpdateNotifiedTag === latestTag) return;
+        this._appUpdateNotifiedTag = latestTag;
+        this._toast(`发现${channel.label}新版本 ${latestTag}，正在后台下载…`, 'info', 4200);
+        await this._downloadAppUpdate();
+        return;
+      }
+      const accepted = await this._showConfirm(
+        `发现${channel.label}新版本 ${latestTag}（当前 ${APP_VERSION_TAG}）。现在下载并安装吗？`,
+        { title: '软件更新', confirmText: '下载更新', cancelText: '稍后' },
+      );
+      if (accepted) await this._downloadAppUpdate();
+      else status('已取消更新');
+    } catch (err) {
+      status(`检查失败：${err.message}`);
+      if (!auto) this._toast(`检查更新失败：${err.message}`, 'error', 5200);
+    } finally {
+      this._appUpdateBusy = false;
+      if (this.dom.checkUpdateBtn) this.dom.checkUpdateBtn.disabled = false;
+    }
+  }
+
+  async _downloadAppUpdate() {
+    const pending = this._pendingAppUpdate;
+    if (!pending) return;
+    if (!this._isNative || !pending.url) {
+      this._openExternal(pending.pageUrl);
+      if (this.dom.updateStatusText) {
+        this.dom.updateStatusText.textContent = pending.url ? '请在发布页下载新版本' : '该版本没有可下载的 EXE，已打开发布页';
+      }
+      return;
+    }
+    this._appUpdateDownloadingTag = pending.tag;
+    if (this.dom.updateStatusText) this.dom.updateStatusText.textContent = `正在下载 ${pending.tag}…`;
+    try {
+      window.chrome.webview.postMessage({
+        action: 'app-update-download',
+        url: pending.url,
+        tag: pending.tag,
+        name: pending.name,
+        size: pending.size,
+      });
+    } catch { /* bridge is optional */ }
+  }
+
+  _onAppUpdateProgress(data) {
+    if (!this.dom.updateStatusText) return;
+    const percent = Number(data?.percent);
+    const tag = data?.tag || this._appUpdateDownloadingTag || '';
+    this.dom.updateStatusText.textContent = Number.isFinite(percent)
+      ? `正在下载 ${tag} ${Math.round(clamp(percent, 0, 100))}%`
+      : `正在下载 ${tag}…`;
+  }
+
+  async _onAppUpdateDownloaded(data) {
+    const tag = data?.tag || this._pendingAppUpdate?.tag || '';
+    this._appUpdateDownloadingTag = '';
+    if (this.dom.updateStatusText) this.dom.updateStatusText.textContent = `更新已下载 · ${tag}`;
+    this._toast(`更新已下载 · ${tag}`, 'success', 4200);
+    const restart = await this._showConfirm(
+      `新版本 ${tag} 已下载完成。立即重启并安装吗？应用会关闭，替换为新版本后自动重新启动。`,
+      { title: '安装更新', confirmText: '立即重启安装', cancelText: '稍后手动重启' },
+    );
+    if (!restart) {
+      if (this.dom.updateStatusText) this.dom.updateStatusText.textContent = '更新已下载，再次检查更新即可安装';
+      return;
+    }
+    try { window.chrome.webview.postMessage({ action: 'app-update-apply', tag }); } catch { /* bridge is optional */ }
+  }
+
+  _onAppUpdateError(data) {
+    const message = data?.message || '下载更新失败';
+    this._appUpdateDownloadingTag = '';
+    if (this.dom.updateStatusText) this.dom.updateStatusText.textContent = `更新失败：${message}`;
+    this._toast(`更新失败：${message}`, 'error', 5200);
+  }
+
+  _notifyChannelMigration() {
+    let record = null;
+    try { record = JSON.parse(safeRead(CHANNEL_SWITCH_KEY) || 'null'); } catch { record = null; }
+    if (!record || record.notified) return;
+    if (Date.now() - Number(record.at || 0) > 60 * 60 * 1000) {
+      record.notified = true;
+      safeStore(CHANNEL_SWITCH_KEY, JSON.stringify(record));
+      return;
+    }
+    record.notified = true;
+    safeStore(CHANNEL_SWITCH_KEY, JSON.stringify(record));
+    const channel = APP_CHANNELS[record.to];
+    const backup = record.backupPath ? ` · 旧工程备份：${record.backupPath}` : '';
+    setTimeout(() => {
+      this._toast(`已切换到${channel ? channel.label : record.to}通道${backup}`, 'info', 7000);
+    }, 1800);
   }
 
   _openStageWindow() {
@@ -5760,6 +6179,11 @@ class NeonScopeApp {
       console.error(err);
       this._toast(`恢复存档失败：${err.message}`, 'error', 5200);
       await this._loadDemo(false);
+    } finally {
+      if (!this._standaloneSettings) this._notifyChannelMigration();
+      if (!this._standaloneSettings && this._isNative && this.state.settings.autoUpdate) {
+        setTimeout(() => this._checkAppUpdate({ auto: true }).catch(() => {}), 6000);
+      }
     }
   }
 
@@ -7476,6 +7900,7 @@ class NeonScopeApp {
     if (this.dom.savePathInput) this.dom.savePathInput.value = s.savePath || '';
     if (this.dom.exportPathInput) this.dom.exportPathInput.value = s.exportPath || '';
     this._applyTimelineOpen(s.timelineOpen !== false, { silent: true });
+    this._syncUpdateUI();
   }
 
   _syncBgColorUI() {
@@ -7955,6 +8380,7 @@ class NeonScopeApp {
     if (name === 'keyframeEditor') return this.dom.keyframeEditorModal;
     if (name === 'licenses') return this.dom.licenseModal;
     if (name === 'developer') return this.dom.developerModal;
+    if (name === 'channelSwitch') return this.dom.channelSwitchModal;
     return null;
   }
 

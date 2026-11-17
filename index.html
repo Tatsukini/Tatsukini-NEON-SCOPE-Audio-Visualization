@@ -1156,6 +1156,28 @@
               <h3>关于</h3>
               <p>NEON//SCOPE · realtime audio visualization workstation.</p>
             </div>
+            <div class="setting-block app-update-block">
+              <div class="setting-block-head"><span>软件信息</span><em>SOFTWARE</em></div>
+              <div class="app-info-grid">
+                <div class="app-info-item"><span>版本</span><b id="appVersionText">—</b></div>
+                <div class="app-info-item"><span>构建</span><b id="appBuildText">—</b></div>
+                <div class="app-info-item"><span>运行方式</span><b id="appRuntimeText">—</b></div>
+              </div>
+              <div class="app-channel-row">
+                <span class="app-channel-label">更新通道</span>
+                <div class="app-channel-switch" id="updateChannelSwitch" role="group" aria-label="更新通道">
+                  <button type="button" data-channel="canary" aria-pressed="false">Canary</button>
+                  <button type="button" data-channel="stable" aria-pressed="false">正式版</button>
+                </div>
+              </div>
+              <p class="app-channel-hint" id="updateChannelHint">正式版：功能经过回归后发布，更新频率较低但更稳定。</p>
+              <label class="check-row"><input type="checkbox" id="autoUpdateToggle" /><span>自动更新：启动时检查，发现新版本自动下载</span></label>
+              <div class="app-update-row">
+                <button class="btn ghost" id="checkUpdateBtn">检查更新</button>
+                <span class="app-update-status" id="updateStatusText">尚未检查</span>
+              </div>
+              <p class="section-help">更新来自 GitHub Releases。下载完成后可选择立即重启安装；安装会替换当前 EXE 并重新启动。</p>
+            </div>
             <div class="about-actions">
               <button class="btn ghost about-btn" id="aboutDeveloperBtn"><b>开发者</b><span>Developer</span></button>
               <button class="btn ghost about-btn" id="aboutLicensesBtn"><b>许可与版权声明</b><span>Licenses</span></button>
@@ -1169,6 +1191,30 @@
         <span class="window-foot-note">更改会自动保存</span>
         <span class="settings-zoom" id="settingsZoom" title="Ctrl + 滚轮 调整界面缩放">UI 100%</span>
         <button class="btn primary" data-close="settings">完成</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-layer hidden" id="channelSwitchModal" role="dialog" aria-modal="true" aria-labelledby="channelSwitchTitle">
+    <div class="modal-backdrop" data-close="channelSwitch"></div>
+    <div class="window-card channel-switch-window">
+      <div class="window-head" data-window-drag>
+        <div class="window-title">
+          <span class="eyebrow">UPDATE CHANNEL / SWITCH</span>
+          <h2 id="channelSwitchTitle">切换更新通道</h2>
+        </div>
+        <div class="window-head-actions">
+          <button class="icon-btn small" data-close="channelSwitch" aria-label="关闭"><svg class="icon"><use href="#i-close"/></svg></button>
+        </div>
+      </div>
+      <div class="channel-switch-body">
+        <p class="channel-switch-intro" id="channelSwitchIntro"></p>
+        <ul class="channel-risk-list" id="channelRiskList"></ul>
+        <p class="channel-switch-note">切换前会自动备份当前工程与设置；随后下载目标通道的最新版本并重启安装。</p>
+      </div>
+      <div class="window-foot">
+        <button class="btn ghost" data-close="channelSwitch">取消</button>
+        <button class="btn primary" id="channelSwitchConfirm">备份并切换</button>
       </div>
     </div>
   </div>
@@ -1429,7 +1475,7 @@
     <div class="alpha-card">
       <div class="alpha-mark" aria-hidden="true">!</div>
       <div class="alpha-body">
-        <div class="alpha-kicker">ALPHA BUILD / V0.1.3_1110_alpha_GPLver</div>
+        <div class="alpha-kicker">STABLE BUILD / V0.1.3_1110_alpha_GPLver_hotfix1</div>
         <h2 id="alphaNoticeTitle">注意！这是 NEON//SCOPE 的 Alpha 测试版本。</h2>
         <p>Alpha 测试版本不代表最终产品的最终质量。感谢您的理解和支持，祝你好运！</p>
         <div class="alpha-foot">

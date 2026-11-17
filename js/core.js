@@ -1,3 +1,10 @@
+export const APP_VERSION = '0.1.3';
+export const APP_CHANNEL = 'Alpha_Stable';
+export const APP_BUILD = '1110_alpha_GPLver_hotfix1';
+export const APP_CHANNEL_KIND = 'stable';
+export const APP_VERSION_TAG = `V${APP_VERSION}_${APP_BUILD}`;
+export const APP_RELEASE_REPO = 'Tatsukini/Tatsukini-NEON-SCOPE-Audio-Visualization';
+
 export const STAGE_W = 1920;
 export const STAGE_H = 1080;
 
@@ -529,6 +536,8 @@ export const DEFAULT_SETTINGS = {
   snap: true,
   editing: true,
   autoSave: true,
+  autoUpdate: false,
+  updateChannel: 'stable',
   volume: 78,
   loop: false,
   preset: 'studio',
