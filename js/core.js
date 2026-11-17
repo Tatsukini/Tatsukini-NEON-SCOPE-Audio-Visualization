@@ -1,7 +1,8 @@
 // Copyright (C) 2026 Tatsukini
 export const APP_VERSION = '0.1.4';
 export const APP_CHANNEL = 'Alpha_Canary';
-export const APP_BUILD = '1117_4';
+export const APP_BUILD = '1117_5';
+export const APP_CHANNEL_KIND = 'canary';
 export const APP_VERSION_TAG = `V${APP_VERSION}_${APP_CHANNEL}_${APP_BUILD}`;
 export const APP_RELEASE_REPO = 'Tatsukini/Tatsukini-NEON-SCOPE-Audio-Visualization-Canary';
 
@@ -591,6 +592,7 @@ export const DEFAULT_SETTINGS = {
   autoSaveInterval: 360,
   restoreAutosave: false,
   autoUpdate: false,
+  updateChannel: 'canary',
   volume: 78,
   loop: false,
   preset: 'studio',

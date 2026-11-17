@@ -341,6 +341,9 @@ internal sealed class MainForm : Form
                 case "app-update-apply":
                     ApplyAppUpdate();
                     break;
+                case "app-channel-backup":
+                    SaveChannelBackup(doc.RootElement);
+                    break;
             }
         }
         catch (Exception ex)
@@ -614,6 +617,31 @@ internal sealed class MainForm : Form
         return string.IsNullOrWhiteSpace(token) ? "latest" : token;
     }
 
+    private void SaveChannelBackup(JsonElement element)
+    {
+        try
+        {
+            var from = element.TryGetProperty("from", out var fromElement) ? (fromElement.GetString() ?? "unknown") : "unknown";
+            var to = element.TryGetProperty("to", out var toElement) ? (toElement.GetString() ?? "unknown") : "unknown";
+            var payload = element.TryGetProperty("payload", out var payloadElement) && payloadElement.ValueKind == JsonValueKind.String
+                ? payloadElement.GetString()
+                : null;
+            if (string.IsNullOrWhiteSpace(payload)) throw new InvalidDataException("备份内容为空");
+            var directory = Path.Combine(AppPaths.Root, "channel-migration");
+            Directory.CreateDirectory(directory);
+            var name = $"{DateTime.Now:yyyyMMdd-HHmmss}-{SafeFileToken(from)}-to-{SafeFileToken(to)}.json";
+            var path = Path.Combine(directory, name);
+            File.WriteAllText(path, payload, new UTF8Encoding(false));
+            AppPaths.Log("Channel switch backup written: " + path);
+            BroadcastToWindows(JsonSerializer.Serialize(new { action = "channel-backup-done", path }));
+        }
+        catch (Exception ex)
+        {
+            AppPaths.Log("Channel switch backup failed: " + ex.Message);
+            BroadcastToWindows(JsonSerializer.Serialize(new { action = "channel-backup-error", message = ex.Message }));
+        }
+    }
+
     private async void DownloadAppUpdate(JsonElement element)
     {
         var url = element.TryGetProperty("url", out var urlElement) ? urlElement.GetString() : null;
@@ -824,6 +852,11 @@ internal sealed class MainForm : Form
                 if (action == "app-update-apply")
                 {
                     ApplyAppUpdate();
+                    return;
+                }
+                if (action == "app-channel-backup")
+                {
+                    SaveChannelBackup(doc.RootElement);
                     return;
                 }
             }

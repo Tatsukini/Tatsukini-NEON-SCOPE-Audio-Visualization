@@ -2,7 +2,7 @@
 
 **前沿测试频道 · 功能最先落地 · 不保证稳定**
 
-[![Canary build](https://img.shields.io/badge/canary-V0.1.4__Alpha__Canary__1117__4-e5397f)](https://github.com/Tatsukini/Tatsukini-NEON-SCOPE-Audio-Visualization-Canary/releases/tag/V0.1.4_Alpha_Canary_1117_4)
+[![Canary build](https://img.shields.io/badge/canary-V0.1.4__Alpha__Canary__1117__5-e5397f)](https://github.com/Tatsukini/Tatsukini-NEON-SCOPE-Audio-Visualization-Canary/releases/tag/V0.1.4_Alpha_Canary_1117_5)
 [![License](https://img.shields.io/badge/license-AGPL--3.0--or--later-1f6feb)](LICENSE)
 [![Stable channel](https://img.shields.io/badge/stable-V0.1.1_1104_alpha_Num.2-6e7681)](https://github.com/Tatsukini/Tatsukini-NEON-SCOPE-Audio-Visualization)
 
@@ -50,15 +50,16 @@ Canary 与稳定版共享同一套前端资源与桌面外壳，代码同源；�
 
 | 项目 | 值 |
 | --- | --- |
-| 构建号 | `V0.1.4_Alpha_Canary_1117_4` |
+| 构建号 | `V0.1.4_Alpha_Canary_1117_5` |
 | 通道 | Canary / Alpha |
-| 基于 | `V0.1.4_Alpha_Canary_1117_3` |
+| 基于 | `V0.1.4_Alpha_Canary_1117_4` |
 | 构建日期 | 2026-11-17 |
 | 许可 | AGPL-3.0-or-later（见 [LICENSE](LICENSE)、[NOTICE](NOTICE)） |
 | 可执行文件 | `dist\NEON-SCOPE.exe`、`NEON-SCOPE-win64.zip` |
 
 ### 本轮改动
 
+- **Canary / 正式版频道切换**：设置 → 关于新增更新通道切换，切换前弹窗列出风险（致命红色、警告黄色），确认后先备份工程与设置，再下载目标频道最新版本并重启安装；检查更新按所选频道读取对应仓库。正式版同步发布 `V0.1.3_1110_alpha_GPLver_hotfix1`（1110 正式版代码 + 更新器）。
 - **软件信息与自动更新**：设置 → 关于新增「软件信息」（版本 / 构建 / 运行方式）、「检查更新」按钮与「自动更新」开关。检查通过 GitHub Releases 读取 Canary 通道的最新版本并逐段比较版本号；手动检查确认后下载官方 `NEON-SCOPE.exe`，下载完成可选择立即重启安装。开启自动更新后启动时静默检查并后台下载。安装前校验 PE 头与发布页文件大小，由独立 PowerShell 脚本在进程退出后替换 EXE 并重启；浏览器预览改为打开发布页。
 - **修复每次启动模块翻倍**：启动时插件模块恢复逻辑会在工程内容加载前把整份历史模块列表追加到默认工程并写回存储，导致每启动一次就多一整份。现在只在恢复上次工程时回填，且仅限已启用插件注册的模块类型并按 id 去重。
 - **属性检查器头部溢出修复**：150% 缩放 / 全屏下选中徽标不再显示超长的完整模块类型，改为模块短名 + 省略号（悬停可看完整类型）；标题保持单行，不再与浮动/关闭按钮重叠。

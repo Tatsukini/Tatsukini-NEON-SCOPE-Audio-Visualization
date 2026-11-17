@@ -1,4 +1,4 @@
-NEON//SCOPE  V0.1.4_Alpha_Canary_1117_4  (Windows x64)
+NEON//SCOPE  V0.1.4_Alpha_Canary_1117_5  (Windows x64)
 
 启动：
   双击 NEON-SCOPE.exe
@@ -75,7 +75,8 @@ NEON//SCOPE  V0.1.4_Alpha_Canary_1117_4  (Windows x64)
     与「自动更新」。检查读取 GitHub Releases 的 Canary 最新版本；手动检查确认
     后下载官方 EXE，下载完成可立即重启安装；开启自动更新后启动时静默检查并
     后台下载。安装由独立脚本在应用退出后替换 EXE 并重启；浏览器预览环境只会
-    打开发布页
+    打开发布页。另有 Canary / 正式版频道切换，切换前会列出风险（致命项红色、警告项黄色），
+    并先备份当前工程与设置再下载目标频道版本
   - 插件管理器：从 GitHub / PNPM 安装或导入本地插件；安装、更新、重载后立即
     生效（无需重启），「检查更新」同时比较版本号与入口代码 SHA-256，版本号
     相同但代码不同也会提示；GitHub 插件按分支最新提交拉取，避免 CDN 旧缓存，

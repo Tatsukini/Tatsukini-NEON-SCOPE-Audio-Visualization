@@ -1475,11 +1475,49 @@ body[data-ui-mode="light"] .theme-follow-row select, body[data-ui-theme="catbot"
 }
 .app-info-item span { font: 6.5px var(--mono); letter-spacing: .12em; color: var(--dim); text-transform: uppercase; }
 .app-info-item b { font-size: 9px; font-weight: 500; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.app-channel-row { display: flex; align-items: center; gap: 10px; margin: 10px 0 5px; }
+.app-channel-label { font: 7px var(--mono); letter-spacing: .12em; color: var(--dim); text-transform: uppercase; flex: 0 0 auto; }
+.app-channel-switch { display: inline-flex; border: 1px solid rgba(var(--accent-rgb), .22); border-radius: 5px; overflow: hidden; background: rgba(var(--accent-rgb), .03); }
+.app-channel-switch button {
+  min-width: 78px; height: 26px; padding: 0 12px; border: 0; cursor: pointer;
+  background: transparent; color: var(--dim); font: 8px var(--mono); letter-spacing: .08em;
+}
+.app-channel-switch button + button { border-left: 1px solid rgba(var(--accent-rgb), .18); }
+.app-channel-switch button:hover { background: rgba(var(--accent-rgb), .08); color: var(--text); }
+.app-channel-switch button.active { background: rgba(var(--accent-rgb), .18); color: var(--accent); }
+.app-channel-hint { margin: 0 0 10px; font-size: 8px; line-height: 1.6; color: var(--dim); }
 .app-update-row { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
 .app-update-row .btn { flex: 0 0 auto; }
 .app-update-status { min-width: 0; flex: 1 1 auto; font: 8px/1.5 var(--mono); color: var(--dim); overflow-wrap: anywhere; }
 body[data-ui-theme="catbot"] .app-info-item { background: #fbf9fe; border-color: #d1c8de; border-radius: 0; }
 body[data-ui-mode="light"] .app-info-item { background: var(--paper-card); border-color: var(--paper-line); }
+.channel-switch-window { width: min(640px, calc(100vw - 28px)); }
+.channel-switch-body { padding: 18px 22px 8px; }
+.channel-switch-intro { margin: 0 0 12px; font-size: 10px; line-height: 1.75; color: var(--text); }
+.channel-risk-list { list-style: none; margin: 0 0 10px; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.channel-risk-list li {
+  display: flex; gap: 9px; align-items: flex-start;
+  padding: 9px 11px; border-radius: 5px;
+  border: 1px solid rgba(255,255,255,.08);
+  background: rgba(255,255,255,.025);
+  font-size: 9px; line-height: 1.65;
+}
+.channel-risk-list li b { flex: 0 0 auto; font: 7px var(--mono); letter-spacing: .08em; padding-top: 2px; }
+.channel-risk-list li span { min-width: 0; }
+.channel-risk-list li.risk-fatal { border-color: rgba(255, 64, 84, .45); background: rgba(255, 64, 84, .07); }
+.channel-risk-list li.risk-fatal b, .channel-risk-list li.risk-fatal span { color: #ff5d6c; }
+.channel-risk-list li.risk-warn { border-color: rgba(255, 196, 61, .42); background: rgba(255, 196, 61, .06); }
+.channel-risk-list li.risk-warn b, .channel-risk-list li.risk-warn span { color: #ffcf5a; }
+.channel-switch-note { margin: 0 0 10px; font: 8px/1.7 var(--mono); color: var(--dim); }
+body[data-ui-theme="catbot"] .app-channel-switch { background: #fbf9fe; border-color: #d1c8de; border-radius: 0; }
+body[data-ui-theme="catbot"] .app-channel-switch button { color: #6d5d78; }
+body[data-ui-theme="catbot"] .app-channel-switch button.active { background: #f1dce9; color: #9b4f78; }
+body[data-ui-mode="light"] .app-channel-switch { background: var(--paper-card); border-color: var(--paper-line); }
+body[data-ui-mode="light"] .channel-risk-list li { border-color: rgba(0,0,0,.1); background: rgba(0,0,0,.02); }
+body[data-ui-mode="light"] .channel-risk-list li.risk-fatal { border-color: rgba(200, 32, 48, .4); background: rgba(200, 32, 48, .06); }
+body[data-ui-mode="light"] .channel-risk-list li.risk-fatal b, body[data-ui-mode="light"] .channel-risk-list li.risk-fatal span { color: #c62030; }
+body[data-ui-mode="light"] .channel-risk-list li.risk-warn { border-color: rgba(176, 122, 0, .4); background: rgba(255, 196, 61, .12); }
+body[data-ui-mode="light"] .channel-risk-list li.risk-warn b, body[data-ui-mode="light"] .channel-risk-list li.risk-warn span { color: #9a6a00; }
 .confirm-layer { z-index: 120; }
 .confirm-window { width: min(460px, calc(100vw - 28px)); }
 .confirm-body { padding: 22px 24px; }
